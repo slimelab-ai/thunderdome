@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>THUNDERDOME — Underground Kill League</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" class="hidden">
+    <div id="vignette"></div>
+    <div id="damage-flash"></div>
+    <div id="lowhp-overlay"></div>
+
+    <div id="crosshair">
+      <div class="ch-line ch-top"></div>
+      <div class="ch-line ch-bottom"></div>
+      <div class="ch-line ch-left"></div>
+      <div class="ch-line ch-right"></div>
+      <div class="ch-dot"></div>
+    </div>
+    <div id="hitmarker">
+      <span></span><span></span><span></span><span></span>
+    </div>
+
+    <div id="announcer-wrap">
+      <div id="announcer-tag">🎙 VULTURE</div>
+      <div id="announcer-line"></div>
+    </div>
+
+    <div id="event-banner" class="hidden">
+      <div id="event-title">LIGHTS OUT</div>
+      <div id="event-sub">The tournament master spices things up</div>
+    </div>
+
+    <div id="killfeed"></div>
+
+    <div id="hud-topleft">
+      <div id="rank-chip">RANK <span id="hud-rank">10</span></div>
+      <div id="money-chip">$<span id="hud-money">0</span></div>
+      <div id="frenzy-chip" class="hidden">💰 CROWD FRENZY — 2X PAYOUT</div>
+    </div>
+
+    <div id="squad-panel"></div>
+
+    <div id="hud-bottomleft">
+      <svg id="body-svg" viewBox="0 0 60 100">
+        <circle id="bp-head" cx="30" cy="12" r="9"/>
+        <rect id="bp-torso" x="19" y="24" width="22" height="32" rx="4"/>
+        <rect id="bp-armL" x="8"  y="25" width="8" height="28" rx="4"/>
+        <rect id="bp-armR" x="44" y="25" width="8" height="28" rx="4"/>
+        <rect id="bp-legL" x="20" y="59" width="9" height="36" rx="4"/>
+        <rect id="bp-legR" x="31" y="59" width="9" height="36" rx="4"/>
+      </svg>
+      <div id="health-block">
+        <div id="hp-num">100</div>
+        <div id="hp-bar"><div id="hp-fill"></div></div>
+        <div id="status-tags"></div>
+      </div>
+    </div>
+
+    <div id="hud-bottomright">
+      <div id="weapon-name">P9 SIDEARM</div>
+      <div id="ammo-block"><span id="ammo-mag">12</span><span id="ammo-sep">/</span><span id="ammo-reserve">∞</span></div>
+      <div id="reload-hint" class="hidden">RELOADING…</div>
+      <div id="weapon-slots"></div>
+    </div>
+
+    <div id="objective-line"></div>
+    <div id="interact-hint" class="hidden"></div>
+  </div>
+
+  <!-- ===================== SCREENS ===================== -->
+  <div id="screen-menu" class="screen">
+    <div class="menu-inner">
+      <div class="menu-pretitle">THE UNDERGROUND KILL LEAGUE PRESENTS</div>
+      <h1 class="game-title">THUNDER<span>DOME</span></h1>
+      <div class="menu-tagline">Ten ranks. One champion. Everybody else leaves in a bag.</div>
+      <div class="menu-buttons">
+        <button id="btn-continue" class="btn btn-big hidden">CONTINUE CAREER</button>
+        <button id="btn-new" class="btn btn-big">NEW CAREER</button>
+      </div>
+      <div class="menu-controls">
+        <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean</div>
+        <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–5</b> weapons</div>
+        <div class="menu-warn">Locational damage is real. Get shot in the arm — your aim goes. Get shot in the leg — you limp. Play slow. Play smart.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-intro" class="screen hidden">
+    <div class="intro-inner">
+      <div class="intro-rank">RANK <span id="intro-rank">10</span> BOUT</div>
+      <div class="intro-vs">YOUR CREW <span>vs</span> <em id="intro-squad">THE GUTTER RATS</em></div>
+      <div id="intro-flavor" class="intro-flavor"></div>
+      <button id="btn-fight" class="btn btn-big btn-blood">⚔ FIGHT</button>
+      <div class="intro-hint">Click FIGHT to lock in — the game goes fullscreen. ESC pauses.</div>
+    </div>
+  </div>
+
+  <div id="screen-shop" class="screen hidden">
+    <div class="shop-inner">
+      <div class="shop-header">
+        <div>
+          <div class="shop-title">THE BLACK MARKET</div>
+          <div id="shop-sub" class="shop-sub"></div>
+        </div>
+        <div class="shop-money">$<span id="shop-money">0</span></div>
+      </div>
+      <div id="earnings-box" class="hidden"></div>
+      <div class="shop-cols">
+        <div class="shop-col">
+          <div class="shop-col-title">🔫 ARMORY</div>
+          <div id="shop-weapons"></div>
+          <div class="shop-col-title" style="margin-top:14px">🦺 PROTECTION</div>
+          <div id="shop-armor"></div>
+        </div>
+        <div class="shop-col">
+          <div class="shop-col-title">🧟 HIRE MUSCLE <span class="dim">(fight beside you — die forever)</span></div>
+          <div id="shop-crew"></div>
+          <div class="shop-col-title" style="margin-top:14px">👥 YOUR CREW</div>
+          <div id="shop-roster"></div>
+        </div>
+        <div class="shop-col">
+          <div class="shop-col-title">🏋 TRAINING</div>
+          <div id="shop-training"></div>
+          <div class="shop-col-title" style="margin-top:14px">📋 NEXT BOUT</div>
+          <div id="next-bout"></div>
+        </div>
+      </div>
+      <div class="shop-footer">
+        <button id="btn-next-fight" class="btn btn-big btn-blood">NEXT FIGHT ➤</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-death" class="screen hidden">
+    <div class="death-inner">
+      <h1 class="death-title">YOU DIED</h1>
+      <div id="death-line" class="death-line"></div>
+      <div id="death-stats" class="death-stats"></div>
+      <button id="btn-retry" class="btn btn-big">CRAWL BACK — HIT THE BLACK MARKET</button>
+      <div class="death-hint">The house patches you up and takes its cut. Restock, rehire, then get back in the pit.</div>
+    </div>
+  </div>
+
+  <div id="screen-champion" class="screen hidden">
+    <div class="champ-inner">
+      <div class="champ-pre">RANK 1 IS DEAD. LONG LIVE</div>
+      <h1 class="champ-title">THE CHAMPION</h1>
+      <div id="champ-stats" class="champ-stats"></div>
+      <button id="btn-newgame" class="btn btn-big">RUN IT BACK — NEW CAREER</button>
+    </div>
+  </div>
+
+  <div id="screen-pause" class="screen hidden">
+    <div class="pause-inner">
+      <h2>PAUSED</h2>
+      <div class="pause-sub">The crowd is booing.</div>
+      <button id="btn-resume" class="btn">RESUME</button>
+      <button id="btn-abandon" class="btn btn-ghost">FORFEIT MATCH</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
