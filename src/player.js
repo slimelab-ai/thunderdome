@@ -102,7 +102,7 @@ export class Player {
     this.stats.matchKills = 0; this.stats.matchHeadshots = 0;
     this.triggerHeld = false; this.adsHeld = false; this.ads = 0;
     this.crouchToggled = false;
-    this.lean = 0; this.leanAmount = 0; this.mantle = null; this.mantleCooldown = 0;
+    this.lean = 0; this.leanAmount = 0; this.leanToggle = 0; this.mantle = null; this.mantleCooldown = 0;
     this.healing = null; this.throwCd = 0;
   }
 
@@ -134,6 +134,9 @@ export class Player {
     if (code === 'KeyH') this.startHeal('medkit');
     if (code === 'KeyV') this.startHeal('splint');
     if (code === 'KeyG') this.throwGrenade();
+    // toggle lean: tap again to stand straight, tap the other side to switch
+    if (code === 'KeyQ') this.leanToggle = this.leanToggle === -1 ? 0 : -1;
+    if (code === 'KeyE') this.leanToggle = this.leanToggle === 1 ? 0 : 1;
     if (code.startsWith('Digit')) {
       const n = parseInt(code.slice(5)) - 1;
       if (n >= 0 && n < this.slots.length && n !== this.slotIdx) this.switchTo(n);
@@ -388,8 +391,9 @@ export class Player {
     this.kick = Math.max(0, this.kick - dt * 6);
     if (this.shakeT > 0) this.shakeT -= dt;
 
-    // ---- lean (Q/E) ----
-    const leanTarget = this.sprinting ? 0 : ((this.keys['KeyE'] ? 1 : 0) - (this.keys['KeyQ'] ? 1 : 0));
+    // ---- lean (Q/E, toggle) ----
+    if (this.sprinting) this.leanToggle = 0;
+    const leanTarget = this.leanToggle || 0;
     this.lean += (leanTarget - this.lean) * Math.min(1, dt * 9);
     // right vector at current yaw
     const rX = cos, rZ = -sin;

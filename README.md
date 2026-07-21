@@ -35,10 +35,13 @@ Open http://localhost:5173 in a real browser (pointer lock needs one).
   market between bouts: 5 weapons (pistol → SMG → shotgun → rifle → DMR), modular
   armor slots (helmet / vest / limb pads, two tiers each), consumables (medkits [H],
   splint kits [V], frag grenades [G]), 3 training tracks (marksmanship / cardio /
-  pain tolerance), and up to five hired mercenaries — rookie, veteran, elite — who
-  fight beside you and die permanently. Upgrading armor stashes your old piece —
-  hand it down to your crew (OUTFIT), share medkits and grenades with them, and
-  scavenge it all back off their bodies. Bots sprint, corner-peek with a real lean,
+  pain tolerance), and up to five hired mercenaries — rookie, veteran, elite tiers
+  set their base stats, but every recruit signs on with just a pistol. Recruits are
+  PERMANENT: knocked out mid-match, back next bout. Arm and armor them yourself —
+  buy +CREW weapon copies into the stash, hand down armor when you upgrade (OUTFIT
+  equips their best available kit), share medkits and grenades. Go into debt to the
+  house and your career ends at the wrong end of a pistol.
+  Bots sprint, corner-peek with a real lean,
   crouch with an articulated pose, bandage themselves, throw frags at hiding spots,
   and surge if you let a standoff drag. VULTURE speaks his commentary out loud
   (Web Speech API — no audio assets).

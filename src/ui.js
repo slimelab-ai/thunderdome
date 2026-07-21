@@ -41,10 +41,13 @@ export const CONSUMABLES = {
   grenade: { name: 'FRAG GRENADE', key: 'G', price: 90, max: 4, desc: 'The crowd-pleaser. 2.8s fuse, hurts everyone.' },
 };
 
+// Recruits are PERMANENT: they come with nothing but a pistol and their base stats.
+// You arm and armor them from the stash; when they go down mid-match they're back
+// (bruised, free of charge) for the next bout with everything you gave them.
 export const CREW_TIERS = {
-  rookie: { name: 'Rookie', price: 600, weapon: 'pistol', hp: 85, spreadMult: 1.7, reaction: 0.75, speedMult: 1, desc: 'Some kid with a pistol and a dream. The dream dies first.' },
-  veteran: { name: 'Veteran', price: 1400, weapon: 'smg', hp: 110, spreadMult: 1.15, reaction: 0.5, speedMult: 1.05, desc: 'Ex-military. SMG, steady hands, moderate trauma.' },
-  elite: { name: 'Elite', price: 2600, weapon: 'rifle', hp: 140, spreadMult: 0.85, reaction: 0.35, speedMult: 1.1, desc: 'Cartel-trained killer with a rifle. Worth every dollar.' },
+  rookie: { name: 'Rookie', price: 400, hp: 85, spreadMult: 1.7, reaction: 0.75, speedMult: 1, desc: 'Some kid with a pistol and a dream. Cheap to sign, slow to aim.' },
+  veteran: { name: 'Veteran', price: 1000, hp: 110, spreadMult: 1.15, reaction: 0.5, speedMult: 1.05, desc: 'Ex-military. Steady hands, moderate trauma. Bring your own gun.' },
+  elite: { name: 'Elite', price: 2000, hp: 140, spreadMult: 0.85, reaction: 0.35, speedMult: 1.1, desc: 'Cartel-trained killer. Give this one the good rifle.' },
 };
 
 export const TRAINING = {
@@ -73,7 +76,8 @@ export class UI {
     };
     this.screens = {
       menu: $('screen-menu'), intro: $('screen-intro'), shop: $('screen-shop'),
-      death: $('screen-death'), champion: $('screen-champion'), pause: $('screen-pause'),
+      death: $('screen-death'), champion: $('screen-champion'), executed: $('screen-executed'),
+      pause: $('screen-pause'),
     };
     this._eventTimer = null;
   }
@@ -232,15 +236,20 @@ export class UI {
         `<span>TOTAL: <b>$${earnings.total}</b></span>`;
     } else eb.classList.add('hidden');
 
-    // weapons
+    // weapons: your own copy (permanent loadout slot) + extra copies for the crew stash
     $('shop-weapons').innerHTML = WEAPON_ORDER.map(id => {
       const w = WEAPONS[id];
+      if (id === 'pistol') return '';
       const owned = career.weapons.includes(id);
       const afford = career.money >= w.price;
+      const stashN = career.stash.weapons[id] || 0;
       return `<div class="shop-item ${owned ? 'owned' : ''}">
-        <div class="si-info"><div class="si-name">${w.name}</div><div class="si-desc">${w.desc}</div></div>
-        ${owned ? '<span class="si-owned">OWNED</span>'
+        <div class="si-info"><div class="si-name">${w.name}${stashN ? ` <span class="dim">· stash ×${stashN}</span>` : ''}</div><div class="si-desc">${w.desc}</div></div>
+        <div class="roster-btns">
+        ${owned ? '<span class="si-owned">YOURS</span>'
           : `<button class="btn" data-buy-weapon="${id}" ${afford ? '' : 'disabled'}>$${w.price}</button>`}
+        <button class="btn" data-stash-weapon="${id}" ${afford ? '' : 'disabled'} title="buy a copy for the crew stash">+CREW</button>
+        </div>
       </div>`;
     }).join('');
 
@@ -270,36 +279,39 @@ export class UI {
       </div>`;
     }).join('');
 
-    // crew hire
-    const crewAlive = career.crew.filter(c => c.alive).length;
+    // crew hire (permanent signings)
+    const crewCount = career.crew.length;
     $('shop-crew').innerHTML = Object.entries(CREW_TIERS).map(([id, t]) => {
-      const afford = career.money >= t.price && crewAlive < 5;
+      const afford = career.money >= t.price && crewCount < 5;
       return `<div class="shop-item">
         <div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
         <button class="btn" data-hire="${id}" ${afford ? '' : 'disabled'}>$${t.price}</button>
       </div>`;
-    }).join('') + (crewAlive >= 5 ? '<div class="si-desc" style="padding:4px">Crew is full (5 max). Someone has to die first.</div>' : '');
+    }).join('') + (crewCount >= 5 ? '<div class="si-desc" style="padding:4px">Roster is full (5 max).</div>' : '');
 
-    // roster (with gear: hand down armor from the stash, share your supplies)
-    const stashDesc = ['head', 'body', 'limbs']
-      .flatMap(s => career.stash[s].map(t => ARMOR_SLOTS[s].tiers[t].name))
-      .join(', ');
+    // roster: permanent hires — arm and armor them from the stash, share supplies
+    const stashArmor = ['head', 'body', 'limbs']
+      .flatMap(s => career.stash[s].map(t => ARMOR_SLOTS[s].tiers[t].name));
+    const stashGuns = Object.entries(career.stash.weapons)
+      .filter(([, n]) => n > 0)
+      .map(([id, n]) => `${WEAPONS[id].name}${n > 1 ? ` ×${n}` : ''}`);
+    const stashDesc = [...stashGuns, ...stashArmor].join(', ');
     const gearLine = (g) => {
       const n = (s) => g[s] > 0 ? `T${g[s]}` : '–';
-      return `⛑${n('head')} 🦺${n('body')} 🦵${n('limbs')} · 🩹${g.medkit || 0} 💣${g.grenade || 0}`;
+      return `${WEAPONS[g.weapon || 'pistol'].name} · ⛑${n('head')} 🦺${n('body')} 🦵${n('limbs')} · 🩹${g.medkit || 0} 💣${g.grenade || 0}`;
     };
     $('shop-roster').innerHTML = (career.crew.length
-      ? career.crew.map((c, i) => `<div class="shop-item roster-card ${c.alive ? '' : 'roster-dead'}">
-          <div class="si-info"><div class="si-name">${c.name}</div>
-          <div class="si-desc">${CREW_TIERS[c.tier].name} · ${WEAPONS[CREW_TIERS[c.tier].weapon].name}${c.alive ? ` · ${c.kills || 0} kills<br>${gearLine(c.gear || {})}` : ' · KILLED IN ACTION'}</div></div>
-          ${c.alive ? `<div class="roster-btns">
-            <button class="btn" data-outfit="${i}" title="equip best stashed armor">OUTFIT</button>
+      ? career.crew.map((c, i) => `<div class="shop-item roster-card">
+          <div class="si-info"><div class="si-name">${c.name} <span class="dim">${CREW_TIERS[c.tier].name} · ${c.kills || 0} kills</span></div>
+          <div class="si-desc">${gearLine(c.gear || {})}</div></div>
+          <div class="roster-btns">
+            <button class="btn" data-outfit="${i}" title="equip best stashed weapon + armor">OUTFIT</button>
             <button class="btn" data-give="${i}:medkit" ${career.consumables.medkit > 0 && (c.gear?.medkit || 0) < 2 ? '' : 'disabled'}>+🩹</button>
             <button class="btn" data-give="${i}:grenade" ${career.consumables.grenade > 0 && (c.gear?.grenade || 0) < 2 ? '' : 'disabled'}>+💣</button>
-          </div>` : ''}
+          </div>
         </div>`).join('')
       : '<div class="si-desc" style="padding:4px">You fight alone. Brave. Stupid, but brave.</div>')
-      + `<div class="si-desc" style="padding:6px 4px">STASH: ${stashDesc || 'empty — upgrading armor stashes your old piece'}</div>`;
+      + `<div class="si-desc" style="padding:6px 4px">STASH: ${stashDesc || 'empty — buy +CREW weapon copies; upgrading armor stashes your old piece'}</div>`;
 
     // training
     $('shop-training').innerHTML = Object.entries(TRAINING).map(([id, t]) => {
@@ -323,6 +335,7 @@ export class UI {
       document.querySelectorAll(sel).forEach(b => b.onclick = () => { audio.uiClick(); fn(b.getAttribute(attr)); });
     };
     wire('[data-buy-weapon]', 'data-buy-weapon', actions.buyWeapon);
+    wire('[data-stash-weapon]', 'data-stash-weapon', actions.buyStashWeapon);
     wire('[data-buy-armor]', 'data-buy-armor', (v) => { const [slot, tier] = v.split(':'); actions.buyArmor(slot, parseInt(tier)); });
     wire('[data-buy-consumable]', 'data-buy-consumable', actions.buyConsumable);
     wire('[data-hire]', 'data-hire', actions.hire);
@@ -344,5 +357,9 @@ export class UI {
 
   renderChampion(statsHtml) {
     $('champ-stats').innerHTML = statsHtml;
+  }
+
+  renderExecuted(statsHtml) {
+    $('executed-stats').innerHTML = statsHtml;
   }
 }

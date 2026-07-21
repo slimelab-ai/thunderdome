@@ -66,7 +66,7 @@ function newCareer() {
     money: 0, rank: 10,
     weapons: ['pistol'],
     armor: { head: 0, body: 0, limbs: 0 },
-    stash: { head: [], body: [], limbs: [] },   // hand-me-down armor pieces
+    stash: { head: [], body: [], limbs: [], weapons: {} },   // hand-me-down armor + crew weapon copies
     consumables: { medkit: 1, splint: 1, grenade: 2 },
     skills: { aim: 0, cardio: 0, tough: 0 },
     crew: [],
@@ -84,7 +84,13 @@ function load() {
         if (c.armor === undefined) c.armor = { head: 0, body: c.armorTier || 0, limbs: 0 };
         if (c.consumables === undefined) c.consumables = { medkit: 1, splint: 1, grenade: 2 };
         if (c.stash === undefined) c.stash = { head: [], body: [], limbs: [] };
-        for (const m of c.crew || []) if (!m.gear) m.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
+        if (c.stash.weapons === undefined) c.stash.weapons = {};
+        const legacyTierWeapon = { rookie: 'pistol', veteran: 'smg', elite: 'rifle' };
+        for (const m of c.crew || []) {
+          if (!m.gear) m.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
+          if (!m.gear.weapon) m.gear.weapon = legacyTierWeapon[m.tier] || 'pistol';
+          m.alive = true; // recruits are permanent now — the fallen walk again
+        }
         return c;
       }
     }
@@ -156,13 +162,12 @@ function startMatch() {
   match = makeMatch();
   const squad = SQUADS[career.rank];
 
-  // spawn crew
-  const aliveCrew = career.crew.filter(c => c.alive);
-  aliveCrew.forEach((cm, i) => {
+  // spawn crew — everyone on the roster fights, carrying exactly what you gave them
+  career.crew.forEach((cm, i) => {
     const t = CREW_TIERS[cm.tier];
-    if (!cm.gear) cm.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
+    if (!cm.gear) cm.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0, weapon: 'pistol' };
     const c = new Combatant({
-      name: cm.name, team: 'player', weaponId: t.weapon,
+      name: cm.name, team: 'player', weaponId: cm.gear.weapon || 'pistol',
       skill: { spreadMult: t.spreadMult, reaction: t.reaction, speedMult: t.speedMult },
       hp: t.hp, shirt: 0x2e5d33,
       armorParts: {
@@ -172,10 +177,8 @@ function startMatch() {
       },
     });
     c.careerRef = cm;
-    c.healKits = (cm.tier === 'elite' ? 2 : 1) + cm.gear.medkit;
-    c.nades = (cm.tier === 'rookie' ? 0 : 1) + cm.gear.grenade;
-    c.baseKits = cm.tier === 'elite' ? 2 : 1;
-    c.baseNades = cm.tier === 'rookie' ? 0 : 1;
+    c.healKits = cm.gear.medkit;
+    c.nades = cm.gear.grenade;
     c.addTo(world, arena.spawns.playerCrew[i % arena.spawns.playerCrew.length]);
     match.crew.push(c);
   });
@@ -279,22 +282,8 @@ function handleKill(killer, victim, part) {
       audio.crowdRoar(1); audio.crowdRoar(1);
     }
   } else {
-    // crew member died — scavenge their gear back
-    if (victim.careerRef) {
-      victim.careerRef.alive = false;
-      career.totals.crewLost++;
-      const gear = victim.careerRef.gear;
-      if (gear) {
-        for (const slot of ['head', 'body', 'limbs']) {
-          if (gear[slot] > 0) { career.stash[slot].push(gear[slot]); gear[slot] = 0; }
-        }
-        // unused given supplies come back — they burn their OWN stock first, so
-        // whatever remains counts as yours up to what you handed over
-        career.consumables.medkit += Math.max(0, Math.min(gear.medkit, victim.healKits));
-        career.consumables.grenade += Math.max(0, Math.min(gear.grenade, victim.nades));
-        gear.medkit = 0; gear.grenade = 0;
-      }
-    }
+    // crew member went down — they're bruised, not buried; gear stays theirs
+    if (victim.careerRef) career.totals.crewLost++;
     announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
   }
 }
@@ -592,9 +581,9 @@ function updateEvents(dt) {
 // ============================================================ match end
 function finishMatch() {
   document.exitPointerLock();
-  // survivors' given supplies reflect what they actually used (own stock burns first)
+  // crew supply counts reflect what they actually used this match (down or not)
   for (const c of match.crew) {
-    if (c.alive && c.careerRef?.gear) {
+    if (c.careerRef?.gear) {
       c.careerRef.gear.medkit = Math.max(0, Math.min(c.careerRef.gear.medkit, c.healKits));
       c.careerRef.gear.grenade = Math.max(0, Math.min(c.careerRef.gear.grenade, c.nades));
     }
@@ -619,7 +608,7 @@ function finishMatch() {
         `Career kills: <b>${career.totals.kills}</b> (${career.totals.headshots} headshots)<br>` +
         `Total blood money earned: <b style="color:var(--gold)">$${career.totals.earned.toLocaleString()}</b><br>` +
         `Times carried out on a stretcher: <b>${career.totals.deaths}</b><br>` +
-        `Crew members buried: <b>${career.totals.crewLost}</b>`
+        `Crew knockouts absorbed: <b>${career.totals.crewLost}</b>`
       );
       ui.showScreen('champion');
       localStorage.removeItem(SAVE_KEY);
@@ -630,14 +619,27 @@ function finishMatch() {
     save();
     openShop(earnings);
   } else {
-    // death: house takes a cut
-    const cut = Math.min(career.money, Math.max(50, Math.round(career.money * 0.15)));
+    // death: the house takes its cut whether you can afford it or not
+    const cut = Math.max(120, Math.round(career.money * 0.15));
     career.money -= cut;
+    if (career.money < 0) {
+      // in debt to the house — there's only one collections department
+      phase = 'executed';
+      ui.renderExecuted(
+        `You owed the house <b style="color:var(--blood)">$${Math.abs(career.money)}</b> it was never getting back.<br>` +
+        `Career: rank ${career.rank} · ${career.totals.kills} kills · ${career.totals.deaths + 1} deaths · ` +
+        `$${career.totals.earned.toLocaleString()} earned and spent.`
+      );
+      ui.showScreen('executed');
+      localStorage.removeItem(SAVE_KEY);
+      return;
+    }
     save();
     phase = 'dead';
     ui.renderDeath(
       DEATH_LINES[(Math.random() * DEATH_LINES.length) | 0],
       `The house took its cut: <b style="color:var(--blood)">−$${cut}</b><br>` +
+      `Bankroll: $${career.money} — go into debt and the house collects YOU.<br>` +
       `Kills this bout: ${match.kills} · Career deaths: ${career.totals.deaths}`
     );
     ui.showScreen('death');
@@ -669,9 +671,30 @@ function renderShop(earnings) {
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
+    buyStashWeapon: (id) => {
+      const w = WEAPONS[id];
+      if (w && career.money >= w.price) {
+        career.money -= w.price;
+        career.stash.weapons[id] = (career.stash.weapons[id] || 0) + 1;
+        audio.cashRegister(); save(); renderShop(earnings);
+      }
+    },
     outfit: (idx) => {
       const m = career.crew[idx];
-      if (!m || !m.alive) return;
+      if (!m) return;
+      // best stashed weapon (by tier) beats what they carry
+      let bestGun = null;
+      for (const [id, n] of Object.entries(career.stash.weapons)) {
+        if (n > 0 && WEAPONS[id].tier > WEAPONS[m.gear.weapon || 'pistol'].tier &&
+            (!bestGun || WEAPONS[id].tier > WEAPONS[bestGun].tier)) bestGun = id;
+      }
+      if (bestGun) {
+        career.stash.weapons[bestGun]--;
+        if (m.gear.weapon && m.gear.weapon !== 'pistol') {
+          career.stash.weapons[m.gear.weapon] = (career.stash.weapons[m.gear.weapon] || 0) + 1;
+        }
+        m.gear.weapon = bestGun;
+      }
       for (const slot of ['head', 'body', 'limbs']) {
         const best = Math.max(0, ...career.stash[slot]);
         if (best > m.gear[slot]) {
@@ -684,7 +707,7 @@ function renderShop(earnings) {
     },
     giveItem: (idx, kind) => {
       const m = career.crew[idx];
-      if (!m || !m.alive) return;
+      if (!m) return;
       if ((career.consumables[kind] || 0) > 0 && (m.gear[kind] || 0) < 2) {
         career.consumables[kind]--;
         m.gear[kind] = (m.gear[kind] || 0) + 1;
@@ -701,9 +724,9 @@ function renderShop(earnings) {
     },
     hire: (tierId) => {
       const t = CREW_TIERS[tierId];
-      if (career.money >= t.price && career.crew.filter(c => c.alive).length < 5) {
+      if (career.money >= t.price && career.crew.length < 5) {
         career.money -= t.price;
-        career.crew.push({ name: nextCrewName(), tier: tierId, alive: true, kills: 0, gear: { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 } });
+        career.crew.push({ name: nextCrewName(), tier: tierId, alive: true, kills: 0, gear: { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0, weapon: 'pistol' } });
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -797,6 +820,7 @@ on('btn-fight', () => startMatch());
 on('btn-next-fight', () => showIntro());
 on('btn-retry', () => openShop());
 on('btn-newgame', () => { career = newCareer(); save(); ui.showScreen('menu'); showIntro(); });
+on('btn-executed-new', () => { career = newCareer(); save(); showIntro(); });
 on('btn-resume', () => {
   phase = 'match';
   ui.showHUDOnly();

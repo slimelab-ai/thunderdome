@@ -180,21 +180,34 @@ export class Announcer {
     this.queue = [];
     this.showing = 0;
     this.cooldowns = {};
+    this.lastLineAt = -99;
+    this._used = {};   // per-category lines already played this session (no repeats until exhausted)
+  }
+
+  _pickFresh(category) {
+    const pool = LINES[category] || ['...'];
+    const used = this._used[category] = this._used[category] || new Set();
+    let fresh = pool.filter(l => !used.has(l));
+    if (!fresh.length) { used.clear(); fresh = pool; }
+    const text = pick(fresh);
+    used.add(text);
+    return text;
   }
 
   say(category, vars = {}, { force = false, minGap = 4 } = {}) {
     const now = performance.now() / 1000;
-    if (!force && this.cooldowns[category] && now - this.cooldowns[category] < minGap) return;
+    if (!force) {
+      // he's a commentator, not a firehose: drop color lines while busy or too soon
+      if (this.showing > 0 || this.queue.length) return;
+      if (now - this.lastLineAt < 6) return;
+      if (this.cooldowns[category] && now - this.cooldowns[category] < minGap) return;
+      try { if (window.speechSynthesis?.speaking) return; } catch { /* fine */ }
+    }
     this.cooldowns[category] = now;
-    const pool = LINES[category] || ['...'];
-    this._recent = this._recent || {};
-    let text = pick(pool);
-    // don't repeat the same line back-to-back within a category
-    for (let tries = 0; tries < 3 && pool.length > 1 && text === this._recent[category]; tries++) text = pick(pool);
-    this._recent[category] = text;
+    let text = this._pickFresh(category);
     for (const [k, v] of Object.entries(vars)) text = text.replaceAll(`{${k}}`, v);
     if (force) this.queue.length = 0;
-    if (this.queue.length < 3) this.queue.push(text);
+    if (this.queue.length < 2) this.queue.push({ text, force });
   }
 
   update(dt) {
@@ -202,18 +215,24 @@ export class Announcer {
       this.showing -= dt;
       if (this.showing <= 0) this.wrap.classList.remove('show');
     } else if (this.queue.length) {
-      const text = this.queue.shift();
+      const { text, force } = this.queue.shift();
       this.line.textContent = `“${text}”`;
       this.wrap.classList.add('show');
       this.showing = 2.2 + text.length * 0.03;
-      this._speak(text);
+      this.lastLineAt = performance.now() / 1000;
+      this._speak(text, force);
     }
   }
 
   // VULTURE's voice: Web Speech API — zero assets, maximum carnival barker
-  _speak(text) {
+  _speak(text, force) {
     try {
       if (!window.speechSynthesis) return;
+      // never interrupt himself mid-sentence for color commentary
+      if (speechSynthesis.speaking) {
+        if (!force) return;
+        speechSynthesis.cancel();
+      }
       if (!this._voice) {
         const vs = speechSynthesis.getVoices();
         this._voice = vs.find(v => /^en/i.test(v.lang) && /male|david|mark|daniel|guy|george/i.test(v.name))
@@ -224,7 +243,6 @@ export class Announcer {
       u.pitch = 0.55;
       u.volume = 0.9;
       if (this._voice) u.voice = this._voice;
-      if (speechSynthesis.speaking) speechSynthesis.cancel();
       speechSynthesis.speak(u);
       this._spokeCount = (this._spokeCount || 0) + 1;
     } catch { /* no voice, no problem */ }

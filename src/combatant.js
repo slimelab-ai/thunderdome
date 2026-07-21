@@ -158,10 +158,16 @@ export class Combatant {
     this.gun.position.set(0.31, 0.9, -0.25);
     g.add(this.gun);
 
-    // name tag
-    this.tag = nameTagSprite(this.name, this.team === 'player' ? '#86ff3c' : '#ff5a5a');
-    this.tag.position.y = 1.95;
-    g.add(this.tag);
+    // name tag — crew only; giant red enemy labels made targets trivial to spot
+    if (this.team === 'player') {
+      this.tag = nameTagSprite(this.name, '#86ff3c');
+      this.tag.position.y = 1.95;
+      this.tag.material.opacity = 0.55;
+      this.tag.scale.multiplyScalar(0.75);
+      g.add(this.tag);
+    } else {
+      this.tag = { visible: false }; // stub so death code can hide it uniformly
+    }
 
     g.scale.setScalar(s);
     this.group = g;

@@ -90,7 +90,7 @@
         <button id="btn-new" class="btn btn-big">NEW CAREER</button>
       </div>
       <div class="menu-controls">
-        <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean</div>
+        <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> toggle lean</div>
         <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–5</b> weapons</div>
         <div><b>H</b> medkit &nbsp; <b>V</b> splint &nbsp; <b>G</b> grenade</div>
         <div class="menu-warn">Locational damage is real. Get shot in the arm — your aim goes. Get shot in the leg — you limp. Play slow. Play smart.</div>
@@ -128,7 +128,7 @@
           <div id="shop-armor"></div>
         </div>
         <div class="shop-col">
-          <div class="shop-col-title">🧟 HIRE MUSCLE <span class="dim">(fight beside you — die forever)</span></div>
+          <div class="shop-col-title">🧟 HIRE MUSCLE <span class="dim">(permanent — arm them from your stash)</span></div>
           <div id="shop-crew"></div>
           <div class="shop-col-title" style="margin-top:14px">👥 YOUR CREW</div>
           <div id="shop-roster"></div>
@@ -162,6 +162,16 @@
       <h1 class="champ-title">THE CHAMPION</h1>
       <div id="champ-stats" class="champ-stats"></div>
       <button id="btn-newgame" class="btn btn-big">RUN IT BACK — NEW CAREER</button>
+    </div>
+  </div>
+
+  <div id="screen-executed" class="screen hidden">
+    <div class="death-inner">
+      <h1 class="death-title">EXECUTED</h1>
+      <div class="death-line">You went into debt to the house. The house doesn't do payment plans.</div>
+      <div id="executed-stats" class="death-stats"></div>
+      <button id="btn-executed-new" class="btn btn-big">NEXT CONTESTANT — NEW CAREER</button>
+      <div class="death-hint">The crowd barely noticed. There's always another challenger.</div>
     </div>
   </div>
 
