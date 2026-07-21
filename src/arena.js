@@ -19,22 +19,25 @@ function loadProp(scene, file, position, rotationY, scale, fallback) {
     });
     scene.add(prop);
   };
-  const cached = propCache.get(file);
-  if (cached) {
-    if (cached.scene) install(cached.scene);
-    else cached.then(install).catch(fallback);
-    return;
+  let entry = propCache.get(file);
+  if (!entry) {
+    entry = propLoader.loadAsync(`/assets/models/${file}.glb`).then((gltf) => {
+      propCache.set(file, gltf);
+      return gltf;
+    });
+    propCache.set(file, entry);
   }
-  const pending = propLoader.loadAsync(`/assets/models/${file}.glb`);
-  propCache.set(file, pending);
-  pending.then((gltf) => {
-    propCache.set(file, gltf);
-    install(gltf.scene);
-  }).catch((err) => {
-    console.warn(`Could not load authored prop ${file}; using primitive fallback.`, err);
-    propCache.delete(file);
-    fallback();
-  });
+  if (entry.scene) {
+    install(entry.scene);
+  } else {
+    // NB: pending waiters must unwrap .scene themselves — handing `install` the raw
+    // GLTF result made every instance after the first silently fall back to primitives
+    entry.then((gltf) => install(gltf.scene)).catch((err) => {
+      console.warn(`Could not load authored prop ${file}; using primitive fallback.`, err);
+      propCache.delete(file);
+      fallback();
+    });
+  }
 }
 
 function canvasTex(w, h, draw) {
