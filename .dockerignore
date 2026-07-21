@@ -1,5 +1,6 @@
-node_modules
-dist
-.DS_Store
+.git
+.gitignore
 .deployed-sha
 cloudflared-credentials.json
+node_modules
+dist

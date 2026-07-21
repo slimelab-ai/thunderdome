@@ -1,0 +1,30 @@
+services:
+  app:
+    build:
+      context: .
+    image: thunderdome:latest
+    container_name: thunderdome_app
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    user: "0:0"
+    container_name: thunderdome_tunnel
+    restart: always
+    volumes:
+      - ./cloudflared-config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared-credentials.json:/etc/cloudflared/credentials.json:ro
+    command: tunnel --config /etc/cloudflared/config.yml run
+    depends_on:
+      app:
+        condition: service_healthy
+
+networks:
+  default:
+    name: thunderdome_net
