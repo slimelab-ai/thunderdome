@@ -38,7 +38,7 @@ export class Combatant {
     this.hp = opts.hp;
     this.armor = opts.armor || 0;
     this.boss = !!opts.boss;
-    this.scale = opts.scale || 1;
+    this.scale = opts.scale || (0.95 + Math.random() * 0.09); // natural height variety
     this.shirt = opts.shirt;
     this.alive = true;
     this.isPlayer = false;
@@ -63,6 +63,17 @@ export class Combatant {
     this.cautionT = 0;
     this.repathT = Math.random() * 0.5; // stagger so agents don't all path the same frame
     this._straightOK = true;
+    // supplies (assigned at spawn by rank/tier)
+    this.nades = 0;
+    this.nadeCd = 6 + Math.random() * 8;
+    this.healKits = 0;
+    this.healingT = 0;
+    this.sinceHit = 99;
+    // stance: crouch cycling + cosmetic lean so heads aren't all at one height
+    this.crouchK = 1;
+    this.stanceCrouch = false;
+    this.stanceTimer = 0.5 + Math.random() * 2;
+    this.leanK = 0;
     this.cooldown = 0.5 + Math.random();
     this.burstLeft = this._burstSize();
     this.reactionLeft = 0;
@@ -158,14 +169,16 @@ export class Combatant {
   }
 
   eyePos(out = new THREE.Vector3()) {
-    return out.set(this.pos.x, this.pos.y + 1.55 * this.scale, this.pos.z);
+    return out.set(this.pos.x, this.pos.y + 1.55 * this.scale * this.crouchK, this.pos.z);
   }
   aimPoint(out = new THREE.Vector3()) {
-    return out.set(this.pos.x, this.pos.y + 1.15 * this.scale, this.pos.z);
+    return out.set(this.pos.x, this.pos.y + 1.15 * this.scale * this.crouchK, this.pos.z);
   }
 
   applyDamage(world, part, dmg, shooter, point) {
     if (!this.alive) return;
+    this.sinceHit = 0;
+    this.healingT = 0; // getting shot interrupts bandaging
     if (part === 'torso' && this.armor > 0) dmg *= (1 - this.armor);
     if (this.boss && part === 'head') dmg *= 0.55; // gold mask
     this.hp -= dmg;
@@ -230,7 +243,26 @@ export class Combatant {
     this.cooldown -= dt;
     this.thinkTimer -= dt;
     this.strafeTimer -= dt;
+    this.sinceHit += dt;
+    this.nadeCd -= dt;
     if (this.cautionT > 0) this.cautionT -= dt;
+
+    // bandaging channel: crouched, helpless, healing
+    if (this.healingT > 0) {
+      this.healingT -= dt;
+      if (this.healingT <= 0) {
+        this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.45);
+        this.armDmg = 0;
+        this.legDmg = 0;
+      }
+    }
+
+    // stance cycling while engaged: pop up, drop down — heads at varied heights
+    this.stanceTimer -= dt;
+    if (this.stanceTimer <= 0) {
+      this.stanceCrouch = !this.stanceCrouch && Math.random() < 0.45;
+      this.stanceTimer = this.stanceCrouch ? 0.9 + Math.random() * 1.1 : 1.1 + Math.random() * 1.9;
+    }
 
     // ---- acquire target ----
     if (this.thinkTimer <= 0 || (this.target && !this._targetAlive())) {
@@ -254,7 +286,10 @@ export class Combatant {
       }
     }
 
-    if (this.target && !fleeing) {
+    this._traveling = false;
+    this._strafing = false;
+
+    if (this.target && !fleeing && this.healingT <= 0) {
       const tp = this._targetPos();
       const dx = tp.x - this.pos.x, dz = tp.z - this.pos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
@@ -273,6 +308,22 @@ export class Combatant {
         : this.target.aimPoint();
       const sight = hasLoS(world.colliders, eye, aim);
 
+      // patch up when hurt and out of contact
+      if (this.healKits > 0 && this.hp < this.maxHp * 0.38 && this.sinceHit > 2.2 && (!sight || dist > engage * 1.6)) {
+        this.healKits--;
+        this.healingT = 2.1;
+      }
+      // frag the target's hiding spot when we can't get an angle
+      if (this.nades > 0 && this.nadeCd <= 0 && !sight && dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
+        this.nades--;
+        this.nadeCd = 13 + Math.random() * 8;
+        const ndx = tp.x - this.pos.x, ndz = tp.z - this.pos.z;
+        const nd = Math.hypot(ndx, ndz) || 1;
+        const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
+        const jit = () => 1 + (Math.random() - 0.5) * 0.14;
+        world.throwGrenade(this.eyePos(), new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
+      }
+
       // close-range fighters storm high ground; long-range fighters hold and shoot up
       const targetY = this.target.pos.y;
       const heightGap = targetY - this.pos.y;
@@ -281,8 +332,10 @@ export class Combatant {
 
       if ((dist > engage || !sight || pushHigh) && this.cautionT > 0) {
         // a squadmate just died up ahead — hold and jink instead of feeding the corner
+        this._strafing = true;
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
       } else if (dist > engage || !sight || pushHigh) {
+        this._traveling = true;
         // travel toward the target through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame
         this.repathT = (this.repathT ?? 0) - dt;
@@ -312,6 +365,7 @@ export class Combatant {
           move.x += gdx / gd; move.z += gdz / gd;
         }
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && heightGap < 0.8) {
+        this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
           // backing up would mean falling off — hold and strafe instead
           if (this._ledgeAhead(world, -fz * this.strafeDir, fx * this.strafeDir)) this.strafeDir *= -1;
@@ -323,6 +377,7 @@ export class Combatant {
       } else if (this.weaponId === 'shotgun' && dist > 3) {
         move.x += fx; move.z += fz;
       } else {
+        this._strafing = true;
         if (this._ledgeAhead(world, -fz * this.strafeDir, fx * this.strafeDir)) this.strafeDir *= -1;
         move.x += -fz * this.strafeDir; move.z += fx * this.strafeDir;
       }
@@ -345,7 +400,7 @@ export class Combatant {
       if (los && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
         const dir = aim.clone().sub(eye).normalize();
         const distFactor = 0.7 + dist / 30;
-        const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4) * distFactor;
+        const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4) * distFactor * (this.crouchK < 0.9 ? 0.8 : 1);
         const pellets = w.pellets;
         for (let i = 0; i < pellets; i++) {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
@@ -462,7 +517,7 @@ export class Combatant {
         }
         if (!chosen) chosen = rot(move, 2.6 * (this.avoidSide || 1));
       }
-      const spd = this.baseSpeed * speedMult;
+      const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1);
       this.pos.addScaledVector(chosen, spd * dt);
       resolveCircle(this.pos, this.radius, world.colliders, this.pos.y);
       moving = true;
@@ -482,8 +537,16 @@ export class Combatant {
     if (Math.abs(gY - this.pos.y) < 0.02) this.pos.y = gY;
 
     // ---- pose ----
+    // crouch: squash the whole rig (hitboxes squash with it), lean: tilt into the strafe
+    const wantCrouch = this.healingT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
+    this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
+    this.group.scale.y = this.scale * this.crouchK;
+    const leanTarget = this._strafing ? -this.strafeDir * 0.09 : 0;
+    this.leanK += (leanTarget - this.leanK) * Math.min(1, dt * 6);
+
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
+    this.group.rotation.z = this.leanK;
     const sw = Math.sin(this.animPhase) * 0.55 * this.moveAmount;
     const limp = this.legDmg > 0.3;
     this.legL.rotation.x = sw * (limp ? 0.4 : 1);

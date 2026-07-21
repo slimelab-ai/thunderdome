@@ -80,6 +80,26 @@ export class FX {
     this.flashTime = 0.05;
   }
 
+  explosion(pos) {
+    this.spawnParticles(pos, 46, { color: [1.0, 0.7, 0.25], spread: 9, up: 6, grav: 8 });
+    this.spawnParticles(pos, 26, { color: [0.25, 0.24, 0.22], spread: 4, up: 4.5, grav: -0.6, jitterColor: 0.08 });
+    this.flashLight.position.set(pos.x, pos.y + 0.6, pos.z);
+    this.flashLight.intensity = 220;
+    this.flashTime = 0.22;
+    // scorch mark
+    const m = new THREE.Mesh(this.decalGeo, new THREE.MeshBasicMaterial({ color: 0x0e0d0c, transparent: true, opacity: 0.8, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(pos.x, Math.max(0.02, pos.y - 0.07) + this.decals.length * 0.0004, pos.z);
+    m.scale.set(2.4, 2.4, 2.4);
+    this.scene.add(m);
+    this.decals.push({ mesh: m, age: 1.2 });
+    if (this.decals.length > 24) {
+      const old = this.decals.shift();
+      this.scene.remove(old.mesh);
+      old.mesh.material.dispose();
+    }
+  }
+
   bloodPool(pos) {
     const m = new THREE.Mesh(this.decalGeo, new THREE.MeshBasicMaterial({ color: 0x3d0508, transparent: true, opacity: 0.85, depthWrite: false }));
     m.rotation.x = -Math.PI / 2;

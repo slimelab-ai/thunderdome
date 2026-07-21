@@ -88,6 +88,11 @@ export const LINES = {
     "The cheap seats are throwing MOLOTOVS again! Security, do nothing!",
     "FIRE IN THE PIT! Someone's insurance premium just tripled!",
   ],
+  nade: [
+    "FRAG OUT! Somebody's about to have a very loud problem!",
+    "Live grenade on the floor, folks! Place your bets on the shrapnel!",
+    "Oh-ho, the pineapple express has DEPARTED!",
+  ],
   bored: [
     "The crowd paid for BLOOD, not a stakeout, challenger!",
     "Our challenger appears to have taken ROOT, folks! Management is preparing... motivation!",
@@ -130,12 +135,34 @@ export class Announcer {
       this.line.textContent = `“${text}”`;
       this.wrap.classList.add('show');
       this.showing = 2.2 + text.length * 0.03;
+      this._speak(text);
     }
+  }
+
+  // VULTURE's voice: Web Speech API — zero assets, maximum carnival barker
+  _speak(text) {
+    try {
+      if (!window.speechSynthesis) return;
+      if (!this._voice) {
+        const vs = speechSynthesis.getVoices();
+        this._voice = vs.find(v => /^en/i.test(v.lang) && /male|david|mark|daniel|guy|george/i.test(v.name))
+          || vs.find(v => /^en/i.test(v.lang)) || null;
+      }
+      const u = new SpeechSynthesisUtterance(text.replace(/[“”"]/g, ''));
+      u.rate = 1.2;
+      u.pitch = 0.55;
+      u.volume = 0.9;
+      if (this._voice) u.voice = this._voice;
+      if (speechSynthesis.speaking) speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+      this._spokeCount = (this._spokeCount || 0) + 1;
+    } catch { /* no voice, no problem */ }
   }
 
   clear() {
     this.queue.length = 0;
     this.showing = 0;
     this.wrap.classList.remove('show');
+    try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
   }
 }

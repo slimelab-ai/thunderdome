@@ -4,7 +4,7 @@ import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
-import { UI, ARMOR_TIERS, CREW_TIERS, TRAINING, nextCrewName } from './ui.js';
+import { UI, ARMOR_SLOTS, CONSUMABLES, CREW_TIERS, TRAINING, nextCrewName } from './ui.js';
 import { WEAPONS } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
@@ -64,7 +64,9 @@ let career;
 function newCareer() {
   return {
     money: 0, rank: 10,
-    weapons: ['pistol'], armorTier: 0,
+    weapons: ['pistol'],
+    armor: { head: 0, body: 0, limbs: 0 },
+    consumables: { medkit: 1, splint: 1, grenade: 2 },
     skills: { aim: 0, cardio: 0, tough: 0 },
     crew: [],
     totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0 },
@@ -74,7 +76,15 @@ function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); 
 function load() {
   try {
     const s = localStorage.getItem(SAVE_KEY);
-    if (s) { const c = JSON.parse(s); if (c && c.rank >= 1) return c; }
+    if (s) {
+      const c = JSON.parse(s);
+      if (c && c.rank >= 1) {
+        // migrate pre-modular-armor saves
+        if (c.armor === undefined) c.armor = { head: 0, body: c.armorTier || 0, limbs: 0 };
+        if (c.consumables === undefined) c.consumables = { medkit: 1, splint: 1, grenade: 2 };
+        return c;
+      }
+    }
   } catch { /* ignore */ }
   return null;
 }
@@ -132,6 +142,10 @@ function clearCombatants() {
   for (const z of world.zones) removeZoneVisual(z);
   world.zones.length = 0;
   if (match?.airdrop?.mesh) scene.remove(match.airdrop.mesh);
+  if (world.grenades) {
+    for (const g of world.grenades) scene.remove(g.mesh);
+    world.grenades.length = 0;
+  }
 }
 
 function startMatch() {
@@ -149,6 +163,8 @@ function startMatch() {
       hp: t.hp, shirt: 0x2e5d33,
     });
     c.careerRef = cm;
+    c.healKits = cm.tier === 'elite' ? 2 : 1;
+    c.nades = cm.tier === 'rookie' ? 0 : 1;
     c.addTo(world, arena.spawns.playerCrew[i % arena.spawns.playerCrew.length]);
     match.crew.push(c);
   });
@@ -161,6 +177,10 @@ function startMatch() {
       skill: { spreadMult: r.sp, reaction: r.re, speedMult: 1 + (10 - career.rank) * 0.012 },
       hp: r.hp, shirt: squad.shirt, armor: r.ar || 0, boss: r.boss, scale: r.scale,
     });
+    // higher-league fighters carry supplies
+    c.nades = career.rank <= 3 ? 2 : career.rank <= 7 ? 1 : 0;
+    c.healKits = career.rank <= 6 ? 1 : 0;
+    if (r.boss) { c.nades = 2; c.healKits = 2; }
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
@@ -171,7 +191,13 @@ function startMatch() {
   if (player.slotIdx >= player.slots.length) player.slotIdx = player.slots.length - 1;
   player._mountViewmodel();
   player.skills = career.skills;
-  player.armorMit = ARMOR_TIERS[career.armorTier].mit;
+  player.armor = {
+    head: ARMOR_SLOTS.head.tiers[career.armor.head].mit,
+    body: ARMOR_SLOTS.body.tiers[career.armor.body].mit,
+    limbs: ARMOR_SLOTS.limbs.tiers[career.armor.limbs].mit,
+    limbAccum: ARMOR_SLOTS.limbs.tiers[career.armor.limbs].accum || 0,
+  };
+  player.consumables = career.consumables;
   player.resetForMatch(arena.spawns.player);
 
   match.campAnchor.x = player.pos.x;
@@ -265,6 +291,104 @@ function handlePlayerDamaged(dmg, part, fromPos) {
     announcer.say('lose', {}, { force: true });
     career.totals.deaths++;
     audio.crowdRoar(1);
+  }
+}
+
+// ============================================================ grenades
+import { hasLoS } from './combat.js';
+
+const NADE_GEO = new THREE.SphereGeometry(0.09, 8, 6);
+const NADE_MAT = new THREE.MeshLambertMaterial({ color: 0x2c3a2c });
+
+world.grenades = [];
+world.throwGrenade = (origin, vel, thrower) => {
+  const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
+  mesh.position.copy(origin);
+  scene.add(mesh);
+  world.grenades.push({ pos: origin.clone(), vel: vel.clone(), fuse: 2.8, mesh, thrower });
+  audio.reload(0);
+  announcer.say('nade', {}, { minGap: 14 });
+};
+
+function explode(pos, thrower) {
+  const R = 6.2, MAX = 105, MIN = 12;
+  audio.explosion(1.2 / (1 + pos.distanceTo(camera.position) * 0.05));
+  fx.explosion(pos);
+  audio.crowdRoar(0.8);
+
+  const blast = new THREE.Vector3(pos.x, pos.y + 0.3, pos.z);
+  const dmgAt = (d, occluded) => Math.max(0, (MAX - (MAX - MIN) * (d / R))) * (occluded ? 0.22 : 1);
+
+  // player
+  if (player.alive) {
+    const chest = new THREE.Vector3(player.pos.x, player.pos.y + 1.1, player.pos.z);
+    const d = chest.distanceTo(blast);
+    if (d < R) {
+      const occ = !hasLoS(world.colliders, blast, chest);
+      handlePlayerDamaged(dmgAt(d, occ) / 0.8, 'torso', pos); // undo grit for env-scale
+      player.shakeT = 0.5;
+    } else if (d < R * 2.2) {
+      player.shakeT = 0.3;
+    }
+  }
+  // combatants
+  for (const c of [...world.combatants]) {
+    if (!c.alive) continue;
+    const chest = c.aimPoint();
+    const d = chest.distanceTo(blast);
+    if (d < R) {
+      const occ = !hasLoS(world.colliders, blast, chest);
+      const dmg = dmgAt(d, occ);
+      if (dmg > 1) c.applyDamage(world, 'torso', dmg, thrower, chest);
+    }
+  }
+}
+
+function updateGrenades(dt) {
+  for (let i = world.grenades.length - 1; i >= 0; i--) {
+    const g = world.grenades[i];
+    g.fuse -= dt;
+    g.vel.y -= 13 * dt;
+    const prevX = g.pos.x, prevZ = g.pos.z;
+    g.pos.addScaledVector(g.vel, dt);
+
+    // floor + box-top bounces
+    let floorY = 0;
+    for (const box of world.colliders) {
+      if (box.max.y <= 3 && box.containsXZ(g.pos.x, g.pos.z, 0.09) && g.pos.y > box.max.y - 0.2) {
+        floorY = Math.max(floorY, box.max.y);
+      }
+    }
+    if (g.pos.y < floorY + 0.09 && g.vel.y < 0) {
+      g.pos.y = floorY + 0.09;
+      g.vel.y *= -0.36;
+      g.vel.x *= 0.72; g.vel.z *= 0.72;
+      if (Math.abs(g.vel.y) < 0.6) g.vel.y = 0;
+      audio.ricochet();
+    }
+    // wall bounces: entered a box side → back out and reflect horizontally
+    for (const box of world.colliders) {
+      if (g.pos.y > box.max.y || g.pos.y < box.min.y) continue;
+      if (box.containsXZ(g.pos.x, g.pos.z, 0.09) && !box.containsXZ(prevX, prevZ, 0.09)) {
+        const p = { x: g.pos.x, z: g.pos.z };
+        box.pushCircleXZ(p, 0.12);
+        const nx = p.x - g.pos.x, nz = p.z - g.pos.z;
+        const nl = Math.hypot(nx, nz) || 1;
+        const dot = (g.vel.x * nx + g.vel.z * nz) / nl;
+        g.vel.x -= 2 * dot * (nx / nl); g.vel.z -= 2 * dot * (nz / nl);
+        g.vel.x *= 0.5; g.vel.z *= 0.5;
+        g.pos.x = p.x; g.pos.z = p.z;
+        audio.ricochet();
+        break;
+      }
+    }
+
+    g.mesh.position.copy(g.pos);
+    if (g.fuse <= 0) {
+      scene.remove(g.mesh);
+      world.grenades.splice(i, 1);
+      explode(g.pos, g.thrower);
+    }
   }
 }
 
@@ -494,11 +618,19 @@ function renderShop(earnings) {
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
-    buyArmor: (tier) => {
-      const a = ARMOR_TIERS[tier];
-      if (career.money >= a.price && career.armorTier === tier - 1) {
-        career.money -= a.price;
-        career.armorTier = tier;
+    buyArmor: (slot, tier) => {
+      const t = ARMOR_SLOTS[slot]?.tiers[tier];
+      if (t && career.money >= t.price && career.armor[slot] === tier - 1) {
+        career.money -= t.price;
+        career.armor[slot] = tier;
+        audio.cashRegister(); save(); renderShop(earnings);
+      }
+    },
+    buyConsumable: (id) => {
+      const c = CONSUMABLES[id];
+      if (c && career.money >= c.price && (career.consumables[id] || 0) < c.max) {
+        career.money -= c.price;
+        career.consumables[id] = (career.consumables[id] || 0) + 1;
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -541,8 +673,8 @@ document.addEventListener('mouseup', (e) => {
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // every key the game uses — swallow them so browser shortcuts (Ctrl+S, Ctrl+D, space-scroll…) never fire
-const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyR', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ControlLeft',
-  'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5']);
+const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyR', 'KeyQ', 'KeyE', 'KeyH', 'KeyV', 'KeyG',
+  'Space', 'ShiftLeft', 'ControlLeft', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5']);
 
 document.addEventListener('keydown', (e) => {
   if (phase === 'match') {
@@ -666,6 +798,7 @@ function stepMatch(dt) {
   }
   for (const c of world.combatants) c.update(world, dt);
   updateEvents(dt);
+  updateGrenades(dt);
   announcer.update(dt);
   ui.updateHUD(player, career, match);
 

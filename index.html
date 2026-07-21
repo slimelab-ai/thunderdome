@@ -62,7 +62,13 @@
       </div>
     </div>
 
+    <div id="channel-wrap" class="hidden">
+      <div id="channel-label">PATCHING UP…</div>
+      <div id="channel-bar"><div id="channel-fill"></div></div>
+    </div>
+
     <div id="hud-bottomright">
+      <div id="consumables"></div>
       <div id="weapon-name">P9 SIDEARM</div>
       <div id="ammo-block"><span id="ammo-mag">12</span><span id="ammo-sep">/</span><span id="ammo-reserve">∞</span></div>
       <div id="reload-hint" class="hidden">RELOADING…</div>
@@ -86,6 +92,7 @@
       <div class="menu-controls">
         <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean</div>
         <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–5</b> weapons</div>
+        <div><b>H</b> medkit &nbsp; <b>V</b> splint &nbsp; <b>G</b> grenade</div>
         <div class="menu-warn">Locational damage is real. Get shot in the arm — your aim goes. Get shot in the leg — you limp. Play slow. Play smart.</div>
       </div>
     </div>
@@ -115,6 +122,8 @@
         <div class="shop-col">
           <div class="shop-col-title">🔫 ARMORY</div>
           <div id="shop-weapons"></div>
+          <div class="shop-col-title" style="margin-top:14px">💊 SUPPLIES</div>
+          <div id="shop-consumables"></div>
           <div class="shop-col-title" style="margin-top:14px">🦺 PROTECTION</div>
           <div id="shop-armor"></div>
         </div>

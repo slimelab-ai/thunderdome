@@ -10,11 +10,36 @@ function healthColor(f) {
   return `rgb(${r},${g},60)`;
 }
 
-export const ARMOR_TIERS = [
-  { name: 'No Armor', price: 0, mit: 0, desc: '' },
-  { name: 'STAB VEST', price: 500, mit: 0.3, desc: 'Cheap kevlar. −30% torso damage.' },
-  { name: 'CERAMIC PLATES', price: 1300, mit: 0.55, desc: 'Military surplus. −55% torso damage.' },
-];
+// Modular armor: independent slots, sequential tiers within each.
+export const ARMOR_SLOTS = {
+  head: {
+    label: 'HEAD', tiers: [
+      { name: 'Bare Skull', price: 0, mit: 0 },
+      { name: 'STEEL POT', price: 450, mit: 0.35, desc: 'Surplus helmet. −35% head damage.' },
+      { name: 'OPS-CORE RIG', price: 1200, mit: 0.55, desc: 'High-cut composite. −55% head damage.' },
+    ],
+  },
+  body: {
+    label: 'BODY', tiers: [
+      { name: 'T-Shirt', price: 0, mit: 0 },
+      { name: 'STAB VEST', price: 500, mit: 0.3, desc: 'Cheap kevlar. −30% torso damage.' },
+      { name: 'CERAMIC PLATES', price: 1300, mit: 0.55, desc: 'Military surplus. −55% torso damage.' },
+    ],
+  },
+  limbs: {
+    label: 'LIMBS', tiers: [
+      { name: 'Bare Limbs', price: 0, mit: 0, accum: 0 },
+      { name: 'COMBAT PADS', price: 400, mit: 0.25, accum: 0.45, desc: '−25% limb damage, injuries accumulate slower.' },
+      { name: 'EXO BRACING', price: 950, mit: 0.4, accum: 0.65, desc: '−40% limb damage, aim/limp penalties heavily dampened.' },
+    ],
+  },
+};
+
+export const CONSUMABLES = {
+  medkit: { name: 'MEDKIT', key: 'H', price: 160, max: 3, desc: 'Channel 2.2s, restore 65 HP. Firing cancels.' },
+  splint: { name: 'SPLINT KIT', key: 'V', price: 110, max: 3, desc: 'Channel 1.8s, fixes busted arms and legs.' },
+  grenade: { name: 'FRAG GRENADE', key: 'G', price: 90, max: 4, desc: 'The crowd-pleaser. 2.8s fuse, hurts everyone.' },
+};
 
 export const CREW_TIERS = {
   rookie: { name: 'Rookie', price: 600, weapon: 'pistol', hp: 85, spreadMult: 1.7, reaction: 0.75, speedMult: 1, desc: 'Some kid with a pistol and a dream. The dream dies first.' },
@@ -43,6 +68,7 @@ export class UI {
       damageFlash: $('damage-flash'), lowhp: $('lowhp-overlay'),
       eventBanner: $('event-banner'), eventTitle: $('event-title'), eventSub: $('event-sub'),
       objective: $('objective-line'), interact: $('interact-hint'),
+      consRow: $('consumables'), channelWrap: $('channel-wrap'), channelFill: $('channel-fill'), channelLabel: $('channel-label'),
       bp: { head: $('bp-head'), torso: $('bp-torso'), armL: $('bp-armL'), armR: $('bp-armR'), legL: $('bp-legL'), legR: $('bp-legR') },
     };
     this.screens = {
@@ -97,6 +123,26 @@ export class UI {
     this.el.rank.textContent = career.rank;
     this.el.money.textContent = career.money.toLocaleString();
     this.el.frenzy.classList.toggle('hidden', !match.frenzy);
+
+    // consumables
+    const cons = career.consumables;
+    const consKey = `${cons.medkit}|${cons.splint}|${cons.grenade}`;
+    if (this.el.consRow._last !== consKey) {
+      this.el.consRow._last = consKey;
+      this.el.consRow.innerHTML =
+        `<span class="${cons.medkit ? '' : 'cons-empty'}"><b>H</b> 🩹${cons.medkit}</span>` +
+        `<span class="${cons.splint ? '' : 'cons-empty'}"><b>V</b> 🩼${cons.splint}</span>` +
+        `<span class="${cons.grenade ? '' : 'cons-empty'}"><b>G</b> 💣${cons.grenade}</span>`;
+    }
+
+    // heal channel
+    if (player.healing) {
+      this.el.channelWrap.classList.remove('hidden');
+      this.el.channelFill.style.width = `${(player.healing.t / player.healing.dur) * 100}%`;
+      this.el.channelLabel.textContent = player.healing.label;
+    } else {
+      this.el.channelWrap.classList.add('hidden');
+    }
 
     // crosshair spread
     const spreadPx = 6 + player.currentSpread() * 14;
@@ -198,27 +244,41 @@ export class UI {
       </div>`;
     }).join('');
 
-    // armor
-    $('shop-armor').innerHTML = ARMOR_TIERS.map((a, i) => {
-      if (i === 0) return '';
-      const owned = career.armorTier >= i;
-      const canBuy = career.armorTier === i - 1 && career.money >= a.price;
-      return `<div class="shop-item ${owned ? 'owned' : ''}">
-        <div class="si-info"><div class="si-name">${a.name}</div><div class="si-desc">${a.desc}</div></div>
-        ${owned ? '<span class="si-owned">EQUIPPED</span>'
-          : `<button class="btn" data-buy-armor="${i}" ${canBuy ? '' : 'disabled'}>$${a.price}</button>`}
+    // armor slots
+    $('shop-armor').innerHTML = Object.entries(ARMOR_SLOTS).map(([slot, def]) => {
+      const cur = career.armor[slot];
+      return `<div class="armor-slot-label">${def.label} — <span class="dim">${def.tiers[cur].name}</span></div>` +
+        def.tiers.map((t, i) => {
+          if (i === 0) return '';
+          const owned = cur >= i;
+          const canBuy = cur === i - 1 && career.money >= t.price;
+          return `<div class="shop-item ${owned ? 'owned' : ''}">
+            <div class="si-info"><div class="si-name">${t.name}</div><div class="si-desc">${t.desc}</div></div>
+            ${owned ? '<span class="si-owned">EQUIPPED</span>'
+              : `<button class="btn" data-buy-armor="${slot}:${i}" ${canBuy ? '' : 'disabled'}>$${t.price}</button>`}
+          </div>`;
+        }).join('');
+    }).join('');
+
+    // consumables
+    $('shop-consumables').innerHTML = Object.entries(CONSUMABLES).map(([id, c]) => {
+      const held = career.consumables[id] || 0;
+      const canBuy = held < c.max && career.money >= c.price;
+      return `<div class="shop-item">
+        <div class="si-info"><div class="si-name">${c.name} <span class="dim">[${c.key}] · holding ${held}/${c.max}</span></div><div class="si-desc">${c.desc}</div></div>
+        <button class="btn" data-buy-consumable="${id}" ${canBuy ? '' : 'disabled'}>$${c.price}</button>
       </div>`;
     }).join('');
 
     // crew hire
     const crewAlive = career.crew.filter(c => c.alive).length;
     $('shop-crew').innerHTML = Object.entries(CREW_TIERS).map(([id, t]) => {
-      const afford = career.money >= t.price && crewAlive < 3;
+      const afford = career.money >= t.price && crewAlive < 5;
       return `<div class="shop-item">
         <div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
         <button class="btn" data-hire="${id}" ${afford ? '' : 'disabled'}>$${t.price}</button>
       </div>`;
-    }).join('') + (crewAlive >= 3 ? '<div class="si-desc" style="padding:4px">Crew is full (3 max). Someone has to die first.</div>' : '');
+    }).join('') + (crewAlive >= 5 ? '<div class="si-desc" style="padding:4px">Crew is full (5 max). Someone has to die first.</div>' : '');
 
     // roster
     $('shop-roster').innerHTML = career.crew.length
@@ -250,7 +310,8 @@ export class UI {
       document.querySelectorAll(sel).forEach(b => b.onclick = () => { audio.uiClick(); fn(b.getAttribute(attr)); });
     };
     wire('[data-buy-weapon]', 'data-buy-weapon', actions.buyWeapon);
-    wire('[data-buy-armor]', 'data-buy-armor', (i) => actions.buyArmor(parseInt(i)));
+    wire('[data-buy-armor]', 'data-buy-armor', (v) => { const [slot, tier] = v.split(':'); actions.buyArmor(slot, parseInt(tier)); });
+    wire('[data-buy-consumable]', 'data-buy-consumable', actions.buyConsumable);
     wire('[data-hire]', 'data-hire', actions.hire);
     wire('[data-train]', 'data-train', actions.train);
   }

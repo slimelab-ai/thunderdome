@@ -26,7 +26,10 @@ export class Player {
     this.alive = true;
     this.armDmg = 0;
     this.legDmg = 0;
-    this.armorMit = 0;       // torso mitigation 0..0.6
+    this.armor = { head: 0, body: 0, limbs: 0, limbAccum: 0 };  // per-slot mitigation
+    this.consumables = { medkit: 0, splint: 0, grenade: 0 };    // shared ref to career.consumables
+    this.healing = null;      // {kind, label, t, dur}
+    this.throwCd = 0;
     this.skills = { aim: 0, cardio: 0, tough: 0 };
 
     // weapons
@@ -100,6 +103,7 @@ export class Player {
     this.triggerHeld = false; this.adsHeld = false; this.ads = 0;
     this.crouchToggled = false;
     this.lean = 0; this.leanAmount = 0; this.mantle = null; this.mantleCooldown = 0;
+    this.healing = null; this.throwCd = 0;
   }
 
   healLimbs() { this.armDmg = 0; this.legDmg = 0; }
@@ -127,6 +131,9 @@ export class Player {
     if (!down) return;
     if (code === 'KeyR') this.startReload();
     if (code === 'KeyC') this.crouchToggled = !this.crouchToggled;
+    if (code === 'KeyH') this.startHeal('medkit');
+    if (code === 'KeyV') this.startHeal('splint');
+    if (code === 'KeyG') this.throwGrenade();
     if (code.startsWith('Digit')) {
       const n = parseInt(code.slice(5)) - 1;
       if (n >= 0 && n < this.slots.length && n !== this.slotIdx) this.switchTo(n);
@@ -138,6 +145,33 @@ export class Player {
     this.triggerHeld = false;
     this.adsHeld = false;
     this.sprinting = false;
+  }
+
+  startHeal(kind) {
+    if (!this.alive || this.healing) return;
+    if (kind === 'medkit') {
+      if (this.consumables.medkit <= 0 || this.hp >= this.maxHp - 1) return;
+      this.healing = { kind, label: 'PATCHING UP…', t: 0, dur: 2.2 };
+    } else {
+      if (this.consumables.splint <= 0 || (this.armDmg < 0.05 && this.legDmg < 0.05)) return;
+      this.healing = { kind, label: 'SPLINTING…', t: 0, dur: 1.8 };
+    }
+    audio.reload(0);
+  }
+
+  cancelHeal() { this.healing = null; }
+
+  throwGrenade() {
+    if (!this.alive || this.healing || this.throwCd > 0 || this.consumables.grenade <= 0) return;
+    this.consumables.grenade--;
+    this.throwCd = 0.7;
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    const origin = this.camera.position.clone().addScaledVector(dir, 0.35);
+    const vel = dir.clone().multiplyScalar(11.5);
+    vel.y += 3.6;
+    this.world.throwGrenade(origin, vel, this.world.playerShooter);
+    this.kick = Math.min(1, this.kick + 0.7);
   }
 
   onWheel(deltaY) {
@@ -176,11 +210,14 @@ export class Player {
   // ---------- damage ----------
   takeDamage(dmg, part, fromPos) {
     if (!this.alive) return;
-    if (part === 'torso') dmg *= (1 - this.armorMit);
+    if (part === 'torso') dmg *= (1 - this.armor.body);
+    else if (part === 'head') dmg *= (1 - this.armor.head);
+    else dmg *= (1 - this.armor.limbs);
     dmg *= 0.8; // player grit
     this.hp -= dmg;
-    if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + 0.34);
-    if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + 0.34);
+    const accum = 0.34 * (1 - this.armor.limbAccum);
+    if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + accum);
+    if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + accum);
     this.shakeT = 0.25;
     audio.hurt();
     if (this.hp <= 0) {
@@ -222,7 +259,7 @@ export class Player {
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const wx = ix * cos + iz * sin;
     const wz = -ix * sin + iz * cos;
-    const speed = 4.4 * this.speedMult * (this.sprinting ? 1.55 : 1) * (this.crouching ? 0.55 : 1) * (1 - this.ads * 0.35);
+    const speed = 4.4 * this.speedMult * (this.sprinting ? 1.55 : 1) * (this.crouching ? 0.55 : 1) * (1 - this.ads * 0.35) * (this.healing ? 0.6 : 1);
 
     const accel = this.onGround ? 22 : 5;
     this.vel.x += (wx * speed - this.vel.x) * Math.min(1, accel * dt);
@@ -295,8 +332,28 @@ export class Player {
       this.bobT += dt * hSpeed * (this.legDmg > 0.3 ? 2.6 : 1.9);
     }
 
+    // ---- healing channel ----
+    this.throwCd -= dt;
+    if (this.healing) {
+      this.healing.t += dt;
+      if (this.triggerHeld) {
+        this.cancelHeal(); // firing intent interrupts (item not consumed)
+      } else if (this.healing && this.healing.t >= this.healing.dur) {
+        if (this.healing.kind === 'medkit') {
+          this.consumables.medkit--;
+          this.hp = Math.min(this.maxHp, this.hp + 65);
+        } else {
+          this.consumables.splint--;
+          this.armDmg = 0;
+          this.legDmg = 0;
+        }
+        this.healing = null;
+        audio.reload(1);
+      }
+    }
+
     // ---- ADS ----
-    const adsTarget = this.adsHeld && this.reloading <= 0 ? 1 : 0;
+    const adsTarget = this.adsHeld && this.reloading <= 0 && !this.healing ? 1 : 0;
     this.ads += (adsTarget - this.ads) * Math.min(1, dt * (9 + this.skills.cardio * 2));
     const targetFov = THREE.MathUtils.lerp(BASE_FOV, w.adsFov, this.ads);
     if (Math.abs(this.camera.fov - targetFov) > 0.1) {
@@ -314,7 +371,7 @@ export class Player {
     this.fireCooldown -= dt;
     this.bloom = Math.max(0, this.bloom - dt * 6);
     const wantFire = w.auto ? this.triggerHeld : this.triggerQueued;
-    if (wantFire && this.fireCooldown <= 0 && this.reloading <= 0 && locked) {
+    if (wantFire && this.fireCooldown <= 0 && this.reloading <= 0 && !this.healing && locked) {
       if (this.mag <= 0) {
         audio.dryFire();
         this.fireCooldown = 0.25;

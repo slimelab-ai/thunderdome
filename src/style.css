@@ -140,8 +140,18 @@ html, body {
 #status-tags { margin-top: 6px; display: flex; gap: 6px; }
 .st-tag { font-size: 10px; font-weight: 800; letter-spacing: 1px; padding: 2px 7px; border-radius: 2px; background: rgba(227,36,43,0.2); border: 1px solid var(--blood); color: #ff8a8e; animation: heartbeat 1s infinite; }
 
+/* heal channel */
+#channel-wrap { position: absolute; left: 50%; bottom: 32%; transform: translateX(-50%); text-align: center; }
+#channel-label { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: var(--acid); margin-bottom: 4px; text-shadow: 0 1px 3px #000; }
+#channel-bar { width: 180px; height: 7px; background: rgba(0,0,0,0.6); border: 1px solid rgba(134,255,60,0.4); border-radius: 4px; overflow: hidden; }
+#channel-fill { height: 100%; background: var(--acid); width: 0; }
+
 /* bottom-right: weapon */
 #hud-bottomright { position: absolute; right: 24px; bottom: 24px; text-align: right; }
+#consumables { display: flex; gap: 12px; justify-content: flex-end; font-size: 14px; margin-bottom: 6px; color: #ddd; text-shadow: 0 1px 3px #000; }
+#consumables b { font-size: 10px; color: #999; background: rgba(0,0,0,0.6); border: 1px solid #333; padding: 1px 5px; border-radius: 3px; margin-right: 2px; }
+#consumables .cons-empty { opacity: 0.3; }
+.armor-slot-label { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #8b8b96; margin: 8px 0 4px; }
 #weapon-name { font-size: 13px; letter-spacing: 2px; color: #aaa; font-weight: 700; }
 #ammo-block { font-family: Impact, "Arial Black", sans-serif; font-size: 46px; line-height: 1; text-shadow: 0 2px 4px #000; }
 #ammo-sep { color: #555; margin: 0 4px; }

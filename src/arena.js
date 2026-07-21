@@ -250,6 +250,15 @@ export function buildArena(scene) {
   // gate screens: a full-height wall shields each spawn; you exit around its edges
   addBox(concMat, 0, -10.5, 8, 2.6, 0.9);
   addBox(concMat, 0, 10.5, 8, 2.6, 0.9);
+  // angled wing walls flanking each screen: covered diagonal lanes out of the pocket,
+  // so leaving spawn isn't a coin-flip between two watched gaps
+  addBox(concMat, -7, 11.6, 3.6, 2.5, 0.8, -0.55);
+  addBox(concMat, 7, 11.6, 3.6, 2.5, 0.8, 0.55);
+  addBox(concMat, -7, -11.6, 3.6, 2.5, 0.8, 0.55);
+  addBox(concMat, 7, -11.6, 3.6, 2.5, 0.8, -0.55);
+  // tall crates shadowing the mid-flank runs (cover-hop routes toward the gantries)
+  addBox(crateMat, -10.5, 8.3, 1.7, 2.4, 1.7, 0.3);
+  addBox(crateMat, 10.5, -8.3, 1.7, 2.4, 1.7, -0.3);
   // central monolith rising from the slab — kills the middle lane
   addBox(concMat, 0, 0, 6, 2.8, 1.6);
   addBox(concMat, 9, -11, 1.2, 2.4, 3, 0);
@@ -386,7 +395,11 @@ export function buildArena(scene) {
   // spawn points
   const spawns = {
     player: new THREE.Vector3(0, 0, D / 2 - 2.5),
-    playerCrew: [new THREE.Vector3(-2.2, 0, D / 2 - 2), new THREE.Vector3(2.2, 0, D / 2 - 2), new THREE.Vector3(-4.2, 0, D / 2 - 3)],
+    playerCrew: [
+      new THREE.Vector3(-2.2, 0, D / 2 - 2), new THREE.Vector3(2.2, 0, D / 2 - 2),
+      new THREE.Vector3(-4.2, 0, D / 2 - 3), new THREE.Vector3(4.2, 0, D / 2 - 3),
+      new THREE.Vector3(0, 0, D / 2 - 4),
+    ],
     enemy: [
       new THREE.Vector3(0, 0, -D / 2 + 2.5),
       new THREE.Vector3(-3, 0, -D / 2 + 2),

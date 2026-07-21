@@ -32,9 +32,13 @@ Open http://localhost:5173 in a real browser (pointer lock needs one).
 - **The ladder**: Rank 10 (two sewer rats with pistols) up to Rank 1 — GOLIATH,
   a 650 HP armored champion with a gold mask, and his honor guard.
 - **Blood money**: kills, headshots and win purses pay out. Spend it in the black
-  market between bouts: 5 weapons (pistol → SMG → shotgun → rifle → DMR), 2 armor
-  tiers, 3 training tracks (marksmanship / cardio / pain tolerance), and hired
-  mercenaries — rookie, veteran, elite — who fight beside you and die permanently.
+  market between bouts: 5 weapons (pistol → SMG → shotgun → rifle → DMR), modular
+  armor slots (helmet / vest / limb pads, two tiers each), consumables (medkits [H],
+  splint kits [V], frag grenades [G]), 3 training tracks (marksmanship / cardio /
+  pain tolerance), and up to five hired mercenaries — rookie, veteran, elite — who
+  fight beside you and die permanently. Bots carry and use their own bandages and
+  grenades, crouch and peek at varied heights, and VULTURE speaks his commentary
+  out loud (Web Speech API — no audio assets).
 - **The tournament master**: VULTURE commentates every kill and randomly "spices
   things up": LIGHTS OUT, GAS LEAK, MOLOTOV RAIN, CARE PACKAGE, CROWD FRENZY
   (double payout).

@@ -132,6 +132,14 @@ class AudioEngine {
 
   uiClick() { this._tone(900, 0.05, { type: 'square', gain: 0.05, freqEnd: 600 }); }
 
+  explosion(vol = 1) {
+    const v = Math.max(0.05, Math.min(1, vol));
+    this._noise(1.1, { freq: 900, freqEnd: 60, gain: 1.0 * v, decay: 0.5 });
+    this._noise(0.4, { freq: 3500, freqEnd: 300, gain: 0.5 * v, decay: 0.15 });
+    this._tone(55, 0.8, { type: 'sine', gain: 0.5 * v, freqEnd: 24 });
+    this._tone(110, 0.35, { type: 'square', gain: 0.2 * v, freqEnd: 40 });
+  }
+
   drop() {
     this._noise(0.6, { freq: 900, freqEnd: 100, gain: 0.5, decay: 0.3 });
     this._tone(70, 0.4, { type: 'sine', gain: 0.3, freqEnd: 30 });
