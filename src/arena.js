@@ -328,10 +328,24 @@ export function buildArena(scene) {
     scene.add(m);
     addCollider(cx, baseY, cz, w, h, d);
   };
+  const addAuthoredRaisedBox = (file, fallbackMat, cx, baseY, cz, w, h, d, nativeSize) => {
+    const fallback = () => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), fallbackMat);
+      m.position.set(cx, baseY + h / 2, cz);
+      m.castShadow = true; m.receiveShadow = true;
+      scene.add(m);
+    };
+    loadProp(
+      scene, file, new THREE.Vector3(cx, baseY, cz), 0,
+      new THREE.Vector3(w / nativeSize.x, h / nativeSize.y, d / nativeSize.z),
+      fallback,
+    );
+    addCollider(cx, baseY, cz, w, h, d);
+  };
   const gantry = (gx) => {
     const inner = gx > 0 ? gx - 2.5 : gx + 2.5; // arena-facing edge x
     // hollow deck on legs — you can fight underneath it
-    addRaisedBox(concMat, gx, 1.95, 0, 5, 0.3, 4);
+    addAuthoredRaisedBox('gantry_deck', concMat, gx, 1.95, 0, 5, 0.3, 4, new THREE.Vector3(5, 0.3, 4));
     for (const [lx, lz] of [[-2.2, -1.7], [2.2, -1.7], [-2.2, 1.7], [2.2, 1.7]]) {
       addBox(metalMat, gx + lx, lz, 0.3, 1.95, 0.3);
     }
@@ -349,16 +363,17 @@ export function buildArena(scene) {
   gantry(-16.5);
 
   // wrecked car
-  const car = new THREE.Group();
-  const carBody = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.1, 1.9), new THREE.MeshLambertMaterial({ color: 0x3a2f2f }));
-  carBody.position.y = 0.75;
-  const carTop = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 1.7), new THREE.MeshLambertMaterial({ color: 0x2c2424 }));
-  carTop.position.set(-0.3, 1.6, 0);
-  car.add(carBody, carTop);
-  car.position.set(8, 0, -8.5);
-  car.rotation.y = 0.4;
-  car.castShadow = true;
-  scene.add(car);
+  loadProp(scene, 'wrecked_car', new THREE.Vector3(8, 0, -8.5), 0.4, new THREE.Vector3(1, 1, 1), () => {
+    const car = new THREE.Group();
+    const carBody = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.1, 1.9), new THREE.MeshLambertMaterial({ color: 0x3a2f2f }));
+    carBody.position.y = 0.75;
+    const carTop = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 1.7), new THREE.MeshLambertMaterial({ color: 0x2c2424 }));
+    carTop.position.set(-0.3, 1.6, 0);
+    car.add(carBody, carTop);
+    car.position.set(8, 0, -8.5);
+    car.rotation.y = 0.4;
+    scene.add(car);
+  });
   addCollider(8, 0, -8.5, 4.2, 2, 1.9, 0.4);
 
   // barrels
@@ -368,19 +383,15 @@ export function buildArena(scene) {
   // ---------- gates ----------
   const gateMat = new THREE.MeshLambertMaterial({ color: 0x191920 });
   const mkGate = (z, rot) => {
-    const gate = new THREE.Group();
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(4.6, 3.6, 0.6), gateMat);
-    frame.position.y = 1.8;
-    const barsMat = new THREE.MeshBasicMaterial({ color: 0x0a0a0d });
-    for (let i = -1.6; i <= 1.6; i += 0.4) {
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3.2, 5), barsMat);
-      bar.position.set(i, 1.6, 0.32);
-      gate.add(bar);
-    }
-    gate.add(frame);
-    gate.position.set(0, 0, z);
-    gate.rotation.y = rot;
-    scene.add(gate);
+    loadProp(scene, 'arena_gate', new THREE.Vector3(0, 0, z), rot, new THREE.Vector3(1, 1, 1), () => {
+      const gate = new THREE.Group();
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(4.6, 3.6, 0.6), gateMat);
+      frame.position.y = 1.8;
+      gate.add(frame);
+      gate.position.set(0, 0, z);
+      gate.rotation.y = rot;
+      scene.add(gate);
+    });
   };
   mkGate(-D / 2 - 0.1, 0);
   mkGate(D / 2 + 0.1, Math.PI);
