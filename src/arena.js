@@ -133,6 +133,18 @@ function oddsBoardTex(lines) {
   });
 }
 
+function chainLinkTex() {
+  return canvasTex(128, 128, (ctx) => {
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.strokeStyle = 'rgba(128,116,102,0.82)';
+    ctx.lineWidth = 5;
+    for (let x = -128; x <= 256; x += 32) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 128, 128); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, 128); ctx.lineTo(x + 128, 0); ctx.stroke();
+    }
+  });
+}
+
 export function buildArena(scene) {
   const { W, D, WALL_H } = ARENA;
   const colliders = [];      // THREE.Box3 solid obstacles
@@ -193,7 +205,8 @@ export function buildArena(scene) {
   mezz.position.y = WALL_H + 0.3;
   // punch a hole illusion: actually build 4 slabs around the opening
   scene.remove(mezz);
-  const slabMat = new THREE.MeshLambertMaterial({ color: 0x111115 });
+  const architectureSteelTex = tiledTexture('arena_steel.webp', 3, 2);
+  const slabMat = new THREE.MeshStandardMaterial({ map: architectureSteelTex, color: 0x55585e, roughness: 0.7, metalness: 0.72 });
   const mkSlab = (w, d, x, z) => {
     const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.6, d), slabMat);
     s.position.set(x, WALL_H + 0.3, z);
@@ -204,13 +217,45 @@ export function buildArena(scene) {
   mkSlab(5, D + 12, -W / 2 - 3, 0);
   mkSlab(5, D + 12, W / 2 + 3, 0);
 
-  // rusty cage fence above walls (visual)
-  const fenceMat = new THREE.MeshBasicMaterial({ color: 0x0c0c10, transparent: true, opacity: 0.7, wireframe: true });
+  // Heavy underside beams stop the mezzanine reading as four floating boxes.
+  const beamMat = new THREE.MeshStandardMaterial({ color: 0x17191d, roughness: 0.58, metalness: 0.82 });
+  const visualBox = (w, h, d, x, y, z, mat = beamMat, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z); m.rotation.set(0, ry, rz);
+    m.castShadow = true; m.receiveShadow = true; scene.add(m);
+    return m;
+  };
+  for (let x = -W / 2; x <= W / 2; x += 4) {
+    visualBox(0.18, 0.55, 4.8, x, WALL_H - 0.05, -D / 2 - 2.7);
+    visualBox(0.18, 0.55, 4.8, x, WALL_H - 0.05, D / 2 + 2.7);
+  }
+  for (let z = -D / 2; z <= D / 2; z += 4) {
+    visualBox(4.8, 0.55, 0.18, -W / 2 - 2.7, WALL_H - 0.05, z);
+    visualBox(4.8, 0.55, 0.18, W / 2 + 2.7, WALL_H - 0.05, z);
+  }
+
+  // Proper chain-link panels with posts and rails replace the old wireframe plane.
+  const linkTex = chainLinkTex();
+  linkTex.wrapS = linkTex.wrapT = THREE.RepeatWrapping;
+  const fenceMat = new THREE.MeshStandardMaterial({
+    map: linkTex, transparent: true, alphaTest: 0.25, side: THREE.DoubleSide,
+    color: 0x75706a, roughness: 0.76, metalness: 0.72,
+  });
+  const fenceSteel = new THREE.MeshStandardMaterial({ color: 0x25272b, roughness: 0.62, metalness: 0.84 });
   const mkFence = (w, x, z, ry) => {
-    const f = new THREE.Mesh(new THREE.PlaneGeometry(w, 2.2, Math.round(w / 1.2), 3), fenceMat);
-    f.position.set(x, WALL_H + 1.4, z);
-    f.rotation.y = ry;
-    scene.add(f);
+    const g = new THREE.Group();
+    const tex = linkTex.clone(); tex.needsUpdate = true; tex.repeat.set(Math.max(1, w / 2), 2);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, 2.2), fenceMat.clone());
+    mesh.material.map = tex; mesh.receiveShadow = true; g.add(mesh);
+    const railGeo = new THREE.BoxGeometry(w + 0.15, 0.10, 0.10);
+    for (const py of [-1.1, 1.1]) {
+      const rail = new THREE.Mesh(railGeo, fenceSteel); rail.position.y = py; rail.castShadow = true; g.add(rail);
+    }
+    const postGeo = new THREE.BoxGeometry(0.14, 2.55, 0.14);
+    for (let px = -w / 2; px <= w / 2 + 0.01; px += 3.2) {
+      const post = new THREE.Mesh(postGeo, fenceSteel); post.position.set(px, 0, 0); post.castShadow = true; g.add(post);
+    }
+    g.position.set(x, WALL_H + 1.4, z); g.rotation.y = ry; scene.add(g);
   };
   mkFence(W, 0, -D / 2, 0);
   mkFence(W, 0, D / 2, Math.PI);
@@ -370,6 +415,9 @@ export function buildArena(scene) {
       const zOff = 2 + (i - 0.5) * 0.8;
       addBox(concMat, gx, zOff, 4, top, 0.8);
       addBox(concMat, gx, -zOff, 4, top, 0.8);
+      // Steel nosings catch light and clarify each stair tread at combat distance.
+      visualBox(4.04, 0.08, 0.12, gx, top + 0.04, zOff - 0.34, metalMat);
+      visualBox(4.04, 0.08, 0.12, gx, top + 0.04, -zOff + 0.34, metalMat);
     }
     // shoot-over rail on the arena-facing edge (cover when crouched up top)
     addRaisedBox(metalMat, inner + (gx > 0 ? -0.15 : 0.15), 2.25, 0, 0.25, 0.95, 4);
@@ -448,6 +496,22 @@ export function buildArena(scene) {
   overhead.shadow.normalBias = 0.045;
   scene.add(overhead, overhead.target);
   lights.push({ light: overhead, base: 900 });
+
+  // Visible suspended lighting rig: the old spots appeared from empty space.
+  const lampMetal = new THREE.MeshStandardMaterial({ color: 0x111319, roughness: 0.45, metalness: 0.9 });
+  const lampGlow = new THREE.MeshBasicMaterial({ color: 0xffe5bd });
+  for (const x of [-12, -4, 4, 12]) {
+    visualBox(0.18, 0.18, 22, x, 12.2, 0, lampMetal);
+    for (const z of [-8, 0, 8]) {
+      const fixture = new THREE.Group();
+      const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.34, 0.42, 12), lampMetal);
+      housing.castShadow = true;
+      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.31, 16), lampGlow);
+      lens.rotation.x = Math.PI / 2; lens.position.y = -0.215;
+      fixture.add(housing, lens); fixture.position.set(x, 11.85, z); scene.add(fixture);
+    }
+  }
+  for (const z of [-11, 11]) visualBox(30, 0.18, 0.18, 0, 12.2, z, lampMetal);
 
   // colored corner spots
   const cornerCols = [0xff3040, 0x3060ff, 0xffb92e, 0x30ff80];
