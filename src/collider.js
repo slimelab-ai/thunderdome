@@ -15,8 +15,9 @@ export class Collider {
     this.max = { x: cx + ew / 2, y: baseY + h, z: cz + ed / 2 };
   }
 
-  _lx(dx, dz) { return dx * this.cos + dz * this.sin; }
-  _lz(dx, dz) { return -dx * this.sin + dz * this.cos; }
+  // world→local is the inverse of three.js RotY(yaw): local (x,z) → world (x·cos + z·sin, −x·sin + z·cos)
+  _lx(dx, dz) { return dx * this.cos - dz * this.sin; }
+  _lz(dx, dz) { return dx * this.sin + dz * this.cos; }
 
   containsXZ(x, z, pad = 0) {
     // broadphase AABB reject (exact for yaw=0)
@@ -31,8 +32,8 @@ export class Collider {
     const dx = x - this.cx, dz = z - this.cz;
     const lx = Math.max(-this.hw, Math.min(this.hw, this._lx(dx, dz)));
     const lz = Math.max(-this.hd, Math.min(this.hd, this._lz(dx, dz)));
-    out.x = this.cx + lx * this.cos - lz * this.sin;
-    out.z = this.cz + lx * this.sin + lz * this.cos;
+    out.x = this.cx + lx * this.cos + lz * this.sin;
+    out.z = this.cz - lx * this.sin + lz * this.cos;
     return out;
   }
 
@@ -42,8 +43,8 @@ export class Collider {
     const m = Math.max(0.01, margin);
     const lx = Math.max(-this.hw + m, Math.min(this.hw - m, this._lx(dx, dz)));
     const lz = Math.max(-this.hd + m, Math.min(this.hd - m, this._lz(dx, dz)));
-    out.x = this.cx + lx * this.cos - lz * this.sin;
-    out.z = this.cz + lx * this.sin + lz * this.cos;
+    out.x = this.cx + lx * this.cos + lz * this.sin;
+    out.z = this.cz - lx * this.sin + lz * this.cos;
     return out;
   }
 
@@ -60,8 +61,8 @@ export class Collider {
       let nlx = lx, nlz = lz;
       if (this.hw - ax < this.hd - az) nlx = Math.sign(lx || 1) * (this.hw + radius);
       else nlz = Math.sign(lz || 1) * (this.hd + radius);
-      pos.x = this.cx + nlx * this.cos - nlz * this.sin;
-      pos.z = this.cz + nlx * this.sin + nlz * this.cos;
+      pos.x = this.cx + nlx * this.cos + nlz * this.sin;
+      pos.z = this.cz - nlx * this.sin + nlz * this.cos;
       return true;
     }
     const clx = Math.max(-this.hw, Math.min(this.hw, lx));
@@ -72,8 +73,8 @@ export class Collider {
     const dst = Math.sqrt(d2);
     const nlx = clx + (ddx / dst) * radius;
     const nlz = clz + (ddz / dst) * radius;
-    pos.x = this.cx + nlx * this.cos - nlz * this.sin;
-    pos.z = this.cz + nlx * this.sin + nlz * this.cos;
+    pos.x = this.cx + nlx * this.cos + nlz * this.sin;
+    pos.z = this.cz - nlx * this.sin + nlz * this.cos;
     return true;
   }
 

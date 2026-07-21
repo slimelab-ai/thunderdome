@@ -240,8 +240,10 @@ html, body {
 .si-price { color: var(--gold); font-weight: 800; white-space: nowrap; }
 .si-owned { color: #3fda5f; font-weight: 800; font-size: 12px; letter-spacing: 1px; }
 .shop-item .btn { padding: 6px 14px; font-size: 12px; }
-.roster-card { border-left: 3px solid var(--acid); }
+.roster-card { border-left: 3px solid var(--acid); flex-wrap: wrap; }
 .roster-dead { border-left-color: #333; opacity: 0.5; }
+.roster-btns { display: flex; gap: 4px; }
+.roster-btns .btn { padding: 4px 8px; font-size: 10px; }
 #next-bout {
   background: rgba(30,10,10,0.55); border: 1px solid rgba(227,36,43,0.35); border-radius: 5px; padding: 12px 14px; font-size: 13px; line-height: 1.7;
 }

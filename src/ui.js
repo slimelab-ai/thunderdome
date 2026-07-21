@@ -280,13 +280,26 @@ export class UI {
       </div>`;
     }).join('') + (crewAlive >= 5 ? '<div class="si-desc" style="padding:4px">Crew is full (5 max). Someone has to die first.</div>' : '');
 
-    // roster
-    $('shop-roster').innerHTML = career.crew.length
-      ? career.crew.map(c => `<div class="shop-item roster-card ${c.alive ? '' : 'roster-dead'}">
+    // roster (with gear: hand down armor from the stash, share your supplies)
+    const stashDesc = ['head', 'body', 'limbs']
+      .flatMap(s => career.stash[s].map(t => ARMOR_SLOTS[s].tiers[t].name))
+      .join(', ');
+    const gearLine = (g) => {
+      const n = (s) => g[s] > 0 ? `T${g[s]}` : '–';
+      return `⛑${n('head')} 🦺${n('body')} 🦵${n('limbs')} · 🩹${g.medkit || 0} 💣${g.grenade || 0}`;
+    };
+    $('shop-roster').innerHTML = (career.crew.length
+      ? career.crew.map((c, i) => `<div class="shop-item roster-card ${c.alive ? '' : 'roster-dead'}">
           <div class="si-info"><div class="si-name">${c.name}</div>
-          <div class="si-desc">${CREW_TIERS[c.tier].name} · ${WEAPONS[CREW_TIERS[c.tier].weapon].name}${c.alive ? ` · ${c.kills || 0} career kills` : ' · KILLED IN ACTION'}</div></div>
+          <div class="si-desc">${CREW_TIERS[c.tier].name} · ${WEAPONS[CREW_TIERS[c.tier].weapon].name}${c.alive ? ` · ${c.kills || 0} kills<br>${gearLine(c.gear || {})}` : ' · KILLED IN ACTION'}</div></div>
+          ${c.alive ? `<div class="roster-btns">
+            <button class="btn" data-outfit="${i}" title="equip best stashed armor">OUTFIT</button>
+            <button class="btn" data-give="${i}:medkit" ${career.consumables.medkit > 0 && (c.gear?.medkit || 0) < 2 ? '' : 'disabled'}>+🩹</button>
+            <button class="btn" data-give="${i}:grenade" ${career.consumables.grenade > 0 && (c.gear?.grenade || 0) < 2 ? '' : 'disabled'}>+💣</button>
+          </div>` : ''}
         </div>`).join('')
-      : '<div class="si-desc" style="padding:4px">You fight alone. Brave. Stupid, but brave.</div>';
+      : '<div class="si-desc" style="padding:4px">You fight alone. Brave. Stupid, but brave.</div>')
+      + `<div class="si-desc" style="padding:6px 4px">STASH: ${stashDesc || 'empty — upgrading armor stashes your old piece'}</div>`;
 
     // training
     $('shop-training').innerHTML = Object.entries(TRAINING).map(([id, t]) => {
@@ -314,6 +327,8 @@ export class UI {
     wire('[data-buy-consumable]', 'data-buy-consumable', actions.buyConsumable);
     wire('[data-hire]', 'data-hire', actions.hire);
     wire('[data-train]', 'data-train', actions.train);
+    wire('[data-outfit]', 'data-outfit', (i) => actions.outfit(parseInt(i)));
+    wire('[data-give]', 'data-give', (v) => { const [i, kind] = v.split(':'); actions.giveItem(parseInt(i), kind); });
   }
 
   renderIntro(rank, squad) {

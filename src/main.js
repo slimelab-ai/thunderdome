@@ -66,6 +66,7 @@ function newCareer() {
     money: 0, rank: 10,
     weapons: ['pistol'],
     armor: { head: 0, body: 0, limbs: 0 },
+    stash: { head: [], body: [], limbs: [] },   // hand-me-down armor pieces
     consumables: { medkit: 1, splint: 1, grenade: 2 },
     skills: { aim: 0, cardio: 0, tough: 0 },
     crew: [],
@@ -79,9 +80,11 @@ function load() {
     if (s) {
       const c = JSON.parse(s);
       if (c && c.rank >= 1) {
-        // migrate pre-modular-armor saves
+        // migrate older saves
         if (c.armor === undefined) c.armor = { head: 0, body: c.armorTier || 0, limbs: 0 };
         if (c.consumables === undefined) c.consumables = { medkit: 1, splint: 1, grenade: 2 };
+        if (c.stash === undefined) c.stash = { head: [], body: [], limbs: [] };
+        for (const m of c.crew || []) if (!m.gear) m.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
         return c;
       }
     }
@@ -157,14 +160,22 @@ function startMatch() {
   const aliveCrew = career.crew.filter(c => c.alive);
   aliveCrew.forEach((cm, i) => {
     const t = CREW_TIERS[cm.tier];
+    if (!cm.gear) cm.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
     const c = new Combatant({
       name: cm.name, team: 'player', weaponId: t.weapon,
       skill: { spreadMult: t.spreadMult, reaction: t.reaction, speedMult: t.speedMult },
       hp: t.hp, shirt: 0x2e5d33,
+      armorParts: {
+        head: ARMOR_SLOTS.head.tiers[cm.gear.head].mit,
+        body: ARMOR_SLOTS.body.tiers[cm.gear.body].mit,
+        limbs: ARMOR_SLOTS.limbs.tiers[cm.gear.limbs].mit,
+      },
     });
     c.careerRef = cm;
-    c.healKits = cm.tier === 'elite' ? 2 : 1;
-    c.nades = cm.tier === 'rookie' ? 0 : 1;
+    c.healKits = (cm.tier === 'elite' ? 2 : 1) + cm.gear.medkit;
+    c.nades = (cm.tier === 'rookie' ? 0 : 1) + cm.gear.grenade;
+    c.baseKits = cm.tier === 'elite' ? 2 : 1;
+    c.baseNades = cm.tier === 'rookie' ? 0 : 1;
     c.addTo(world, arena.spawns.playerCrew[i % arena.spawns.playerCrew.length]);
     match.crew.push(c);
   });
@@ -268,8 +279,21 @@ function handleKill(killer, victim, part) {
       audio.crowdRoar(1); audio.crowdRoar(1);
     }
   } else {
-    // crew member died
-    if (victim.careerRef) { victim.careerRef.alive = false; career.totals.crewLost++; }
+    // crew member died — scavenge their gear back
+    if (victim.careerRef) {
+      victim.careerRef.alive = false;
+      career.totals.crewLost++;
+      const gear = victim.careerRef.gear;
+      if (gear) {
+        for (const slot of ['head', 'body', 'limbs']) {
+          if (gear[slot] > 0) { career.stash[slot].push(gear[slot]); gear[slot] = 0; }
+        }
+        // unused given supplies come back (they burn their own stock first)
+        career.consumables.medkit += Math.max(0, Math.min(gear.medkit, victim.healKits - (victim.baseKits || 0)));
+        career.consumables.grenade += Math.max(0, Math.min(gear.grenade, victim.nades - (victim.baseNades || 0)));
+        gear.medkit = 0; gear.grenade = 0;
+      }
+    }
     announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
   }
 }
@@ -311,13 +335,13 @@ world.throwGrenade = (origin, vel, thrower) => {
 };
 
 function explode(pos, thrower) {
-  const R = 6.2, MAX = 105, MIN = 12;
+  const R = 7, MAX = 165, MIN = 25;
   audio.explosion(1.2 / (1 + pos.distanceTo(camera.position) * 0.05));
   fx.explosion(pos);
   audio.crowdRoar(0.8);
 
   const blast = new THREE.Vector3(pos.x, pos.y + 0.3, pos.z);
-  const dmgAt = (d, occluded) => Math.max(0, (MAX - (MAX - MIN) * (d / R))) * (occluded ? 0.22 : 1);
+  const dmgAt = (d, occluded) => Math.max(0, (MAX - (MAX - MIN) * (d / R))) * (occluded ? 0.3 : 1);
 
   // player
   if (player.alive) {
@@ -326,6 +350,11 @@ function explode(pos, thrower) {
     if (d < R) {
       const occ = !hasLoS(world.colliders, blast, chest);
       handlePlayerDamaged(dmgAt(d, occ) / 0.8, 'torso', pos); // undo grit for env-scale
+      // shrapnel chews limbs
+      if (!occ && d < R * 0.6) {
+        player.armDmg = Math.min(1, player.armDmg + 0.3 * (1 - player.armor.limbAccum));
+        player.legDmg = Math.min(1, player.legDmg + 0.3 * (1 - player.armor.limbAccum));
+      }
       player.shakeT = 0.5;
     } else if (d < R * 2.2) {
       player.shakeT = 0.3;
@@ -339,7 +368,10 @@ function explode(pos, thrower) {
     if (d < R) {
       const occ = !hasLoS(world.colliders, blast, chest);
       const dmg = dmgAt(d, occ);
-      if (dmg > 1) c.applyDamage(world, 'torso', dmg, thrower, chest);
+      if (dmg > 1) {
+        if (!occ && d < R * 0.6) { c.armDmg = Math.min(1, c.armDmg + 0.35); c.legDmg = Math.min(1, c.legDmg + 0.35); }
+        c.applyDamage(world, 'torso', dmg, thrower, chest);
+      }
     }
   }
 }
@@ -557,6 +589,13 @@ function updateEvents(dt) {
 // ============================================================ match end
 function finishMatch() {
   document.exitPointerLock();
+  // survivors' given supplies reflect what they actually used
+  for (const c of match.crew) {
+    if (c.alive && c.careerRef?.gear) {
+      c.careerRef.gear.medkit = Math.max(0, Math.min(c.careerRef.gear.medkit, c.healKits - (c.baseKits || 0)));
+      c.careerRef.gear.grenade = Math.max(0, Math.min(c.careerRef.gear.grenade, c.nades - (c.baseNades || 0)));
+    }
+  }
   clearCombatants();
 
   if (match.won) {
@@ -622,8 +661,31 @@ function renderShop(earnings) {
       const t = ARMOR_SLOTS[slot]?.tiers[tier];
       if (t && career.money >= t.price && career.armor[slot] === tier - 1) {
         career.money -= t.price;
+        if (career.armor[slot] > 0) career.stash[slot].push(career.armor[slot]); // hand-me-down
         career.armor[slot] = tier;
         audio.cashRegister(); save(); renderShop(earnings);
+      }
+    },
+    outfit: (idx) => {
+      const m = career.crew[idx];
+      if (!m || !m.alive) return;
+      for (const slot of ['head', 'body', 'limbs']) {
+        const best = Math.max(0, ...career.stash[slot]);
+        if (best > m.gear[slot]) {
+          career.stash[slot].splice(career.stash[slot].indexOf(best), 1);
+          if (m.gear[slot] > 0) career.stash[slot].push(m.gear[slot]);
+          m.gear[slot] = best;
+        }
+      }
+      audio.uiClick(); save(); renderShop(earnings);
+    },
+    giveItem: (idx, kind) => {
+      const m = career.crew[idx];
+      if (!m || !m.alive) return;
+      if ((career.consumables[kind] || 0) > 0 && (m.gear[kind] || 0) < 2) {
+        career.consumables[kind]--;
+        m.gear[kind] = (m.gear[kind] || 0) + 1;
+        audio.uiClick(); save(); renderShop(earnings);
       }
     },
     buyConsumable: (id) => {
@@ -636,9 +698,9 @@ function renderShop(earnings) {
     },
     hire: (tierId) => {
       const t = CREW_TIERS[tierId];
-      if (career.money >= t.price && career.crew.filter(c => c.alive).length < 3) {
+      if (career.money >= t.price && career.crew.filter(c => c.alive).length < 5) {
         career.money -= t.price;
-        career.crew.push({ name: nextCrewName(), tier: tierId, alive: true, kills: 0 });
+        career.crew.push({ name: nextCrewName(), tier: tierId, alive: true, kills: 0, gear: { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 } });
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },

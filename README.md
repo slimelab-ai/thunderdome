@@ -36,9 +36,12 @@ Open http://localhost:5173 in a real browser (pointer lock needs one).
   armor slots (helmet / vest / limb pads, two tiers each), consumables (medkits [H],
   splint kits [V], frag grenades [G]), 3 training tracks (marksmanship / cardio /
   pain tolerance), and up to five hired mercenaries — rookie, veteran, elite — who
-  fight beside you and die permanently. Bots carry and use their own bandages and
-  grenades, crouch and peek at varied heights, and VULTURE speaks his commentary
-  out loud (Web Speech API — no audio assets).
+  fight beside you and die permanently. Upgrading armor stashes your old piece —
+  hand it down to your crew (OUTFIT), share medkits and grenades with them, and
+  scavenge it all back off their bodies. Bots sprint, corner-peek with a real lean,
+  crouch with an articulated pose, bandage themselves, throw frags at hiding spots,
+  and surge if you let a standoff drag. VULTURE speaks his commentary out loud
+  (Web Speech API — no audio assets).
 - **The tournament master**: VULTURE commentates every kill and randomly "spices
   things up": LIGHTS OUT, GAS LEAK, MOLOTOV RAIN, CARE PACKAGE, CROWD FRENZY
   (double payout).

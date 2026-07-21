@@ -5,6 +5,7 @@ import { audio } from './audio.js';
 
 const SKIN_TONES = [0xc9a17c, 0x8a5a3b, 0x6b4226, 0xd9b28c, 0x5a3a24];
 const UP = new THREE.Vector3(0, 1, 0);
+const _peekEye = new THREE.Vector3();
 
 function nameTagSprite(name, color) {
   const c = document.createElement('canvas');
@@ -37,6 +38,8 @@ export class Combatant {
     this.maxHp = opts.hp;
     this.hp = opts.hp;
     this.armor = opts.armor || 0;
+    // per-part mitigation (Tarkov-style slots); plain `armor` maps to body for enemies
+    this.armorParts = opts.armorParts || { head: 0, body: opts.armor || 0, limbs: 0 };
     this.boss = !!opts.boss;
     this.scale = opts.scale || (0.95 + Math.random() * 0.09); // natural height variety
     this.shirt = opts.shirt;
@@ -74,6 +77,12 @@ export class Combatant {
     this.stanceCrouch = false;
     this.stanceTimer = 0.5 + Math.random() * 2;
     this.leanK = 0;
+    this.peekSide = 0;
+    this.sprintNow = false;
+    // patience: holding an angle too long without moving triggers a push
+    this.stallAnchor = { x: 0, z: 0 };
+    this.stallT = 0;
+    this.pushT = 0;
     this.cooldown = 0.5 + Math.random();
     this.burstLeft = this._burstSize();
     this.reactionLeft = 0;
@@ -110,7 +119,7 @@ export class Combatant {
 
     // torso (pivot center)
     this.torso = mk([0.46, 0.58, 0.26], shirtMat, 'torso', 0, 1.14, 0);
-    if (this.armor > 0) {
+    if (this.armorParts.body > 0) {
       const vest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.3), new THREE.MeshLambertMaterial({ color: 0x14161a }));
       vest.position.set(0, 1.16, 0);
       vest.userData = { combatant: this, part: 'torso' };
@@ -125,6 +134,7 @@ export class Combatant {
       const eye = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.05, 0.02), new THREE.MeshBasicMaterial({ color: 0xff2020 }));
       eye.position.set(0, 1.6, 0.14);
       g.add(eye);
+      this.bossEye = eye;
     }
 
     // limbs: geometry translated so pivot = top of limb
@@ -179,7 +189,9 @@ export class Combatant {
     if (!this.alive) return;
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
-    if (part === 'torso' && this.armor > 0) dmg *= (1 - this.armor);
+    if (part === 'torso') dmg *= (1 - this.armorParts.body);
+    else if (part === 'head') dmg *= (1 - this.armorParts.head);
+    else dmg *= (1 - this.armorParts.limbs);
     if (this.boss && part === 'head') dmg *= 0.55; // gold mask
     this.hp -= dmg;
 
@@ -257,6 +269,20 @@ export class Combatant {
       }
     }
 
+    // patience meter: parked in one spot with a live target → eventually surge
+    const sdx = this.pos.x - this.stallAnchor.x, sdz = this.pos.z - this.stallAnchor.z;
+    if (sdx * sdx + sdz * sdz > 9) {
+      this.stallAnchor.x = this.pos.x; this.stallAnchor.z = this.pos.z;
+      this.stallT = 0;
+    } else if (this.target) {
+      this.stallT += dt;
+      if (this.stallT > 8) {
+        this.stallT = 0;
+        this.pushT = 3.5 + Math.random() * 1.5;
+      }
+    }
+    if (this.pushT > 0) this.pushT -= dt;
+
     // stance cycling while engaged: pop up, drop down — heads at varied heights
     this.stanceTimer -= dt;
     if (this.stanceTimer <= 0) {
@@ -288,6 +314,7 @@ export class Combatant {
 
     this._traveling = false;
     this._strafing = false;
+    this.sprintNow = false;
 
     if (this.target && !fleeing && this.healingT <= 0) {
       const tp = this._targetPos();
@@ -307,6 +334,15 @@ export class Combatant {
         ? new THREE.Vector3(this.target.pos.x, this.target.pos.y + 1.25 * this.target.heightScale, this.target.pos.z)
         : this.target.aimPoint();
       const sight = hasLoS(world.colliders, eye, aim);
+
+      // corner peek: body stays covered, lean the head/gun out sideways for an angle
+      this.peekSide = 0;
+      if (!sight && dist < engage * 1.8) {
+        for (const side of [this.strafeDir, -this.strafeDir]) {
+          _peekEye.set(eye.x + -fz * 0.6 * side, eye.y, eye.z + fx * 0.6 * side);
+          if (hasLoS(world.colliders, _peekEye, aim)) { this.peekSide = side; break; }
+        }
+      }
 
       // patch up when hurt and out of contact
       if (this.healKits > 0 && this.hp < this.maxHp * 0.38 && this.sinceHit > 2.2 && (!sight || dist > engage * 1.6)) {
@@ -330,12 +366,14 @@ export class Combatant {
       const pushHigh = heightGap > 0.8 && w.aiRange <= 15;
       this._onVerticalRoute = false;
 
-      if ((dist > engage || !sight || pushHigh) && this.cautionT > 0) {
+      const needTravel = dist > engage || (!sight && !this.peekSide) || pushHigh || this.pushT > 0;
+      if (needTravel && this.cautionT > 0) {
         // a squadmate just died up ahead — hold and jink instead of feeding the corner
         this._strafing = true;
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
-      } else if (dist > engage || !sight || pushHigh) {
+      } else if (needTravel) {
         this._traveling = true;
+        this.sprintNow = (dist > 11 || !sight) && this.legDmg < 0.6;
         // travel toward the target through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame
         this.repathT = (this.repathT ?? 0) - dt;
@@ -364,6 +402,9 @@ export class Combatant {
           const gd = Math.hypot(gdx, gdz) || 1;
           move.x += gdx / gd; move.z += gdz / gd;
         }
+      } else if (this.peekSide && !sight) {
+        // holding a corner peek: plant and shoot around it
+        this._strafing = true;
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && heightGap < 0.8) {
         this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
@@ -390,7 +431,7 @@ export class Combatant {
       this.yaw += dy * Math.min(1, dt * 7);
 
       // ---- shooting ----
-      const los = dist < engage * 2.2 && sight;
+      const los = dist < engage * 2.2 && (sight || this.peekSide !== 0) && !this.sprintNow;
 
       // point-blank surprises get answered fast; long-range spotting takes longer
       if (los && !this.hadLoS) this.reactionLeft = this.skill.reaction * (0.7 + Math.random() * 0.6) * Math.min(1.2, Math.max(0.35, dist / 12));
@@ -398,19 +439,23 @@ export class Combatant {
       if (this.reactionLeft > 0) this.reactionLeft -= dt;
 
       if (los && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
-        const dir = aim.clone().sub(eye).normalize();
+        // fire from the peeked eye when leaning around a corner
+        const fireEye = this.peekSide
+          ? eye.clone().set(eye.x + -fz * 0.6 * this.peekSide, eye.y, eye.z + fx * 0.6 * this.peekSide)
+          : eye;
+        const dir = aim.clone().sub(fireEye).normalize();
         const distFactor = 0.7 + dist / 30;
         const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4) * distFactor * (this.crouchK < 0.9 ? 0.8 : 1);
         const pellets = w.pellets;
         for (let i = 0; i < pellets; i++) {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
-          const res = fireRay(world, this, eye, sdir, w, this.team === 'enemy' ? world.enemyDmgScale : 1);
-          world.fx.tracer(eye.clone().addScaledVector(sdir, 0.6), res.point);
+          const res = fireRay(world, this, fireEye, sdir, w, this.team === 'enemy' ? world.enemyDmgScale : 1);
+          world.fx.tracer(fireEye.clone().addScaledVector(sdir, 0.6), res.point);
           if (res.type === 'wall') { world.fx.sparks(res.point); if (Math.random() < 0.3) audio.ricochet(); }
         }
-        const camDist = eye.distanceTo(world.cameraPos);
+        const camDist = fireEye.distanceTo(world.cameraPos);
         audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
-        world.fx.muzzleFlash(eye.clone().addScaledVector(dir, 0.7));
+        world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7));
 
         this.burstLeft--;
         if (this.burstLeft <= 0) {
@@ -517,7 +562,7 @@ export class Combatant {
         }
         if (!chosen) chosen = rot(move, 2.6 * (this.avoidSide || 1));
       }
-      const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1);
+      const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1) * (this.sprintNow ? 1.45 : 1);
       this.pos.addScaledVector(chosen, spd * dt);
       resolveCircle(this.pos, this.radius, world.colliders, this.pos.y);
       moving = true;
@@ -537,26 +582,40 @@ export class Combatant {
     if (Math.abs(gY - this.pos.y) < 0.02) this.pos.y = gY;
 
     // ---- pose ----
-    // crouch: squash the whole rig (hitboxes squash with it), lean: tilt into the strafe
+    // articulated crouch: torso/head sink, hips drop, legs fold — a real squat,
+    // and the hitboxes (same meshes) follow the pose
     const wantCrouch = this.healingT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
-    this.group.scale.y = this.scale * this.crouchK;
-    const leanTarget = this._strafing ? -this.strafeDir * 0.09 : 0;
+    const drop = (1 - this.crouchK) * 1.55;
+    const legBend = Math.acos(Math.max(0.2, Math.min(1, (0.85 - drop) / 0.85)));
+    // peeking leans harder than plain strafing
+    const leanTarget = this.peekSide ? -this.peekSide * 0.26 : (this._strafing ? -this.strafeDir * 0.09 : 0);
     this.leanK += (leanTarget - this.leanK) * Math.min(1, dt * 6);
 
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
     this.group.rotation.z = this.leanK;
-    const sw = Math.sin(this.animPhase) * 0.55 * this.moveAmount;
+
+    this.torso.position.y = 1.14 - drop;
+    if (this.vest) this.vest.position.y = 1.16 - drop;
+    this.head.position.y = 1.57 - drop;
+    if (this.bossEye) this.bossEye.position.y = 1.6 - drop;
+    this.armL.position.y = 1.4 - drop;
+    this.armR.position.y = 1.4 - drop;
+    this.legL.position.y = 0.85 - drop;
+    this.legR.position.y = 0.85 - drop;
+
+    const sw = Math.sin(this.animPhase) * 0.55 * this.moveAmount * (this.crouchK < 0.9 ? 0.5 : 1);
     const limp = this.legDmg > 0.3;
-    this.legL.rotation.x = sw * (limp ? 0.4 : 1);
-    this.legR.rotation.x = -sw;
+    this.legL.rotation.x = sw * (limp ? 0.4 : 1) + legBend;
+    this.legR.rotation.x = -sw - legBend * 0.85;
     this.armL.rotation.x = -sw * 0.7;
-    // right arm holds gun raised toward target
-    this.armR.rotation.x = this.target ? -1.25 : -sw * 0.7;
+    // right arm holds gun raised toward target (slung while sprinting)
+    const gunUp = this.target && !this.sprintNow;
+    this.armR.rotation.x = gunUp ? -1.25 : -sw * 0.7;
     this.gun.visible = true;
-    this.gun.position.set(0.31, this.target ? 1.35 : 0.9, this.target ? -0.35 : -0.25);
-    this.gun.rotation.x = this.target ? -0.06 : 0.3;
+    this.gun.position.set(0.31, (gunUp ? 1.35 : 0.9) - drop, gunUp ? -0.35 : -0.25);
+    this.gun.rotation.x = gunUp ? -0.06 : 0.3;
   }
 
   // would moving 0.9m in (dx,dz) walk us off a >0.8m ledge?
