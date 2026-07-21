@@ -116,3 +116,81 @@ export class Collider {
     return true;
   }
 }
+
+// Vertical cylinder collider for round props. It intentionally exposes the same
+// interface as Collider so movement, bullets, LOS, ground-height and nav code do
+// not need shape-specific branches.
+export class CylinderCollider {
+  constructor(cx, baseY, cz, radius, height) {
+    this.cx = cx; this.cz = cz; this.radius = radius;
+    this.min = { x: cx - radius, y: baseY, z: cz - radius };
+    this.max = { x: cx + radius, y: baseY + height, z: cz + radius };
+  }
+
+  containsXZ(x, z, pad = 0) {
+    const r = this.radius + pad;
+    return (x - this.cx) ** 2 + (z - this.cz) ** 2 <= r * r;
+  }
+
+  closestXZ(x, z, out) {
+    const dx = x - this.cx, dz = z - this.cz;
+    const dist = Math.hypot(dx, dz);
+    if (dist <= this.radius) { out.x = x; out.z = z; return out; }
+    const s = this.radius / dist;
+    out.x = this.cx + dx * s; out.z = this.cz + dz * s;
+    return out;
+  }
+
+  clampInsideXZ(x, z, margin, out) {
+    const dx = x - this.cx, dz = z - this.cz;
+    const limit = Math.max(0.01, this.radius - Math.max(0.01, margin));
+    const dist = Math.hypot(dx, dz);
+    const s = dist > limit ? limit / dist : 1;
+    out.x = this.cx + dx * s; out.z = this.cz + dz * s;
+    return out;
+  }
+
+  pushCircleXZ(pos, radius) {
+    const dx = pos.x - this.cx, dz = pos.z - this.cz;
+    const limit = this.radius + radius;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= limit * limit) return false;
+    const dist = Math.sqrt(d2);
+    const nx = dist > 1e-9 ? dx / dist : 1;
+    const nz = dist > 1e-9 ? dz / dist : 0;
+    pos.x = this.cx + nx * limit; pos.z = this.cz + nz * limit;
+    return true;
+  }
+
+  raycast(o, d) {
+    let y0 = -Infinity, y1 = Infinity;
+    if (Math.abs(d.y) < 1e-9) {
+      if (o.y < this.min.y || o.y > this.max.y) return null;
+    } else {
+      y0 = (this.min.y - o.y) / d.y; y1 = (this.max.y - o.y) / d.y;
+      if (y0 > y1) [y0, y1] = [y1, y0];
+    }
+    const ox = o.x - this.cx, oz = o.z - this.cz;
+    const a = d.x * d.x + d.z * d.z;
+    let x0 = -Infinity, x1 = Infinity;
+    if (a < 1e-12) {
+      if (ox * ox + oz * oz > this.radius * this.radius) return null;
+    } else {
+      const b = 2 * (ox * d.x + oz * d.z);
+      const c = ox * ox + oz * oz - this.radius * this.radius;
+      const disc = b * b - 4 * a * c;
+      if (disc < 0) return null;
+      const root = Math.sqrt(disc);
+      x0 = (-b - root) / (2 * a); x1 = (-b + root) / (2 * a);
+    }
+    const enter = Math.max(x0, y0), exit = Math.min(x1, y1);
+    if (enter > exit || exit < 0) return null;
+    return Math.max(0, enter);
+  }
+
+  overlapsRect(x0, z0, x1, z1) {
+    const x = Math.max(x0, Math.min(this.cx, x1));
+    const z = Math.max(z0, Math.min(this.cz, z1));
+    return (x - this.cx) ** 2 + (z - this.cz) ** 2 < this.radius * this.radius;
+  }
+}

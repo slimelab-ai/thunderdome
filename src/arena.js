@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Collider } from './collider.js';
+import { Collider, CylinderCollider } from './collider.js';
 
 // Arena footprint: X in [-W/2, W/2], Z in [-D/2, D/2]. Player gate south (+Z), enemy gate north (-Z).
 export const ARENA = { W: 44, D: 32, WALL_H: 5 };
@@ -266,7 +266,9 @@ export function buildArena(scene) {
       b.castShadow = true;
       scene.add(b);
     });
-    addCollider(cx, 0, cz, 0.85, 1.1, 0.85);
+    // The authored drum is round; a box proxy created four invisible collision
+    // corners around every barrel. Match the outer steel hoops exactly instead.
+    colliders.push(new CylinderCollider(cx, 0, cz, 0.43, 1.113));
   };
 
   const addAuthoredBox = (file, fallbackMat, cx, cz, w, h, d, ry, nativeSize) => {
@@ -285,7 +287,8 @@ export function buildArena(scene) {
     addCollider(cx, 0, cz, w, h, d, ry);
   };
 
-  const arenaBlockSize = new THREE.Vector3(8, 2.6, 0.9);
+  // Native bounds include armor caps/feet, not only each asset's concrete core.
+  const arenaBlockSize = new THREE.Vector3(7.95, 2.65, 1.057);
   const addArenaBlock = (cx, cz, w, h, d, ry = 0) =>
     addAuthoredBox('arena_block', concMat, cx, cz, w, h, d, ry, arenaBlockSize);
 
@@ -297,7 +300,7 @@ export function buildArena(scene) {
   }
 
   // crates & stacks
-  const crateSize = new THREE.Vector3(2.2, 1.4, 1.8);
+  const crateSize = new THREE.Vector3(2.15, 1.37, 1.857);
   addAuthoredBox('weapons_crate', crateMat, -15, -9, 2.2, 1.4, 1.8, 0.2, crateSize);
   addAuthoredBox('weapons_crate', crateMat, -14.4, -8.3, 1.4, 2.6, 1.4, 0.5, crateSize);
   addAuthoredBox('weapons_crate', crateMat, 15, 9, 1.8, 1.4, 2.2, -0.3, crateSize);
@@ -308,7 +311,7 @@ export function buildArena(scene) {
   addAuthoredBox('weapons_crate', crateMat, -13, 6, 1.9, 1.1, 1.6, 0.3, crateSize);
 
   // low sandbag-style walls (shoot over standing, hide crouched)
-  const barrierSize = new THREE.Vector3(4.2, 1.05, 0.6);
+  const barrierSize = new THREE.Vector3(4.15, 1.18, 0.92);
   addAuthoredBox('concrete_barricade', metalMat, -6, -3.5, 4.2, 1.05, 0.6, 0, barrierSize);
   addAuthoredBox('concrete_barricade', metalMat, 6, 3.5, 4.2, 1.05, 0.6, 0, barrierSize);
   addAuthoredBox('concrete_barricade', metalMat, -13, 1, 3.4, 1.05, 0.7, 0.5, barrierSize);
@@ -386,7 +389,7 @@ export function buildArena(scene) {
     car.rotation.y = 0.4;
     scene.add(car);
   });
-  addCollider(8, 0, -8.5, 4.2, 2, 1.9, 0.4);
+  addCollider(8, 0, -8.5, 4.2, 1.65, 2.02, 0.4);
 
   // barrels
   addBarrel(-2.2, -12.5); addBarrel(-3.1, -12.1); addBarrel(2.4, 12.4); addBarrel(3.3, 12.0);
