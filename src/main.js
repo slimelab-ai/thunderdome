@@ -66,8 +66,10 @@ function newCareer() {
     money: 0, rank: 10,
     weapons: ['pistol'],
     armor: { head: 0, body: 0, limbs: 0 },
-    stash: { head: [], body: [], limbs: [], weapons: {} },   // hand-me-down armor + crew weapon copies
+    stash: { weapons: {}, armor: { head: {}, body: {}, limbs: {} } }, // purchased crew copies
     consumables: { medkit: 1, splint: 1, grenade: 2 },
+    playerHp: null,                    // null = full; persists between matches
+    playerLimbs: { arm: 0, leg: 0 },
     skills: { aim: 0, cardio: 0, tough: 0 },
     crew: [],
     totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0 },
@@ -83,12 +85,24 @@ function load() {
         // migrate older saves
         if (c.armor === undefined) c.armor = { head: 0, body: c.armorTier || 0, limbs: 0 };
         if (c.consumables === undefined) c.consumables = { medkit: 1, splint: 1, grenade: 2 };
-        if (c.stash === undefined) c.stash = { head: [], body: [], limbs: [] };
+        if (c.stash === undefined) c.stash = {};
         if (c.stash.weapons === undefined) c.stash.weapons = {};
+        if (c.stash.armor === undefined) {
+          // hand-me-down arrays → purchased-copy counts
+          c.stash.armor = { head: {}, body: {}, limbs: {} };
+          for (const slot of ['head', 'body', 'limbs']) {
+            for (const t of c.stash[slot] || []) c.stash.armor[slot][t] = (c.stash.armor[slot][t] || 0) + 1;
+            delete c.stash[slot];
+          }
+        }
+        if (c.playerHp === undefined) c.playerHp = null;
+        if (c.playerLimbs === undefined) c.playerLimbs = { arm: 0, leg: 0 };
         const legacyTierWeapon = { rookie: 'pistol', veteran: 'smg', elite: 'rifle' };
         for (const m of c.crew || []) {
           if (!m.gear) m.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
           if (!m.gear.weapon) m.gear.weapon = legacyTierWeapon[m.tier] || 'pistol';
+          if (m.hp === undefined) m.hp = null;
+          if (m.limbs === undefined) m.limbs = { arm: 0, leg: 0 };
           m.alive = true; // recruits are permanent now — the fallen walk again
         }
         return c;
@@ -179,6 +193,9 @@ function startMatch() {
     c.careerRef = cm;
     c.healKits = cm.gear.medkit;
     c.nades = cm.gear.grenade;
+    // wounds carry over — patch them in the black market or they fight hurt
+    if (cm.hp != null) c.hp = Math.min(c.maxHp, cm.hp);
+    if (cm.limbs) { c.armDmg = cm.limbs.arm || 0; c.legDmg = cm.limbs.leg || 0; }
     c.addTo(world, arena.spawns.playerCrew[i % arena.spawns.playerCrew.length]);
     match.crew.push(c);
   });
@@ -213,6 +230,12 @@ function startMatch() {
   };
   player.consumables = career.consumables;
   player.resetForMatch(arena.spawns.player);
+  // player wounds carry over too
+  if (career.playerHp != null) player.hp = Math.min(player.maxHp, career.playerHp);
+  player.armDmg = career.playerLimbs.arm || 0;
+  player.legDmg = career.playerLimbs.leg || 0;
+
+  assignOpeningPlays();
 
   match.campAnchor.x = player.pos.x;
   match.campAnchor.z = player.pos.z;
@@ -587,7 +610,15 @@ function finishMatch() {
       c.careerRef.gear.medkit = Math.max(0, Math.min(c.careerRef.gear.medkit, c.healKits));
       c.careerRef.gear.grenade = Math.max(0, Math.min(c.careerRef.gear.grenade, c.nades));
     }
+    // health persists; the downed get scraped up at half strength
+    if (c.careerRef) {
+      c.careerRef.hp = c.alive ? Math.round(c.hp) : Math.round(c.maxHp * 0.5);
+      c.careerRef.limbs = { arm: +c.armDmg.toFixed(2), leg: +c.legDmg.toFixed(2) };
+    }
   }
+  // player too: survive and keep your wounds, or get revived at half
+  career.playerHp = player.alive ? Math.round(player.hp) : Math.round(player.maxHp * 0.5);
+  career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
   clearCombatants();
 
   if (match.won) {
@@ -646,6 +677,53 @@ function finishMatch() {
   }
 }
 
+// medical pricing: this is the drain that makes dying expensive
+function playerPatchCost() {
+  const max = 100 + career.skills.tough * 25;
+  const missing = career.playerHp == null ? 0 : Math.max(0, max - career.playerHp);
+  const limbs = (career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05) ? 80 : 0;
+  return Math.round(missing * 2.2) + limbs;
+}
+function crewPatchCost(m) {
+  if (!m) return 0;
+  const max = CREW_TIERS[m.tier].hp;
+  const missing = m.hp == null ? 0 : Math.max(0, max - m.hp);
+  const limbs = (m.limbs && (m.limbs.arm > 0.05 || m.limbs.leg > 0.05)) ? 60 : 0;
+  return Math.round(missing * 1.6) + limbs;
+}
+
+// opening plays: a pre-match nudge so squads don't pour down the same lane every bout
+function assignOpeningPlays() {
+  const PLAYS = ['left', 'right', 'split', 'center', 'gantry'];
+  const anchors = (side) => ({
+    // side: -1 = squad spawning north (moving +z), +1 = squad spawning south (moving -z)
+    left: [new THREE.Vector3(-17, 0, 3 * side), new THREE.Vector3(-12, 0, 5 * side)],
+    right: [new THREE.Vector3(17, 0, 3 * side), new THREE.Vector3(12, 0, 5 * side)],
+    center: [new THREE.Vector3(-3, 0, 2 * side), new THREE.Vector3(3, 0, 2 * side)],
+    gantryW: new THREE.Vector3(-16.5, 2.25, 0),
+    gantryE: new THREE.Vector3(16.5, 2.25, 0),
+  });
+  const applyPlay = (squad, side) => {
+    if (!squad.length) return;
+    const play = PLAYS[(Math.random() * PLAYS.length) | 0];
+    const a = anchors(side);
+    squad.forEach((c, i) => {
+      let goal;
+      if (play === 'left') goal = a.left[i % 2];
+      else if (play === 'right') goal = a.right[i % 2];
+      else if (play === 'center') goal = a.center[i % 2];
+      else if (play === 'split') goal = (i % 2 === 0 ? a.left : a.right)[(i >> 1) % 2];
+      else goal = i === 0 ? (Math.random() < 0.5 ? a.gantryW : a.gantryE) : (i % 2 === 0 ? a.left : a.right)[0];
+      c.openingGoal = goal.clone();
+      c.openingGoal.x += (Math.random() - 0.5) * 2;
+      c.openingGoal.z += (Math.random() - 0.5) * 2;
+      c.openingT = 6.5 + Math.random() * 3;
+    });
+  };
+  applyPlay(match.enemies, -1);
+  applyPlay(match.crew, 1);
+}
+
 function openShop(earnings = null) {
   phase = 'shop';
   ui.showScreen('shop');
@@ -654,6 +732,8 @@ function openShop(earnings = null) {
 
 function renderShop(earnings) {
   ui.renderShop(career, player, SQUADS[career.rank], earnings, {
+    playerPatchCost,
+    crewPatchCost,
     buyWeapon: (id) => {
       const w = WEAPONS[id];
       if (career.money >= w.price && !career.weapons.includes(id)) {
@@ -666,7 +746,6 @@ function renderShop(earnings) {
       const t = ARMOR_SLOTS[slot]?.tiers[tier];
       if (t && career.money >= t.price && career.armor[slot] === tier - 1) {
         career.money -= t.price;
-        if (career.armor[slot] > 0) career.stash[slot].push(career.armor[slot]); // hand-me-down
         career.armor[slot] = tier;
         audio.cashRegister(); save(); renderShop(earnings);
       }
@@ -679,39 +758,94 @@ function renderShop(earnings) {
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
-    outfit: (idx) => {
+    buyStashArmor: (slot, tier) => {
+      const t = ARMOR_SLOTS[slot]?.tiers[tier];
+      if (t && career.money >= t.price) {
+        career.money -= t.price;
+        career.stash.armor[slot][tier] = (career.stash.armor[slot][tier] || 0) + 1;
+        audio.cashRegister(); save(); renderShop(earnings);
+      }
+    },
+    assignWeapon: (idx, id) => {
       const m = career.crew[idx];
-      if (!m) return;
-      // best stashed weapon (by tier) beats what they carry
-      let bestGun = null;
-      for (const [id, n] of Object.entries(career.stash.weapons)) {
-        if (n > 0 && WEAPONS[id].tier > WEAPONS[m.gear.weapon || 'pistol'].tier &&
-            (!bestGun || WEAPONS[id].tier > WEAPONS[bestGun].tier)) bestGun = id;
+      if (!m || m.gear.weapon === id) return;
+      if (id !== 'pistol') {
+        if ((career.stash.weapons[id] || 0) <= 0) return;
+        career.stash.weapons[id]--;
       }
-      if (bestGun) {
-        career.stash.weapons[bestGun]--;
-        if (m.gear.weapon && m.gear.weapon !== 'pistol') {
-          career.stash.weapons[m.gear.weapon] = (career.stash.weapons[m.gear.weapon] || 0) + 1;
-        }
-        m.gear.weapon = bestGun;
+      if (m.gear.weapon && m.gear.weapon !== 'pistol') {
+        career.stash.weapons[m.gear.weapon] = (career.stash.weapons[m.gear.weapon] || 0) + 1;
       }
-      for (const slot of ['head', 'body', 'limbs']) {
-        const best = Math.max(0, ...career.stash[slot]);
-        if (best > m.gear[slot]) {
-          career.stash[slot].splice(career.stash[slot].indexOf(best), 1);
-          if (m.gear[slot] > 0) career.stash[slot].push(m.gear[slot]);
-          m.gear[slot] = best;
-        }
-      }
+      m.gear.weapon = id;
       audio.uiClick(); save(); renderShop(earnings);
     },
-    giveItem: (idx, kind) => {
+    assignArmor: (idx, slot, tier) => {
+      const m = career.crew[idx];
+      if (!m || m.gear[slot] === tier) return;
+      if (tier > 0) {
+        if ((career.stash.armor[slot][tier] || 0) <= 0) return;
+        career.stash.armor[slot][tier]--;
+      }
+      if (m.gear[slot] > 0) {
+        career.stash.armor[slot][m.gear[slot]] = (career.stash.armor[slot][m.gear[slot]] || 0) + 1;
+      }
+      m.gear[slot] = tier;
+      audio.uiClick(); save(); renderShop(earnings);
+    },
+    giveItem: (idx, kind, dir) => {
       const m = career.crew[idx];
       if (!m) return;
-      if ((career.consumables[kind] || 0) > 0 && (m.gear[kind] || 0) < 2) {
+      if (dir > 0 && (career.consumables[kind] || 0) > 0 && (m.gear[kind] || 0) < 2) {
         career.consumables[kind]--;
         m.gear[kind] = (m.gear[kind] || 0) + 1;
-        audio.uiClick(); save(); renderShop(earnings);
+      } else if (dir < 0 && (m.gear[kind] || 0) > 0) {
+        m.gear[kind]--;
+        career.consumables[kind] = (career.consumables[kind] || 0) + 1;
+      } else return;
+      audio.uiClick(); save(); renderShop(earnings);
+    },
+    patchPlayer: () => {
+      const cost = playerPatchCost();
+      if (cost > 0 && career.money >= cost) {
+        career.money -= cost;
+        career.playerHp = null;
+        career.playerLimbs = { arm: 0, leg: 0 };
+        audio.cashRegister(); save(); renderShop(earnings);
+      }
+    },
+    patchCrew: (idx) => {
+      const m = career.crew[idx];
+      const cost = crewPatchCost(m);
+      if (m && cost > 0 && career.money >= cost) {
+        career.money -= cost;
+        m.hp = null;
+        m.limbs = { arm: 0, leg: 0 };
+        audio.cashRegister(); save(); renderShop(earnings);
+      }
+    },
+    sellCrew: (idx) => {
+      const m = career.crew[idx];
+      if (!m) return;
+      // gear back to stash, 50% of signing fee back
+      if (m.gear.weapon && m.gear.weapon !== 'pistol') career.stash.weapons[m.gear.weapon] = (career.stash.weapons[m.gear.weapon] || 0) + 1;
+      for (const slot of ['head', 'body', 'limbs']) {
+        if (m.gear[slot] > 0) career.stash.armor[slot][m.gear[slot]] = (career.stash.armor[slot][m.gear[slot]] || 0) + 1;
+      }
+      career.consumables.medkit += m.gear.medkit || 0;
+      career.consumables.grenade += m.gear.grenade || 0;
+      career.money += Math.round(CREW_TIERS[m.tier].price * 0.5);
+      career.crew.splice(idx, 1);
+      audio.cashRegister(); save(); renderShop(earnings);
+    },
+    upgradeCrew: (idx) => {
+      const m = career.crew[idx];
+      const next = m?.tier === 'rookie' ? 'veteran' : m?.tier === 'veteran' ? 'elite' : null;
+      if (!next) return;
+      const cost = CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200;
+      if (career.money >= cost) {
+        career.money -= cost;
+        m.tier = next;
+        audio.cashRegister(); save(); renderShop(earnings);
       }
     },
     buyConsumable: (id) => {

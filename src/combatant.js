@@ -79,6 +79,8 @@ export class Combatant {
     this.leanK = 0;
     this.peekSide = 0;
     this.sprintNow = false;
+    this.openingGoal = new THREE.Vector3();
+    this.openingT = 0;
     // patience: holding an angle too long without moving triggers a push
     this.stallAnchor = { x: 0, z: 0 };
     this.stallT = 0;
@@ -397,30 +399,41 @@ export class Combatant {
       const pushHigh = heightGap > 0.8 && w.aiRange <= 15;
       this._onVerticalRoute = false;
 
+      // opening play: run the assigned lane until contact, arrival, or the whistle
+      if (this.openingT > 0) {
+        this.openingT -= dt;
+        const odx = this.openingGoal.x - this.pos.x, odz = this.openingGoal.z - this.pos.z;
+        if (sight || this.sinceHit < 0.6 || odx * odx + odz * odz < 2.2 * 2.2) this.openingT = 0;
+      }
+      const opening = this.openingT > 0;
+
       const needTravel = dist > engage || (!sight && !this.peekSide) || pushHigh || this.pushT > 0;
-      if (needTravel && this.cautionT > 0) {
+      if ((needTravel || opening) && this.cautionT > 0) {
         // a squadmate just died up ahead — hold and jink instead of feeding the corner
         this._strafing = true;
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
-      } else if (needTravel) {
+      } else if (needTravel || opening) {
         this._traveling = true;
-        this.sprintNow = (dist > 11 || !sight) && this.legDmg < 0.6;
-        // travel toward the target through the 3D navmesh.
+        const gx = opening ? this.openingGoal.x : tp.x;
+        const gz = opening ? this.openingGoal.z : tp.z;
+        const gy = opening ? (this.openingGoal.y || 0) : this.target.pos.y;
+        this.sprintNow = (opening || dist > 11 || !sight) && this.legDmg < 0.6;
+        // travel through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame
         this.repathT = (this.repathT ?? 0) - dt;
         if (this.repathT <= 0) {
           this.repathT = 0.45 + Math.random() * 0.35;
-          const tpY = this.target.pos.y;
-          this._straightOK = world.nav ? world.nav.walkableLine(this.pos.x, this.pos.z, this.pos.y, tp.x, tp.z, tpY) : true;
+          this._straightOK = world.nav ? world.nav.walkableLine(this.pos.x, this.pos.z, this.pos.y, gx, gz, gy) : true;
           if (this._straightOK) {
             this.path = null;
           } else {
-            this.path = world.nav.findPath(this.pos, { x: tp.x, y: tpY, z: tp.z }, this.navSeed, this.flankSide);
+            this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, this.flankSide);
             this.pathIdx = 0;
           }
         }
         if (this._straightOK || !this.path || !this.path.length) {
-          move.x += fx; move.z += fz;
+          const gd = Math.hypot(gx - this.pos.x, gz - this.pos.z) || 1;
+          move.x += (gx - this.pos.x) / gd; move.z += (gz - this.pos.z) / gd;
         } else {
           const reached = (wp) => {
             const dx = wp.x - this.pos.x, dz = wp.z - this.pos.z;

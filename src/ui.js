@@ -80,6 +80,7 @@ export class UI {
       pause: $('screen-pause'),
     };
     this._eventTimer = null;
+    this.kitOpen = -1;
   }
 
   showScreen(name) {
@@ -253,7 +254,7 @@ export class UI {
       </div>`;
     }).join('');
 
-    // armor slots
+    // armor slots: your own progression + crew copies into the stash
     $('shop-armor').innerHTML = Object.entries(ARMOR_SLOTS).map(([slot, def]) => {
       const cur = career.armor[slot];
       return `<div class="armor-slot-label">${def.label} — <span class="dim">${def.tiers[cur].name}</span></div>` +
@@ -261,10 +262,14 @@ export class UI {
           if (i === 0) return '';
           const owned = cur >= i;
           const canBuy = cur === i - 1 && career.money >= t.price;
+          const stashN = career.stash.armor[slot][i] || 0;
           return `<div class="shop-item ${owned ? 'owned' : ''}">
-            <div class="si-info"><div class="si-name">${t.name}</div><div class="si-desc">${t.desc}</div></div>
-            ${owned ? '<span class="si-owned">EQUIPPED</span>'
+            <div class="si-info"><div class="si-name">${t.name}${stashN ? ` <span class="dim">· stash ×${stashN}</span>` : ''}</div><div class="si-desc">${t.desc}</div></div>
+            <div class="roster-btns">
+            ${owned ? '<span class="si-owned">WORN</span>'
               : `<button class="btn" data-buy-armor="${slot}:${i}" ${canBuy ? '' : 'disabled'}>$${t.price}</button>`}
+            <button class="btn" data-stash-armor="${slot}:${i}" ${career.money >= t.price ? '' : 'disabled'} title="buy a copy for the crew stash">+CREW</button>
+            </div>
           </div>`;
         }).join('');
     }).join('');
@@ -289,29 +294,84 @@ export class UI {
       </div>`;
     }).join('') + (crewCount >= 5 ? '<div class="si-desc" style="padding:4px">Roster is full (5 max).</div>' : '');
 
-    // roster: permanent hires — arm and armor them from the stash, share supplies
-    const stashArmor = ['head', 'body', 'limbs']
-      .flatMap(s => career.stash[s].map(t => ARMOR_SLOTS[s].tiers[t].name));
-    const stashGuns = Object.entries(career.stash.weapons)
-      .filter(([, n]) => n > 0)
-      .map(([id, n]) => `${WEAPONS[id].name}${n > 1 ? ` ×${n}` : ''}`);
-    const stashDesc = [...stashGuns, ...stashArmor].join(', ');
-    const gearLine = (g) => {
-      const n = (s) => g[s] > 0 ? `T${g[s]}` : '–';
-      return `${WEAPONS[g.weapon || 'pistol'].name} · ⛑${n('head')} 🦺${n('body')} 🦵${n('limbs')} · 🩹${g.medkit || 0} 💣${g.grenade || 0}`;
+    // ---- medical ----
+    const playerMax = 100 + career.skills.tough * 25;
+    const playerHp = career.playerHp == null ? playerMax : Math.min(playerMax, career.playerHp);
+    const pCost = actions.playerPatchCost();
+    const limbFlags = (l) => (l.arm > 0.05 ? ' <span class="limb-flag">ARM</span>' : '') + (l.leg > 0.05 ? ' <span class="limb-flag">LEG</span>' : '');
+    const hpBar = (hp, max) => `<span class="mini-hp"><i style="width:${(hp / max) * 100}%; background:${hp / max > 0.6 ? 'var(--acid)' : hp / max > 0.3 ? 'var(--gold)' : 'var(--blood)'}"></i></span> ${Math.round(hp)}/${max}`;
+    $('shop-medical').innerHTML = `<div class="shop-item">
+      <div class="si-info"><div class="si-name">YOU ${limbFlags(career.playerLimbs)}</div>
+      <div class="si-desc">${hpBar(playerHp, playerMax)}</div></div>
+      ${pCost > 0 ? `<button class="btn" data-patch="player" ${career.money >= pCost ? '' : 'disabled'}>PATCH $${pCost}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
+    </div>`;
+
+    // ---- roster: permanent hires with a real kit editor ----
+    const stashGuns = Object.entries(career.stash.weapons).filter(([, n]) => n > 0)
+      .map(([id, n]) => `${WEAPONS[id].name}×${n}`);
+    const stashArmorList = ['head', 'body', 'limbs'].flatMap(s =>
+      Object.entries(career.stash.armor[s]).filter(([, n]) => n > 0)
+        .map(([t, n]) => `${ARMOR_SLOTS[s].tiers[t].name}×${n}`));
+    const stashDesc = [...stashGuns, ...stashArmorList].join(', ');
+
+    const kitEditor = (c, i) => {
+      const wOpts = ['pistol', ...Object.keys(career.stash.weapons).filter(id => (career.stash.weapons[id] || 0) > 0)];
+      if (c.gear.weapon !== 'pistol' && !wOpts.includes(c.gear.weapon)) wOpts.push(c.gear.weapon);
+      const wBtns = wOpts.map(id => {
+        const cur = c.gear.weapon === id;
+        const n = career.stash.weapons[id] || 0;
+        return `<button class="btn kit-btn ${cur ? 'kit-cur' : ''}" data-assign-weapon="${i}:${id}" ${cur ? '' : ''}>${WEAPONS[id].name.split(' ')[0]}${id !== 'pistol' && !cur ? ` ×${n}` : ''}</button>`;
+      }).join('');
+      const slotBtns = (slot) => ARMOR_SLOTS[slot].tiers.map((t, tier) => {
+        const cur = c.gear[slot] === tier;
+        const n = career.stash.armor[slot][tier] || 0;
+        const usable = cur || tier === 0 || n > 0;
+        return `<button class="btn kit-btn ${cur ? 'kit-cur' : ''}" data-assign-armor="${i}:${slot}:${tier}" ${usable ? '' : 'disabled'}>${tier === 0 ? 'NONE' : `T${tier}${!cur && n ? ` ×${n}` : ''}`}</button>`;
+      }).join('');
+      return `<div class="kit-editor">
+        <div class="kit-row"><span>GUN</span>${wBtns}</div>
+        <div class="kit-row"><span>HEAD</span>${slotBtns('head')}</div>
+        <div class="kit-row"><span>BODY</span>${slotBtns('body')}</div>
+        <div class="kit-row"><span>LEGS</span>${slotBtns('limbs')}</div>
+        <div class="kit-row"><span>🩹 ${c.gear.medkit || 0}</span>
+          <button class="btn kit-btn" data-give="${i}:medkit:-1" ${(c.gear.medkit || 0) > 0 ? '' : 'disabled'}>−</button>
+          <button class="btn kit-btn" data-give="${i}:medkit:1" ${career.consumables.medkit > 0 && (c.gear.medkit || 0) < 2 ? '' : 'disabled'}>+</button>
+          <span style="margin-left:10px">💣 ${c.gear.grenade || 0}</span>
+          <button class="btn kit-btn" data-give="${i}:grenade:-1" ${(c.gear.grenade || 0) > 0 ? '' : 'disabled'}>−</button>
+          <button class="btn kit-btn" data-give="${i}:grenade:1" ${career.consumables.grenade > 0 && (c.gear.grenade || 0) < 2 ? '' : 'disabled'}>+</button>
+        </div>
+      </div>`;
     };
+
     $('shop-roster').innerHTML = (career.crew.length
-      ? career.crew.map((c, i) => `<div class="shop-item roster-card">
-          <div class="si-info"><div class="si-name">${c.name} <span class="dim">${CREW_TIERS[c.tier].name} · ${c.kills || 0} kills</span></div>
-          <div class="si-desc">${gearLine(c.gear || {})}</div></div>
-          <div class="roster-btns">
-            <button class="btn" data-outfit="${i}" title="equip best stashed weapon + armor">OUTFIT</button>
-            <button class="btn" data-give="${i}:medkit" ${career.consumables.medkit > 0 && (c.gear?.medkit || 0) < 2 ? '' : 'disabled'}>+🩹</button>
-            <button class="btn" data-give="${i}:grenade" ${career.consumables.grenade > 0 && (c.gear?.grenade || 0) < 2 ? '' : 'disabled'}>+💣</button>
+      ? career.crew.map((c, i) => {
+        const max = CREW_TIERS[c.tier].hp;
+        const hp = c.hp == null ? max : Math.min(max, c.hp);
+        const cost = actions.crewPatchCost(c);
+        const next = c.tier === 'rookie' ? 'veteran' : c.tier === 'veteran' ? 'elite' : null;
+        const upCost = next ? CREW_TIERS[next].price - CREW_TIERS[c.tier].price + 200 : 0;
+        const g = c.gear || {};
+        const kitSummary = `${WEAPONS[g.weapon || 'pistol'].name} · ⛑${g.head || '–'} 🦺${g.body || '–'} 🦵${g.limbs || '–'} · 🩹${g.medkit || 0} 💣${g.grenade || 0}`;
+        return `<div class="shop-item roster-card">
+          <div class="si-info">
+            <div class="si-name">${c.name} <span class="dim">${CREW_TIERS[c.tier].name} · ${c.kills || 0} kills</span>${limbFlags(c.limbs || {})}</div>
+            <div class="si-desc">${hpBar(hp, max)}<br>${kitSummary}</div>
           </div>
-        </div>`).join('')
+          <div class="roster-btns roster-btns-col">
+            <div>
+              <button class="btn" data-kit="${i}">${this.kitOpen === i ? 'KIT ▴' : 'KIT ▾'}</button>
+              ${cost > 0 ? `<button class="btn" data-patch="${i}" ${career.money >= cost ? '' : 'disabled'}>🏥 $${cost}</button>` : ''}
+            </div>
+            <div>
+              ${next ? `<button class="btn" data-upgrade="${i}" ${career.money >= upCost ? '' : 'disabled'}>⬆ $${upCost}</button>` : ''}
+              <button class="btn btn-ghost" data-sell="${i}">SELL $${Math.round(CREW_TIERS[c.tier].price * 0.5)}</button>
+            </div>
+          </div>
+          ${this.kitOpen === i ? kitEditor(c, i) : ''}
+        </div>`;
+      }).join('')
       : '<div class="si-desc" style="padding:4px">You fight alone. Brave. Stupid, but brave.</div>')
-      + `<div class="si-desc" style="padding:6px 4px">STASH: ${stashDesc || 'empty — buy +CREW weapon copies; upgrading armor stashes your old piece'}</div>`;
+      + `<div class="si-desc" style="padding:6px 4px">STASH: ${stashDesc || 'empty — +CREW buttons buy gear copies for your squad'}</div>`;
 
     // training
     $('shop-training').innerHTML = Object.entries(TRAINING).map(([id, t]) => {
@@ -337,11 +397,20 @@ export class UI {
     wire('[data-buy-weapon]', 'data-buy-weapon', actions.buyWeapon);
     wire('[data-stash-weapon]', 'data-stash-weapon', actions.buyStashWeapon);
     wire('[data-buy-armor]', 'data-buy-armor', (v) => { const [slot, tier] = v.split(':'); actions.buyArmor(slot, parseInt(tier)); });
+    wire('[data-stash-armor]', 'data-stash-armor', (v) => { const [slot, tier] = v.split(':'); actions.buyStashArmor(slot, parseInt(tier)); });
     wire('[data-buy-consumable]', 'data-buy-consumable', actions.buyConsumable);
     wire('[data-hire]', 'data-hire', actions.hire);
     wire('[data-train]', 'data-train', actions.train);
-    wire('[data-outfit]', 'data-outfit', (i) => actions.outfit(parseInt(i)));
-    wire('[data-give]', 'data-give', (v) => { const [i, kind] = v.split(':'); actions.giveItem(parseInt(i), kind); });
+    wire('[data-assign-weapon]', 'data-assign-weapon', (v) => { const [i, id] = v.split(':'); actions.assignWeapon(parseInt(i), id); });
+    wire('[data-assign-armor]', 'data-assign-armor', (v) => { const [i, slot, tier] = v.split(':'); actions.assignArmor(parseInt(i), slot, parseInt(tier)); });
+    wire('[data-give]', 'data-give', (v) => { const [i, kind, dir] = v.split(':'); actions.giveItem(parseInt(i), kind, parseInt(dir)); });
+    wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
+    wire('[data-upgrade]', 'data-upgrade', (i) => actions.upgradeCrew(parseInt(i)));
+    wire('[data-sell]', 'data-sell', (i) => actions.sellCrew(parseInt(i)));
+    wire('[data-kit]', 'data-kit', (i) => {
+      this.kitOpen = this.kitOpen === parseInt(i) ? -1 : parseInt(i);
+      this.renderShop(career, player, nextSquad, earnings, actions);
+    });
   }
 
   renderIntro(rank, squad) {

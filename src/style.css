@@ -244,6 +244,16 @@ html, body {
 .roster-dead { border-left-color: #333; opacity: 0.5; }
 .roster-btns { display: flex; gap: 4px; }
 .roster-btns .btn { padding: 4px 8px; font-size: 10px; }
+.roster-btns-col { flex-direction: column; align-items: flex-end; }
+.roster-btns-col > div { display: flex; gap: 4px; }
+.mini-hp { display: inline-block; width: 70px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden; vertical-align: middle; margin-right: 5px; }
+.mini-hp i { display: block; height: 100%; }
+.limb-flag { font-size: 9px; font-weight: 800; color: #ff8a8e; background: rgba(227,36,43,0.2); border: 1px solid var(--blood); border-radius: 2px; padding: 0 4px; letter-spacing: 1px; }
+.kit-editor { width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.kit-row { display: flex; gap: 4px; align-items: center; margin-bottom: 5px; flex-wrap: wrap; }
+.kit-row > span { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: #8b8b96; min-width: 38px; }
+.kit-btn { padding: 3px 8px !important; font-size: 10px !important; }
+.kit-cur { border-color: var(--acid) !important; color: var(--acid) !important; background: rgba(134,255,60,0.1) !important; }
 #next-bout {
   background: rgba(30,10,10,0.55); border: 1px solid rgba(227,36,43,0.35); border-radius: 5px; padding: 12px 14px; font-size: 13px; line-height: 1.7;
 }
