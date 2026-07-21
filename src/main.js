@@ -288,9 +288,10 @@ function handleKill(killer, victim, part) {
         for (const slot of ['head', 'body', 'limbs']) {
           if (gear[slot] > 0) { career.stash[slot].push(gear[slot]); gear[slot] = 0; }
         }
-        // unused given supplies come back (they burn their own stock first)
-        career.consumables.medkit += Math.max(0, Math.min(gear.medkit, victim.healKits - (victim.baseKits || 0)));
-        career.consumables.grenade += Math.max(0, Math.min(gear.grenade, victim.nades - (victim.baseNades || 0)));
+        // unused given supplies come back — they burn their OWN stock first, so
+        // whatever remains counts as yours up to what you handed over
+        career.consumables.medkit += Math.max(0, Math.min(gear.medkit, victim.healKits));
+        career.consumables.grenade += Math.max(0, Math.min(gear.grenade, victim.nades));
         gear.medkit = 0; gear.grenade = 0;
       }
     }
@@ -341,7 +342,8 @@ function explode(pos, thrower) {
   audio.crowdRoar(0.8);
 
   const blast = new THREE.Vector3(pos.x, pos.y + 0.3, pos.z);
-  const dmgAt = (d, occluded) => Math.max(0, (MAX - (MAX - MIN) * (d / R))) * (occluded ? 0.3 : 1);
+  // full cover means full cover — no shrapnel through solid walls
+  const dmgAt = (d, occluded) => occluded ? 0 : Math.max(0, MAX - (MAX - MIN) * (d / R));
 
   // player
   if (player.alive) {
@@ -349,7 +351,8 @@ function explode(pos, thrower) {
     const d = chest.distanceTo(blast);
     if (d < R) {
       const occ = !hasLoS(world.colliders, blast, chest);
-      handlePlayerDamaged(dmgAt(d, occ) / 0.8, 'torso', pos); // undo grit for env-scale
+      const pdmg = dmgAt(d, occ);
+      if (pdmg > 0) handlePlayerDamaged(pdmg / 0.8, 'torso', pos); // undo grit for env-scale
       // shrapnel chews limbs
       if (!occ && d < R * 0.6) {
         player.armDmg = Math.min(1, player.armDmg + 0.3 * (1 - player.armor.limbAccum));
@@ -589,11 +592,11 @@ function updateEvents(dt) {
 // ============================================================ match end
 function finishMatch() {
   document.exitPointerLock();
-  // survivors' given supplies reflect what they actually used
+  // survivors' given supplies reflect what they actually used (own stock burns first)
   for (const c of match.crew) {
     if (c.alive && c.careerRef?.gear) {
-      c.careerRef.gear.medkit = Math.max(0, Math.min(c.careerRef.gear.medkit, c.healKits - (c.baseKits || 0)));
-      c.careerRef.gear.grenade = Math.max(0, Math.min(c.careerRef.gear.grenade, c.nades - (c.baseNades || 0)));
+      c.careerRef.gear.medkit = Math.max(0, Math.min(c.careerRef.gear.medkit, c.healKits));
+      c.careerRef.gear.grenade = Math.max(0, Math.min(c.careerRef.gear.grenade, c.nades));
     }
   }
   clearCombatants();

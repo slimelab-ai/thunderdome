@@ -311,6 +311,16 @@ export class Combatant {
         fleeing = true;
       }
     }
+    // live grenades: everyone scatters — no more marching onto a cooking frag
+    if (world.grenades) for (const gr of world.grenades) {
+      const dx = this.pos.x - gr.pos.x, dz = this.pos.z - gr.pos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < 6.5 * 6.5) {
+        const d = Math.max(0.01, Math.sqrt(d2));
+        move.x += (dx / d) * 4; move.z += (dz / d) * 4;
+        fleeing = true;
+      }
+    }
 
     this._traveling = false;
     this._strafing = false;
@@ -349,15 +359,30 @@ export class Combatant {
         this.healKits--;
         this.healingT = 2.1;
       }
-      // frag the target's hiding spot when we can't get an angle
+      // frag the target's hiding spot when we can't get an angle —
+      // but never with a friendly (or, for crew, the boss) inside the blast radius
       if (this.nades > 0 && this.nadeCd <= 0 && !sight && dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
-        this.nades--;
-        this.nadeCd = 13 + Math.random() * 8;
-        const ndx = tp.x - this.pos.x, ndz = tp.z - this.pos.z;
-        const nd = Math.hypot(ndx, ndz) || 1;
-        const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
-        const jit = () => 1 + (Math.random() - 0.5) * 0.14;
-        world.throwGrenade(this.eyePos(), new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
+        let friendlyInBlast = false;
+        for (const c of world.combatants) {
+          if (c === this || !c.alive || c.team !== this.team) continue;
+          const bdx = c.pos.x - tp.x, bdz = c.pos.z - tp.z;
+          if (bdx * bdx + bdz * bdz < 8 * 8) { friendlyInBlast = true; break; }
+        }
+        if (!friendlyInBlast && this.team === 'player' && world.playerProxy.alive) {
+          const bdx = world.playerProxy.pos.x - tp.x, bdz = world.playerProxy.pos.z - tp.z;
+          if (bdx * bdx + bdz * bdz < 8 * 8) friendlyInBlast = true;
+        }
+        if (!friendlyInBlast) {
+          this.nades--;
+          this.nadeCd = 13 + Math.random() * 8;
+          const ndx = tp.x - this.pos.x, ndz = tp.z - this.pos.z;
+          const nd = Math.hypot(ndx, ndz) || 1;
+          const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
+          const jit = () => 1 + (Math.random() - 0.5) * 0.14;
+          world.throwGrenade(this.eyePos(), new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
+        } else {
+          this.nadeCd = 2; // re-evaluate shortly
+        }
       }
 
       // close-range fighters storm high ground; long-range fighters hold and shoot up
@@ -588,8 +613,9 @@ export class Combatant {
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
     const drop = (1 - this.crouchK) * 1.55;
     const legBend = Math.acos(Math.max(0.2, Math.min(1, (0.85 - drop) / 0.85)));
-    // peeking leans harder than plain strafing
-    const leanTarget = this.peekSide ? -this.peekSide * 0.26 : (this._strafing ? -this.strafeDir * 0.09 : 0);
+    // peeking leans harder than plain strafing. Sign: positive rotation.z tilts the
+    // head toward local −X, which is exactly where the peek eye offsets for side=+1.
+    const leanTarget = this.peekSide ? this.peekSide * 0.26 : (this._strafing ? this.strafeDir * 0.09 : 0);
     this.leanK += (leanTarget - this.leanK) * Math.min(1, dt * 6);
 
     this.group.position.copy(this.pos);

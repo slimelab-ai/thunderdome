@@ -9,11 +9,19 @@ export const LINES = {
     "Two crews walk in. One crew gets carried out. You know the rules!",
     "The pit is hungry tonight, folks. FEED IT!",
     "Cameras rolling, bets locked. Let's see some VIOLENCE!",
+    "Welcome back to the only show where the refunds go to your next of kin!",
+    "Tonight's forecast: lead, with a chance of screaming!",
+    "The janitor just mopped, so somebody make a MESS!",
+    "Doors are locked, exits are decorative — LET'S GO!",
+    "If you're squeamish, folks, the concession stand sells blindfolds!",
   ],
   firstBlood: [
     "FIRST BLOOD! The crowd tastes copper and they LOVE it!",
     "And we're on the board! Somebody's mother is crying already!",
     "FIRST KILL of the bout — the pit claims its opening tribute!",
+    "There's the opener! The night is officially RUINED for someone!",
+    "First one down! The mop budget just went UP!",
+    "The seal is BROKEN, folks! It only gets wetter from here!",
   ],
   playerKill: [
     "{victim} is DOWN! Our challenger has teeth, folks!",
@@ -21,89 +29,147 @@ export const LINES = {
     "{victim} won't be making it to the afterparty!",
     "The challenger drops {victim} like a bad habit!",
     "{victim} — DOWN! Somebody check their pulse. Actually, don't bother.",
+    "{victim} has left the building! Feet first!",
+    "Scratch {victim} off the fight card, PERMANENTLY!",
+    "{victim} just discovered the exit nobody wants to take!",
+    "The challenger sends {victim} to the big locker room in the sky!",
+    "{victim}'s bookie just tore up the ticket!",
+    "And {victim} goes down like the price of their stock!",
+    "Someone tell {victim}'s crew to set one less place at dinner!",
   ],
   playerHeadshot: [
     "HEADSHOT! {victim}'s helmet fund was WASTED money!",
     "RIGHT BETWEEN THE EYES! {victim} never saw the bill coming!",
     "SKULL SHOT on {victim}! That's a crowd-pleaser, folks!",
     "One tap! {victim}'s brain just clocked out early!",
+    "CRANIAL DELIVERY for {victim}! Sign here... oh, never mind!",
+    "{victim} just had a thought — and it EXITED!",
+    "DOME SHOT! {victim}'s hat size is now irrelevant!",
+    "Right in the thinker! {victim} is DONE deliberating!",
+    "The challenger reads {victim} a bedtime story — THE END!",
   ],
   allyKill: [
     "{killer} puts {victim} in the dirt! That's what money buys!",
     "{killer} earns the paycheck — {victim} is DONE!",
     "Hired muscle {killer} takes out {victim}! Professional work!",
+    "{killer} with the assist... no wait, that's a FINISH! {victim} is out!",
+    "That's why you pay {killer} the big bucks — {victim}, meet floor!",
+    "{killer} clocks in and {victim} clocks OUT!",
+    "Payroll well spent! {killer} just retired {victim}!",
   ],
   enemyKillsAlly: [
     "{killer} just SCRAPPED {victim}! The challenger's crew is thinning!",
     "{victim} is down! That's coming out of somebody's cut!",
-    "OH NO — {victim} just got retired PERMANENTLY by {killer}!",
+    "OH NO — {killer} just retired {victim} PERMANENTLY!",
+    "{victim}'s contract has been TERMINATED by {killer}!",
+    "The challenger's payroll just got lighter — {victim} is gone!",
+    "{killer} sends condolences to {victim}'s loved ones. And a bill!",
+    "There goes {victim}! Good help is SO hard to keep alive!",
   ],
   playerHurt: [
     "The challenger takes a hit! The odds board is twitching!",
     "Blood on the challenger! The sharks smell it!",
+    "OOF! That one's going in the highlight reel!",
+    "The challenger springs a leak! Plug it, kid!",
+    "That's gonna leave a mark! Several, actually!",
   ],
   playerArmHit: [
     "Challenger's shooting arm is CHEWED UP — watch that aim wobble, folks!",
     "That's a wing shot! Try aiming with a busted arm, kid!",
+    "Right in the arm! The challenger's crosshair just grew a mind of its own!",
+    "ARM SHOT! Someone's about to shoot like they're stirring soup!",
   ],
   playerLegHit: [
     "LEG SHOT! The challenger is LIMPING! No running from the pit!",
     "There goes the footwork! The challenger's dragging a dead leg!",
+    "Kneecapped! The challenger's dancing days are OVER!",
+    "That leg's just decoration now, folks!",
   ],
   playerLow: [
     "The challenger is one good sneeze away from the morgue!",
     "Somebody call the cleanup crew — the challenger's on FUMES!",
+    "The challenger's health bar is more of a health SLIVER, folks!",
+    "I've seen corpses with better vitals! Keep those bets coming!",
+    "The morgue drawer is OPEN and WAITING, challenger!",
   ],
   lastEnemy: [
     "ONE LEFT! Finish it and get PAID!",
     "Last man standing on the away team! The crowd wants a FINISHER!",
+    "Down to ONE! Somebody's about to be very lonely, then very dead!",
+    "One straggler left, folks — this is the sad part. I LOVE the sad part!",
   ],
   win: [
     "IT'S OVER! The challenger takes the bout! PAY THE MAN!",
     "CLEAN SWEEP! The pit has a new favorite, ladies and gentlemen!",
     "The bell rings and the challenger STANDS! What a show!",
+    "VICTORY! Cue the confetti — it's red, we buy in bulk!",
+    "The away team is now a CLEANUP ITEM! Challenger wins!",
+    "The odds board weeps, the crowd ROARS — what a bout!",
+    "Winner winner — someone else's dinner! The challenger advances!",
   ],
   lose: [
     "Annnnd the challenger is DOWN. Scrape 'em up, boys.",
     "The house wins again, folks. It always does.",
     "That's a wrap on the challenger. Cleanup on aisle EVERYWHERE.",
+    "The challenger has decided to become part of the floor. Respect.",
+    "Ohh, and the crowd goes... home! Show's over, folks!",
+    "Someone fetch the stretcher. And a sponge!",
+    "The challenger's comeback tour has been POSTPONED. Indefinitely-ish!",
   ],
   event_lightsout: [
     "Whoops — did somebody forget to pay the power bill? LIGHTS OUT!",
     "Let's make it interesting — KILL THE LIGHTS!",
+    "Total darkness, folks! The screaming really carries in the dark!",
+    "Lights out! Muzzle flashes only — it's ROMANTIC!",
   ],
   event_gas: [
     "We've got a little GAS LEAK, folks! Purely accidental, I'm sure!",
     "The management apologizes for the toxic fumes. The management is LYING!",
+    "Green cloud on the floor! That's not fog-machine juice, people!",
+    "Breathe deep, contestants! Just kidding — DON'T!",
   ],
   event_frenzy: [
     "The high rollers just showed up — DOUBLE PAYOUT ON EVERYTHING!",
     "CROWD FRENZY! Blood money is trading at DOUBLE, people!",
+    "The whales are betting! Every kill pays DOUBLE, make it messy!",
+    "Money's raining, folks! Somebody go EARN it!",
   ],
   event_airdrop: [
     "A generous sponsor sends their regards — CARE PACKAGE INBOUND!",
     "Supply drop! First come, first SERVED, as in dinner!",
+    "Presents from above, folks! No returns, no refunds!",
+    "Someone up there likes you! Or wants a better show!",
   ],
   event_molotov: [
     "The cheap seats are throwing MOLOTOVS again! Security, do nothing!",
     "FIRE IN THE PIT! Someone's insurance premium just tripled!",
+    "It's raining cocktails, folks! The FLAMMABLE kind!",
+    "Fire on the floor! Marshmallows available at concessions!",
   ],
   nade: [
     "FRAG OUT! Somebody's about to have a very loud problem!",
     "Live grenade on the floor, folks! Place your bets on the shrapnel!",
     "Oh-ho, the pineapple express has DEPARTED!",
+    "Grenade in play! Fun fact: it does not care who you are!",
+    "Somebody dropped a party favor! RSVP: everyone nearby!",
+    "That ticking sound? That's the sound of POOR DECISIONS incoming!",
   ],
   bored: [
     "The crowd paid for BLOOD, not a stakeout, challenger!",
     "Our challenger appears to have taken ROOT, folks! Management is preparing... motivation!",
     "BO-RING! Somebody light a fire under this one. That can be arranged, actually!",
     "Folks, I've seen furniture with more footwork. MOVE!",
+    "Is the challenger NAPPING? Wake-up call is being arranged!",
+    "This isn't hide and seek, kid! The crowd found you HOURS ago!",
   ],
   bossIntro: [
     "And now... undefeated in THIRTY-ONE bouts... the man, the monster... GOLIATH!",
+    "Hide the children, cancel the ambulance — it's too late for all that. GOLIATH IS HERE!",
+    "Thirty-one bouts. Thirty-one caskets. Ladies and gentlemen... GOLIATH!",
   ],
   champWin: [
     "I don't believe it. I DO NOT believe it. GOLIATH IS DOWN! WE HAVE A NEW CHAMPION!",
+    "STOP THE PRESSES! GOLIATH HAS FALLEN! Bow to your NEW CHAMPION!",
   ],
 };
 
@@ -120,7 +186,12 @@ export class Announcer {
     const now = performance.now() / 1000;
     if (!force && this.cooldowns[category] && now - this.cooldowns[category] < minGap) return;
     this.cooldowns[category] = now;
-    let text = pick(LINES[category] || ['...']);
+    const pool = LINES[category] || ['...'];
+    this._recent = this._recent || {};
+    let text = pick(pool);
+    // don't repeat the same line back-to-back within a category
+    for (let tries = 0; tries < 3 && pool.length > 1 && text === this._recent[category]; tries++) text = pick(pool);
+    this._recent[category] = text;
     for (const [k, v] of Object.entries(vars)) text = text.replaceAll(`{${k}}`, v);
     if (force) this.queue.length = 0;
     if (this.queue.length < 3) this.queue.push(text);
