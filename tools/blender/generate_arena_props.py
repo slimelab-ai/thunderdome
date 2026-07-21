@@ -193,8 +193,10 @@ def gantry_deck():
     rust = mat("Gantry rust", (0.27, 0.065, 0.018), metallic=0.38, roughness=0.84)
     orange = mat("Safety orange", (0.92, 0.18, 0.018), roughness=0.68)
     cube("Deck plate", (0, 0, 0.15), (4.95, 3.95, 0.22), steel, 0.035)
+    # Leave positive clearance above the plate. Merely touching its top face
+    # produces unstable depth/shadow results after WebGL shadow projection.
     for x in (-2.25, -1.5, -0.75, 0, 0.75, 1.5, 2.25):
-        cube("Deck rib", (x, 0, 0.295), (0.09, 3.8, 0.07), rust, 0.012)
+        cube("Deck rib", (x, 0, 0.325), (0.09, 3.8, 0.07), rust, 0.012)
     for y in (-1.78, 1.78):
         cube("Edge beam", (0, y, 0.08), (5.0, 0.16, 0.34), steel, 0.025)
     for x in (-2.32, 2.32):

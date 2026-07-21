@@ -426,6 +426,11 @@ export function buildArena(scene) {
   overhead.shadow.mapSize.set(1024, 1024);
   overhead.shadow.camera.near = 4;
   overhead.shadow.camera.far = 40;
+  // Bevel-heavy authored props expose the default zero-bias shadow acne badly,
+  // especially at grazing angles on the gantry. Offset receiver samples just
+  // enough to keep real contact shadows without the moire/triangle crawl.
+  overhead.shadow.bias = -0.00035;
+  overhead.shadow.normalBias = 0.045;
   scene.add(overhead, overhead.target);
   lights.push({ light: overhead, base: 900 });
 
