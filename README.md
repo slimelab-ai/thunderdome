@@ -50,10 +50,14 @@ Open http://localhost:5173 in a real browser (pointer lock needs one).
 
 ## Tech
 
-Vite + Three.js, no assets — all geometry is procedural primitives, textures are
+Vite + Three.js. Signature arena props are authored as optimized GLB models in
+headless Blender; the environment around them remains procedural, textures are
 generated on canvas (concrete grime, neon signage, odds board), and every sound is
 synthesized with WebAudio (per-weapon gunshots, crowd ambience that roars on kills,
 klaxons, ricochets).
+
+Regenerate the arena prop pack with
+`blender --background --python tools/blender/generate_arena_props.py`.
 
 | File | What it is |
 | --- | --- |

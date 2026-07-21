@@ -1,8 +1,41 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Collider } from './collider.js';
 
 // Arena footprint: X in [-W/2, W/2], Z in [-D/2, D/2]. Player gate south (+Z), enemy gate north (-Z).
 export const ARENA = { W: 44, D: 32, WALL_H: 5 };
+
+const propLoader = new GLTFLoader();
+const propCache = new Map();
+
+function loadProp(scene, file, position, rotationY, scale, fallback) {
+  const install = (source) => {
+    const prop = source.clone(true);
+    prop.position.copy(position);
+    prop.rotation.y = rotationY;
+    prop.scale.copy(scale);
+    prop.traverse((child) => {
+      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+    });
+    scene.add(prop);
+  };
+  const cached = propCache.get(file);
+  if (cached) {
+    if (cached.scene) install(cached.scene);
+    else cached.then(install).catch(fallback);
+    return;
+  }
+  const pending = propLoader.loadAsync(`/assets/models/${file}.glb`);
+  propCache.set(file, pending);
+  pending.then((gltf) => {
+    propCache.set(file, gltf);
+    install(gltf.scene);
+  }).catch((err) => {
+    console.warn(`Could not load authored prop ${file}; using primitive fallback.`, err);
+    propCache.delete(file);
+    fallback();
+  });
+}
 
 function canvasTex(w, h, draw) {
   const c = document.createElement('canvas');
@@ -216,11 +249,29 @@ export function buildArena(scene) {
   };
 
   const addBarrel = (cx, cz) => {
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.1, 10), rustMat);
-    b.position.set(cx, 0.55, cz);
-    b.castShadow = true;
-    scene.add(b);
+    loadProp(scene, 'hazard_barrel', new THREE.Vector3(cx, 0, cz), 0, new THREE.Vector3(1, 1, 1), () => {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.1, 10), rustMat);
+      b.position.set(cx, 0.55, cz);
+      b.castShadow = true;
+      scene.add(b);
+    });
     addCollider(cx, 0, cz, 0.85, 1.1, 0.85);
+  };
+
+  const addAuthoredBox = (file, fallbackMat, cx, cz, w, h, d, ry, nativeSize) => {
+    const fallback = () => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), fallbackMat);
+      m.position.set(cx, h / 2, cz);
+      m.rotation.y = ry;
+      m.castShadow = true; m.receiveShadow = true;
+      scene.add(m);
+    };
+    loadProp(
+      scene, file, new THREE.Vector3(cx, 0, cz), ry,
+      new THREE.Vector3(w / nativeSize.x, h / nativeSize.y, d / nativeSize.z),
+      fallback,
+    );
+    addCollider(cx, 0, cz, w, h, d, ry);
   };
 
   // central raised slab + pillars
@@ -231,20 +282,22 @@ export function buildArena(scene) {
   }
 
   // crates & stacks
-  addBox(crateMat, -15, -9, 2.2, 1.4, 1.8, 0.2);
-  addBox(crateMat, -14.4, -8.3, 1.4, 2.6, 1.4, 0.5);
-  addBox(crateMat, 15, 9, 1.8, 1.4, 2.2, -0.3);
-  addBox(crateMat, 14.2, 8.2, 1.4, 2.6, 1.4, 0.1);
-  addBox(crateMat, -4, 10, 1.8, 1.2, 2.1, 0.4);
-  addBox(crateMat, 5, -10.5, 2.1, 1.2, 1.8, -0.2);
-  addBox(crateMat, 13, -6, 1.6, 1.1, 1.9, 0.9);
-  addBox(crateMat, -13, 6, 1.9, 1.1, 1.6, 0.3);
+  const crateSize = new THREE.Vector3(2.2, 1.4, 1.8);
+  addAuthoredBox('weapons_crate', crateMat, -15, -9, 2.2, 1.4, 1.8, 0.2, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, -14.4, -8.3, 1.4, 2.6, 1.4, 0.5, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, 15, 9, 1.8, 1.4, 2.2, -0.3, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, 14.2, 8.2, 1.4, 2.6, 1.4, 0.1, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, -4, 10, 1.8, 1.2, 2.1, 0.4, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, 5, -10.5, 2.1, 1.2, 1.8, -0.2, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, 13, -6, 1.6, 1.1, 1.9, 0.9, crateSize);
+  addAuthoredBox('weapons_crate', crateMat, -13, 6, 1.9, 1.1, 1.6, 0.3, crateSize);
 
   // low sandbag-style walls (shoot over standing, hide crouched)
-  addBox(metalMat, -6, -3.5, 4.2, 1.05, 0.6);
-  addBox(metalMat, 6, 3.5, 4.2, 1.05, 0.6);
-  addBox(metalMat, -13, 1, 3.4, 1.05, 0.7, 0.5);
-  addBox(metalMat, 13, -1, 3.4, 1.05, 0.7, 0.5);
+  const barrierSize = new THREE.Vector3(4.2, 1.05, 0.6);
+  addAuthoredBox('concrete_barricade', metalMat, -6, -3.5, 4.2, 1.05, 0.6, 0, barrierSize);
+  addAuthoredBox('concrete_barricade', metalMat, 6, 3.5, 4.2, 1.05, 0.6, 0, barrierSize);
+  addAuthoredBox('concrete_barricade', metalMat, -13, 1, 3.4, 1.05, 0.7, 0.5, barrierSize);
+  addAuthoredBox('concrete_barricade', metalMat, 13, -1, 3.4, 1.05, 0.7, 0.5, barrierSize);
 
   // ---- sightline breakers: no spawn-to-spawn LOS ----
   // gate screens: a full-height wall shields each spawn; you exit around its edges
