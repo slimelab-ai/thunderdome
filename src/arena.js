@@ -7,6 +7,16 @@ export const ARENA = { W: 44, D: 32, WALL_H: 5 };
 
 const propLoader = new GLTFLoader();
 const propCache = new Map();
+const textureLoader = new THREE.TextureLoader();
+
+function tiledTexture(file, repeatX, repeatY) {
+  const texture = textureLoader.load(`/assets/textures/${file}`);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 8;
+  return texture;
+}
 
 function loadProp(scene, file, position, rotationY, scale, fallback) {
   const install = (source) => {
@@ -135,12 +145,10 @@ export function buildArena(scene) {
   };
 
   // ---------- floor ----------
-  const floorTex = concreteTex('#38383c');
-  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-  floorTex.repeat.set(6, 4);
+  const floorTex = tiledTexture('arena_concrete.webp', 7, 5);
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(W, D),
-    new THREE.MeshLambertMaterial({ map: floorTex })
+    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.94, metalness: 0.02 })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
@@ -161,10 +169,8 @@ export function buildArena(scene) {
   scene.add(ring);
 
   // ---------- walls ----------
-  const wallTex = concreteTex('#26262b');
-  wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
-  wallTex.repeat.set(5, 1);
-  const wallMat = new THREE.MeshLambertMaterial({ map: wallTex });
+  const wallTex = tiledTexture('arena_concrete.webp', 6, 1.4);
+  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, color: 0x8a8d94, roughness: 0.96, metalness: 0.01 });
   const mkWall = (w, h, d, x, y, z) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
     m.position.set(x, y, z);
@@ -236,9 +242,11 @@ export function buildArena(scene) {
   // ---------- cover objects ----------
   const crateTex = concreteTex('#4a3d2a', 256);
   const crateMat = new THREE.MeshLambertMaterial({ map: crateTex });
-  const metalMat = new THREE.MeshLambertMaterial({ color: 0x5c636b });
+  const steelTex = tiledTexture('arena_steel.webp', 2, 2);
+  const metalMat = new THREE.MeshStandardMaterial({ map: steelTex, color: 0x9a9da2, roughness: 0.62, metalness: 0.78 });
   const rustMat = new THREE.MeshLambertMaterial({ color: 0x5a3a26 });
-  const concMat = new THREE.MeshLambertMaterial({ map: concreteTex('#45454a', 256) });
+  const coverConcreteTex = tiledTexture('arena_concrete.webp', 2, 1);
+  const concMat = new THREE.MeshStandardMaterial({ map: coverConcreteTex, color: 0xb0b1b4, roughness: 0.95, metalness: 0.01 });
 
   // Props can rotate freely — colliders are true OBBs matching the mesh exactly.
   const addBox = (mat, cx, cz, w, h, d, ry = 0) => {
@@ -277,6 +285,10 @@ export function buildArena(scene) {
     addCollider(cx, 0, cz, w, h, d, ry);
   };
 
+  const arenaBlockSize = new THREE.Vector3(8, 2.6, 0.9);
+  const addArenaBlock = (cx, cz, w, h, d, ry = 0) =>
+    addAuthoredBox('arena_block', concMat, cx, cz, w, h, d, ry, arenaBlockSize);
+
   // central raised slab + pillars
   addBox(concMat, 0, 0, 5, 0.55, 5);
   const pillarPos = [[-9, -6], [9, -6], [-9, 6], [9, 6]];
@@ -304,19 +316,19 @@ export function buildArena(scene) {
 
   // ---- sightline breakers: no spawn-to-spawn LOS ----
   // gate screens: a full-height wall shields each spawn; you exit around its edges
-  addBox(concMat, 0, -10.5, 8, 2.6, 0.9);
-  addBox(concMat, 0, 10.5, 8, 2.6, 0.9);
+  addArenaBlock(0, -10.5, 8, 2.6, 0.9);
+  addArenaBlock(0, 10.5, 8, 2.6, 0.9, Math.PI);
   // angled wing walls flanking each screen: covered diagonal lanes out of the pocket,
   // so leaving spawn isn't a coin-flip between two watched gaps
-  addBox(concMat, -7, 11.6, 3.6, 2.5, 0.8, -0.55);
-  addBox(concMat, 7, 11.6, 3.6, 2.5, 0.8, 0.55);
-  addBox(concMat, -7, -11.6, 3.6, 2.5, 0.8, 0.55);
-  addBox(concMat, 7, -11.6, 3.6, 2.5, 0.8, -0.55);
+  addArenaBlock(-7, 11.6, 3.6, 2.5, 0.8, -0.55);
+  addArenaBlock(7, 11.6, 3.6, 2.5, 0.8, 0.55);
+  addArenaBlock(-7, -11.6, 3.6, 2.5, 0.8, 0.55);
+  addArenaBlock(7, -11.6, 3.6, 2.5, 0.8, -0.55);
   // tall crates shadowing the mid-flank runs (cover-hop routes toward the gantries)
   addBox(crateMat, -10.5, 8.3, 1.7, 2.4, 1.7, 0.3);
   addBox(crateMat, 10.5, -8.3, 1.7, 2.4, 1.7, -0.3);
   // central monolith rising from the slab — kills the middle lane
-  addBox(concMat, 0, 0, 6, 2.8, 1.6);
+  addArenaBlock(0, 0, 6, 2.8, 1.6);
   addBox(concMat, 9, -11, 1.2, 2.4, 3, 0);
   addBox(concMat, -9, 11, 1.2, 2.4, 3, 0);
 

@@ -206,10 +206,32 @@ def gantry_deck():
     export("gantry_deck")
 
 
+def arena_block():
+    """Modular armored concrete cover, scaled at runtime for screens and wings."""
+    reset()
+    concrete = mat("Battered concrete", (0.27, 0.28, 0.30), roughness=0.96)
+    steel = mat("Blackened armor", (0.045, 0.05, 0.06), metallic=0.86, roughness=0.5)
+    orange = mat("League orange", (0.92, 0.16, 0.018), metallic=0.08, roughness=0.7)
+    cube("Concrete core", (0, 0, 1.3), (7.9, 0.82, 2.48), concrete, 0.12)
+    cube("Steel cap", (0, 0, 2.57), (7.95, 0.94, 0.16), steel, 0.035)
+    cube("Steel foot", (0, 0, 0.11), (7.95, 1.04, 0.22), steel, 0.035)
+    for x in (-3.65, 3.65):
+        cube("End armor", (x, 0, 1.3), (0.35, 0.98, 2.42), steel, 0.045)
+        for z in (0.5, 1.3, 2.1):
+            cyl("Armor bolt", (x, -0.51, z), 0.075, 0.055, orange,
+                vertices=10, rotation=(math.pi / 2, 0, 0), bevel=0.008)
+    cube("Hazard inset", (0, -0.465, 1.36), (2.65, 0.055, 0.52), steel, 0.018)
+    for x in (-0.92, -0.46, 0, 0.46, 0.92):
+        cube("Hazard slash", (x, -0.502, 1.36), (0.20, 0.025, 0.58), orange,
+             0.006, rotation=(0, math.radians(-24), 0))
+    export("arena_block")
+
+
 weapons_crate()
 hazard_barrel()
 concrete_barricade()
 wrecked_car()
 arena_gate()
 gantry_deck()
+arena_block()
 print("Arena prop pack complete:", OUT)
