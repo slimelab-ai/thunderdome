@@ -4,6 +4,7 @@ import { AttritionMarket, CircuitMarket } from '../src/market.js';
 import { makeItem } from '../src/items.js';
 import {
   newAttritionState, advanceDraft, runAttritionAI, suggestedAttritionBankroll,
+  attritionOdds, attritionBetOptions, resupplyAttrition,
 } from '../src/attrition.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -41,4 +42,25 @@ test('rival AI pivots away from a squeezed 9mm pool and explains the buy', () =>
   assert.equal(state.enemy.strategy, 'rifle');
   assert.ok(action.action.includes('RIFLE'));
   assert.ok(state.enemy.log[0].includes('bought'));
+});
+
+test('underdog sees comeback odds and can raise the stake', () => {
+  const state = newAttritionState(20000, () => 0.5);
+  state.enemyMoney = 20000;
+  assert.ok(attritionOdds(state, 5000) > 2);
+  assert.deepEqual(attritionBetOptions(state, 5000), [250, 500, 1250, 2500]);
+  assert.deepEqual(attritionBetOptions(state, 100), [250]);
+});
+
+test('every third completed round resupplies only shared consumables and ammo', () => {
+  const market = new AttritionMarket(null, () => 0.5);
+  const state = newAttritionState(20000, () => 0.5);
+  state.round = 4;
+  const ammoBefore = market.info('ammo_762').units;
+  const rifleBefore = market.info('rifle').units;
+  const drop = resupplyAttrition(state, market, () => 0);
+  assert.equal(drop.round, 3);
+  assert.equal(market.info('ammo_762').units, ammoBefore + 2);
+  assert.equal(market.info('rifle').units, rifleBefore);
+  assert.match(state.enemy.log[0], /HOUSE RESUPPLY/);
 });

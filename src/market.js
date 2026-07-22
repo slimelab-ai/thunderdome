@@ -60,6 +60,13 @@ export class AttritionMarket {
     p.units += q; p.cash = Math.max(1, p.cash - value);
     return value;
   }
+  restock(type, quantity) {
+    const p = this.pools[type];
+    if (!p || quantity <= 0) return;
+    // Supply drops add real units without adding quote currency, deliberately
+    // easing shortages while leaving prior player trades in the pool.
+    p.units += quantity;
+  }
   snapshot() { return { pools: this.pools }; }
   info(type) {
     const p = this.pools[type];

@@ -476,7 +476,7 @@ export class UI {
   }
 
 
-  renderIntro(career, squad, odds, onBet) {
+  renderIntro(career, squad, odds, onBet, attritionBets = []) {
     const attrition = career.mode === 'attrition';
     $('intro-rank').parentElement.innerHTML = attrition
       ? `ATTRITION ROUND <span id="intro-rank">${career.attrition.round}</span>`
@@ -494,9 +494,10 @@ export class UI {
       `<span class="intro-hp" style="color:${healthColor(hp / maxHp)}">${Math.round(hp)}/${maxHp} HP</span>` +
       (hurt ? '<span class="limb-flag">⚠ PATCH UP AT THE MARKET</span>' : '') +
       (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
-    const bets = [0, 200, 500, 1000];
+    const bets = attrition ? attritionBets : [0, 200, 500, 1000];
     $('bet-row').innerHTML = attrition
-      ? `<span class="dim">SELF-BET IS AUTOMATIC · BOTH SIDES STAKE 10% · YOUR $${career.money.toLocaleString()} vs RIVAL $${career.attrition.enemyMoney.toLocaleString()}</span>`
+      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.attrition.enemyMoney.toLocaleString()}</span> ` +
+        bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}</button>`).join('')
       : `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
         ${b <= career.money ? '' : 'disabled'}>${b === 0 ? 'NO BET' : '$' + b}</button>`).join('');

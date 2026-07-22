@@ -14,9 +14,42 @@ export function newAttritionState(bankroll = suggestedAttritionBankroll(), rando
   const starter = random() < 0.5 ? 'player' : 'enemy';
   return {
     bankroll, draft: { turn: 0, current: starter, starter, complete: false },
-    enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0,
+    enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
     enemy: { strategy: 'balanced', inventory: {}, log: [] }, market: null,
   };
+}
+
+export function attritionOdds(state, playerMoney) {
+  const rival = Math.max(1, state.enemyMoney);
+  const player = Math.max(1, playerMoney);
+  // Bankroll is a useful public proxy for squad strength. The poorer squad gets
+  // comeback odds; favorites receive a smaller but still profitable return.
+  return Math.max(1.25, Math.min(4, +(2 + (rival - player) / Math.max(rival, player)).toFixed(2)));
+}
+
+export function attritionBetOptions(state, playerMoney) {
+  // The $250 floor can push a desperate squad below zero; that is the terminal
+  // pressure Attrition needs instead of allowing two broke squads to stalemate.
+  const values = [250, ...[0.10, 0.25, 0.50].map(f => Math.max(250, Math.floor(playerMoney * f / 50) * 50))];
+  return [...new Set(values)];
+}
+
+export function resupplyAttrition(state, market, random = Math.random) {
+  const completedRound = state.round - 1;
+  if (completedRound <= 0 || completedRound % 3 !== 0) return null;
+  const delivered = {};
+  for (const type of ['ammo_9mm', 'ammo_buck', 'ammo_762', 'ammo_308']) {
+    const quantity = 2 + Math.floor(random() * 3);
+    market.restock(type, quantity); delivered[type] = quantity;
+  }
+  for (const type of ['medkit', 'splint', 'grenade']) {
+    const quantity = 1 + Math.floor(random() * 2);
+    market.restock(type, quantity); delivered[type] = quantity;
+  }
+  state.lastResupply = { round: completedRound, delivered };
+  state.enemy.log.unshift(`HOUSE RESUPPLY: ammo and consumables hit the shared market after round ${completedRound}`);
+  state.enemy.log.length = Math.min(state.enemy.log.length, 8);
+  return state.lastResupply;
 }
 
 export function draftShare(state) {

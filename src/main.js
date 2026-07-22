@@ -14,7 +14,10 @@ import {
   ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
-import { newAttritionState, advanceDraft, runAttritionAI, enemyRoster } from './attrition.js';
+import {
+  newAttritionState, advanceDraft, runAttritionAI, enemyRoster,
+  attritionOdds, attritionBetOptions, resupplyAttrition,
+} from './attrition.js';
 
 // ============================================================ setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -101,7 +104,7 @@ function load() {
       const c = JSON.parse(s);
       if (c && c.rank >= 1 && c.playerCh && c.stash?.items) {
         for (const m of c.crew || []) if (m.benched === undefined) m.benched = false;
-        c.mode ||= 'circuits'; c.attrition ||= null;
+        c.mode ||= c.attrition ? 'attrition' : 'circuits'; c.attrition ||= null;
         return c;
       }
     }
@@ -174,6 +177,7 @@ let match = null;
 
 function makeMatch() {
   return {
+    mode: career.mode,
     crew: [], enemies: [],
     frenzy: false, frenzyT: 0,
     firstBlood: false, ended: false, endTimer: 0, won: false,
@@ -270,12 +274,12 @@ function startMatch() {
   const guns = ['gun1', 'gun2'].map(s => pch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
   player.slots = guns;
   player.slotIdx = 0;
-  player._mountViewmodel();
   player.skills = career.skills;
   player.armor = armorMits(pch);
   player.character = pch;
   player.weightMult = weightSpeedMult(pch);
   player.resetForMatch(arena.spawns.player);
+  player._mountViewmodel();
   player.loadMagsFromPack();
   // player wounds carry over too
   if (career.playerHp != null) player.hp = Math.min(player.maxHp, career.playerHp);
@@ -291,9 +295,11 @@ function startMatch() {
 
   // escrow the bet
   if (attrition) {
-    career.bet = Math.max(250, Math.round(Math.min(career.money, career.attrition.enemyMoney) * 0.1 / 50) * 50);
+    career.bet = Math.max(250, career.bet || 0);
+    match.betOdds = attritionOdds(career.attrition, career.money);
+    match.enemyBet = career.bet;
     career.money -= career.bet;
-    career.attrition.enemyMoney -= career.bet;
+    career.attrition.enemyMoney -= match.enemyBet;
   } else if (career.bet > 0) career.money -= career.bet;
 
   announcer.clear();
@@ -313,7 +319,7 @@ function betOdds() {
 }
 
 function payout(base) {
-  if (career.mode === 'attrition') return 0;
+  if (match?.mode === 'attrition') return 0;
   const mult = (match.frenzy ? 2 : 1) * payMult();
   const amt = Math.round(base * mult);
   if (match.frenzy) match.frenzyMoney += base;
@@ -724,11 +730,11 @@ function finishMatch() {
   }
   // settle the bet
   if (career.bet > 0) {
-    if (career.mode === 'attrition') {
-      const pot = career.bet * 2;
-      if (match.won) { career.money += pot; career.attrition.playerWins++; }
-      else { career.attrition.enemyMoney += pot; career.attrition.enemyWins++; }
-      match.betWinnings = match.won ? pot : 0;
+    if (match.mode === 'attrition') {
+      const payout = Math.round(career.bet * match.betOdds);
+      if (match.won) { career.money += payout; career.attrition.playerWins++; }
+      else { career.attrition.enemyMoney += career.bet + match.enemyBet; career.attrition.enemyWins++; }
+      match.betWinnings = match.won ? payout : 0;
     } else if (match.won) {
       const winnings = Math.round(career.bet * betOdds());
       career.money += winnings;
@@ -748,9 +754,10 @@ function finishMatch() {
   career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
   clearCombatants();
 
-  if (career.mode === 'attrition') {
+  if (match.mode === 'attrition') {
     const a = career.attrition;
     a.round++;
+    resupplyAttrition(a, market);
     // The rival burns stock too; combat is the principal resource sink.
     const fired = match.enemies.reduce((n, c) => n + (c.shotsFired || 0), 0);
     const ammoType = a.enemy.strategy === 'swarm' ? 'ammo_9mm' : 'ammo_762';
@@ -1144,17 +1151,19 @@ function renderShop(earnings) {
 
 function showIntro() {
   phase = 'intro';
-  career.bet = 0;
+  const attrition = career.mode === 'attrition';
+  const attritionBets = attrition ? attritionBetOptions(career.attrition, career.money) : [];
+  career.bet = attrition ? (attritionBets[1] || attritionBets[0] || 0) : 0;
   const squad = career.mode === 'attrition'
-    ? { name: 'THE RIVAL SYNDICATE', blurb: `Round ${career.attrition.round}. Both squads stake 10% of the poorer bankroll.` }
+    ? { name: 'THE RIVAL SYNDICATE', blurb: `Round ${career.attrition.round}. Choose your stake; a poorer squad receives longer comeback odds.` }
     : SQUADS[career.rank];
-  const rerender = () => ui.renderIntro(career, squad, betOdds(), (amt) => {
+  const rerender = () => ui.renderIntro(career, squad, attrition ? attritionOdds(career.attrition, career.money) : betOdds(), (amt) => {
     if (amt <= career.money) {
       career.bet = amt;
       audio.uiClick();
       rerender();
     }
-  });
+  }, attritionBets);
   rerender();
   ui.showScreen('intro');
 }
