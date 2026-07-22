@@ -50,9 +50,9 @@ export function makeItem(type) {
   return it;
 }
 
-export function sellValue(it) {
+export function sellValue(it, rate = 0.55, unitPrice = null) {
   const def = ITEM_TYPES[it.type];
-  let v = def.price * 0.55;
+  let v = (unitPrice ?? def.price) * rate;
   if (def.kind === 'ammo') v *= it.rounds / AMMO_TYPES[def.ammoType].box;
   return Math.max(1, Math.round(v));
 }
