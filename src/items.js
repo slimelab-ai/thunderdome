@@ -15,8 +15,8 @@ export const AMMO_TYPES = {
 
 // icon = cell index in /assets/icons/items_sheet.png (6 cols × 4 rows)
 export const ITEM_TYPES = {
-  // guns — stats live in WEAPONS; the pistol feeds on house rounds (infinite ammo)
-  pistol: { kind: 'gun', gun: 'pistol', name: 'P9 SIDEARM', w: 1, h: 1, weight: 1.0, price: 60, icon: 0, ammo: null },
+  // guns — stats live in WEAPONS; everything eats real ammo, no exceptions
+  pistol: { kind: 'gun', gun: 'pistol', name: 'P9 SIDEARM', w: 1, h: 1, weight: 1.0, price: 60, icon: 0, ammo: '9mm' },
   smg: { kind: 'gun', gun: 'smg', name: 'SKORPION K', w: 2, h: 1, weight: 2.2, price: WEAPONS.smg.price, icon: 1, ammo: '9mm' },
   shotgun: { kind: 'gun', gun: 'shotgun', name: 'PIT BOSS 12G', w: 3, h: 1, weight: 3.4, price: WEAPONS.shotgun.price, icon: 2, ammo: 'buck' },
   rifle: { kind: 'gun', gun: 'rifle', name: 'AK VULTURE', w: 3, h: 1, weight: 3.8, price: WEAPONS.rifle.price, icon: 3, ammo: '762' },
@@ -174,16 +174,28 @@ export function consumeAmmo(ch, ammoType, n) {
   return n - left;
 }
 
-// what guns can this character actually feed?
+// what guns can this character actually feed? Nothing fed → the knife.
 export function bestUsableGun(ch) {
   const usable = [];
   for (const slot of ['gun1', 'gun2']) {
     const g = ch.gear[slot];
     if (!g) continue;
     const def = ITEM_TYPES[g.type];
-    if (!def.ammo || ammoInPack(ch, def.ammo) > 0) usable.push(def.gun);
+    if (ammoInPack(ch, def.ammo) > 0) usable.push(def.gun);
   }
-  if (!usable.length) return 'pistol'; // house loaner — nobody enters the pit unarmed
+  if (!usable.length) return 'knife';
   usable.sort((a, b) => WEAPONS[b].tier - WEAPONS[a].tier);
   return usable[0];
+}
+
+// per-ammo-type round pools for a character's equipped guns (AI live-fire accounting)
+export function buildAmmoPools(ch) {
+  const pools = {};
+  for (const slot of ['gun1', 'gun2']) {
+    const g = ch.gear[slot];
+    if (!g) continue;
+    const t = ITEM_TYPES[g.type].ammo;
+    if (t && pools[t] === undefined) pools[t] = ammoInPack(ch, t);
+  }
+  return pools;
 }

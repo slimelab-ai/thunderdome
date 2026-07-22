@@ -80,23 +80,26 @@ export class Player {
   get eyeHeight() { return this.crouching ? EYE_CROUCH : EYE_STAND; }
   get heightScale() { return this.crouching ? 0.75 : 1; }
   get speedMult() {
-    return (1 - this.legDmg * 0.45) * (1 + this.skills.cardio * 0.1) * (this.weightMult || 1);
+    return (1 - this.legDmg * 0.45) * (1 + this.skills.cardio * 0.1) * (this.weightMult || 1)
+      * (this.weapon.melee ? 1.14 : 1); // blade out, feet light
   }
 
-  // ---------- ammo (real rounds out of the backpack; the pistol runs on house rounds) ----------
+  // ---------- ammo (real rounds out of the backpack — no exceptions) ----------
   ammoType() { return ITEM_TYPES[this.weapon.id]?.ammo || null; }
   reserve() {
+    if (this.weapon.melee) return Infinity; // a knife never runs dry
     const t = this.ammoType();
-    return t ? ammoInPack(this.character, t) : Infinity;
+    return t ? ammoInPack(this.character, t) : 0;
   }
   loadMagsFromPack() {
     this.magBySlot = this.slots.map((id) => {
       const w = WEAPONS[id];
+      if (w.melee) return 0;
       const t = ITEM_TYPES[id]?.ammo;
-      if (!t) return w.mag;
+      if (!t) return 0;
       return consumeAmmo(this.character, t, w.mag);
     });
-    this.mag = this.magBySlot[this.slotIdx] ?? this.weapon.mag;
+    this.mag = this.magBySlot[this.slotIdx] ?? 0;
   }
 
   _mountViewmodel() {
@@ -160,6 +163,7 @@ export class Player {
     }
     if (code === 'KeyR') this.startReload();
     if (code === 'KeyC') this.crouchToggled = !this.crouchToggled;
+    if (code === 'Space') this.spacePressed = true; // edge, consumed by update
     if (code === 'KeyH') this.startHeal('medkit');
     if (code === 'KeyV') this.startHeal('splint');
     if (code === 'KeyG') this.throwGrenade();
@@ -227,7 +231,7 @@ export class Player {
   }
 
   startReload() {
-    if (this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
+    if (this.weapon.melee || this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
     if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
     this.reloading = this.weapon.reload;
     audio.reload(0);
@@ -319,18 +323,22 @@ export class Player {
       this.onGround = true;
       if (k >= 1) this.mantle = null;
     } else {
-      if (locked && this.keys['Space'] && this.legDmg < 0.75 && this.mantleCooldown <= 0) {
+      // mantle only on a FRESH Space press — holding jump while brushing crates
+      // used to yank you into scripted climbs mid-strafe
+      if (locked && this.spacePressed && this.legDmg < 0.75 && this.mantleCooldown <= 0) {
         const ledge = this._findLedge();
         if (ledge) {
           this.mantle = ledge;
           this.mantleCooldown = 0.6;
           this.crouchToggled = false;
-        } else if (this.onGround) {
-          this.vel.y = 4.6;
-          this.onGround = false;
-          this.crouchToggled = false;
         }
       }
+      if (locked && this.keys['Space'] && !this.mantle && this.onGround && this.legDmg < 0.75) {
+        this.vel.y = 4.6;
+        this.onGround = false;
+        this.crouchToggled = false;
+      }
+      this.spacePressed = false;
       this.vel.y -= 13 * dt;
 
       this.pos.x += this.vel.x * dt;
@@ -355,11 +363,23 @@ export class Player {
       this.onGround = this.pos.y - groundY < 0.05;
     }
     // horizontal pushout (skip anything we can simply step onto)
+    const preX = this.pos.x, preZ = this.pos.z;
     for (const box of this.world.colliders) {
       if (box.max.y - this.pos.y <= STEP_REACH && box.max.y <= STAND_LIMIT) continue;
       const feetTop = this.pos.y + 1.7;
       if (feetTop < box.min.y || this.pos.y > box.max.y) continue;
       box.pushCircleXZ(this.pos, 0.38);
+    }
+    // clamp the total correction: corner cases can otherwise eject you sideways
+    // in one frame, which reads as getting spun around by the geometry
+    {
+      const cx = this.pos.x - preX, cz = this.pos.z - preZ;
+      const cd = Math.hypot(cx, cz);
+      const MAX_CORRECT = 0.2;
+      if (cd > MAX_CORRECT) {
+        this.pos.x = preX + (cx / cd) * MAX_CORRECT;
+        this.pos.z = preZ + (cz / cd) * MAX_CORRECT;
+      }
     }
 
     // footsteps
@@ -414,7 +434,9 @@ export class Player {
     this.bloom = Math.max(0, this.bloom - dt * 6);
     const wantFire = w.auto ? this.triggerHeld : this.triggerQueued;
     if (wantFire && this.fireCooldown <= 0 && this.reloading <= 0 && !this.healing && locked) {
-      if (this.mag <= 0) {
+      if (w.melee) {
+        this._slash();
+      } else if (this.mag <= 0) {
         audio.dryFire();
         this.fireCooldown = 0.25;
         this.startReload();
@@ -508,6 +530,19 @@ export class Player {
       }
     }
     return best;
+  }
+
+  _slash() {
+    const w = this.weapon;
+    this.fireCooldown = 60 / w.rpm;
+    const origin = this.camera.position.clone();
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    audio.slash();
+    this.kick = Math.min(1, this.kick + 0.85);
+    this.recoilPitch -= 0.012; // downward chop
+    const res = fireRay(this.world, this.world.playerShooter, origin, dir, w, 1, w.meleeRange);
+    if (res.type === 'flesh') audio.hitFlesh();
   }
 
   _fire() {

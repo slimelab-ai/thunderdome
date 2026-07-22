@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WEAPONS, buildHeldGun } from './weapons.js';
 import { fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH } from './combat.js';
+import { ITEM_TYPES } from './items.js';
 import { audio } from './audio.js';
 
 const SKIN_TONES = [0xc9a17c, 0x8a5a3b, 0x6b4226, 0xd9b28c, 0x5a3a24];
@@ -46,6 +47,10 @@ export class Combatant {
     this.mendCd = 4;
     this.mendT = 0;
     this.mendTarget = null;
+    // live ammo: {ammoType: rounds}. Everyone burns real rounds; a dry fighter
+    // switches guns, and a fighter with nothing left pulls the knife and charges.
+    this.ammoPools = {};
+    this.gunOptions = [opts.weaponId];
     this.shirt = opts.shirt;
     this.alive = true;
     this.isPlayer = false;
@@ -105,6 +110,28 @@ export class Combatant {
     const w = WEAPONS[this.weaponId];
     if (w.auto) return w.rpm > 700 ? 5 + (Math.random() * 3 | 0) : 3 + (Math.random() * 2 | 0);
     return 1;
+  }
+
+  _poolFor(weaponId) {
+    const t = ITEM_TYPES[weaponId]?.ammo;
+    return t ? (this.ammoPools[t] || 0) : 0;
+  }
+
+  // out of rounds for the current gun: fall back to a fed gun, or the knife
+  _switchDry(world) {
+    let next = 'knife';
+    let bestTier = -2;
+    for (const id of this.gunOptions) {
+      if (id === this.weaponId || WEAPONS[id].melee) continue;
+      if (this._poolFor(id) > 0 && WEAPONS[id].tier > bestTier) { bestTier = WEAPONS[id].tier; next = id; }
+    }
+    this.weaponId = next;
+    this.group.remove(this.gun);
+    this.gun = buildHeldGun(next);
+    this.gun.position.set(0.31, 0.9, -0.25);
+    this.group.add(this.gun);
+    this.burstLeft = this._burstSize();
+    this.cooldown = 0.5;
   }
 
   _buildBody() {
@@ -488,7 +515,7 @@ export class Combatant {
         const gx = opening ? this.openingGoal.x : assist ? this.mendTarget.pos.x : tp.x;
         const gz = opening ? this.openingGoal.z : assist ? this.mendTarget.pos.z : tp.z;
         const gy = opening ? (this.openingGoal.y || 0) : assist ? this.mendTarget.pos.y : this.target.pos.y;
-        this.sprintNow = (opening || dist > 11 || !sight) && this.legDmg < 0.6;
+        this.sprintNow = (opening || dist > 11 || !sight || (w.melee && dist > 3)) && this.legDmg < 0.6;
         // travel through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame
         this.repathT = (this.repathT ?? 0) - dt;
@@ -520,7 +547,7 @@ export class Combatant {
       } else if (this.peekSide && !sight) {
         // holding a corner peek: plant and shoot around it
         this._strafing = true;
-      } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && heightGap < 0.8) {
+      } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && !w.melee && heightGap < 0.8) {
         this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
           // backing up would mean falling off — hold and strafe instead
@@ -546,6 +573,10 @@ export class Combatant {
       this.yaw += dy * Math.min(1, dt * 7);
 
       // ---- shooting ----
+      // dry gun? switch to a fed one, or pull the knife
+      if (!w.melee && ITEM_TYPES[this.weaponId]?.ammo && this._poolFor(this.weaponId) <= 0) {
+        this._switchDry(world);
+      }
       const los = dist < engage * 2.2 && (sight || this.peekSide !== 0) && !this.sprintNow;
 
       // marksman laser telegraph
@@ -567,7 +598,14 @@ export class Combatant {
       this.hadLoS = los;
       if (this.reactionLeft > 0) this.reactionLeft -= dt;
 
-      if (los && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
+      if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && dist < w.meleeRange) {
+        // slash
+        const mdmg = w.dmg * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
+        if (this.target.isPlayer) world.onPlayerDamaged(mdmg, Math.random() < 0.2 ? 'armL' : 'torso', this.pos);
+        else this.target.applyDamage(world, 'torso', mdmg, this, this.target.aimPoint());
+        audio.slash(1.2 / (1 + eye.distanceTo(world.cameraPos) * 0.09));
+        this.cooldown = 60 / w.rpm;
+      } else if (!w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
         // fire from the peeked eye when leaning around a corner
         const fireEye = this.peekSide
           ? eye.clone().set(eye.x + -fz * 0.6 * this.peekSide, eye.y, eye.z + fx * 0.6 * this.peekSide)
@@ -587,6 +625,8 @@ export class Combatant {
         world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7));
 
         this.shotsFired = (this.shotsFired || 0) + 1;
+        const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
+        if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
         this.burstLeft--;
         if (this.burstLeft <= 0) {
           this.burstLeft = this._burstSize();

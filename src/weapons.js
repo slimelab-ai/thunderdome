@@ -39,6 +39,15 @@ export const WEAPONS = {
   },
 };
 
+// the knife is innate — every fighter carries one, nobody sells it
+WEAPONS.knife = {
+  id: 'knife', name: 'PIT SHANK', price: 0, tier: -1,
+  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0,
+  spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
+  aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4,
+  desc: 'Always with you. Two good slashes end anyone.',
+};
+
 export const WEAPON_ORDER = ['pistol', 'smg', 'shotgun', 'rifle', 'dmr'];
 
 const BASE_MATS = {
@@ -106,6 +115,13 @@ export function buildViewmodel(id) {
     g.add(box(0.042, 0.1, 0.055, M.grip, 0, -0.065, 0.08));
     g.add(box(0.045, 0.08, 0.22, M.wood, 0, 0.0, 0.24));           // stock
     muzzle.position.set(0, 0.045, -0.48);
+  } else if (id === 'knife') {
+    const blade = box(0.012, 0.035, 0.24, M.metal, 0, 0.02, -0.14);
+    blade.rotation.x = -0.06;
+    g.add(blade);
+    g.add(box(0.02, 0.05, 0.03, M.accent, 0, 0.01, -0.02));   // guard
+    g.add(box(0.028, 0.045, 0.1, M.grip, 0, -0.005, 0.04));   // handle
+    muzzle.position.set(0, 0.02, -0.26);
   } else if (id === 'dmr') {
     g.add(box(0.05, 0.08, 0.4, M.metal, 0, 0.03, -0.06));
     g.add(cyl(0.012, 0.4, M.metalDark, 0, 0.05, -0.45));
@@ -124,6 +140,11 @@ export function buildViewmodel(id) {
 export function buildHeldGun(id) {
   const M = freshMats();
   const g = new THREE.Group();
+  if (id === 'knife') {
+    g.add(box(0.015, 0.04, 0.28, M.metal, 0, 0, -0.1));
+    g.add(box(0.03, 0.05, 0.09, M.grip, 0, 0, 0.08));
+    return g;
+  }
   const len = { pistol: 0.22, smg: 0.35, shotgun: 0.6, rifle: 0.6, dmr: 0.75 }[id] || 0.3;
   g.add(box(0.05, 0.09, len, M.metalDark, 0, 0, -len * 0.3));
   if (id !== 'pistol') g.add(box(0.04, 0.12, 0.05, M.metal, 0, -0.08, -len * 0.15));

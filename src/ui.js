@@ -98,13 +98,14 @@ export class UI {
     if (this.el.statusTags._last !== tags) { this.el.statusTags.innerHTML = tags; this.el.statusTags._last = tags; }
 
     // ammo / weapon — reserve is real rounds in the backpack now
-    this.el.ammoMag.textContent = player.mag;
+    const melee = !!player.weapon.melee;
+    this.el.ammoMag.textContent = melee ? '—' : player.mag;
     const res = player.reserve();
     const resEl = $('ammo-reserve');
-    const resTxt = res === Infinity ? '∞' : String(res);
+    const resTxt = melee ? '—' : String(res);
     if (resEl.textContent !== resTxt) {
       resEl.textContent = resTxt;
-      resEl.style.color = res !== Infinity && res <= player.weapon.mag ? 'var(--blood)' : '';
+      resEl.style.color = !melee && res <= player.weapon.mag ? 'var(--blood)' : '';
     }
     this.el.weaponName.textContent = player.weapon.name;
     this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
@@ -244,6 +245,16 @@ export class UI {
       ['📦 AMMUNITION', ['ammo_9mm', 'ammo_buck', 'ammo_762', 'ammo_308']],
       ['💊 MEDICAL & LOUD', ['medkit', 'splint', 'grenade']],
     ];
+    const selName = this.selChar === 'player' ? 'YOU' : (career.crew[this.selChar]?.name || 'YOU');
+    const ammoChip = (t) => {
+      const def = ITEM_TYPES[t];
+      if (def.kind === 'gun' && def.ammo) return `<span class="ammo-chip">${AMMO_TYPES[def.ammo].name}</span>`;
+      if (def.kind === 'ammo') {
+        const feeds = WEAPON_ORDER.filter(g => ITEM_TYPES[g].ammo === def.ammoType).map(g => ITEM_TYPES[g].name.split(' ')[0]);
+        return `<span class="ammo-chip">feeds ${feeds.join('/')}</span>`;
+      }
+      return '';
+    };
     $('market-list').innerHTML = MARKET.map(([label, types]) => `
       <div class="armor-slot-label">${label}</div>` +
       types.map(t => {
@@ -251,8 +262,9 @@ export class UI {
         const cost = priceOf(t);
         return `<div class="market-row">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
-          <span class="mk-name">${def.name}<span class="mk-w">${def.weight}kg</span></span>
+          <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span></span>
           <button class="btn" data-buy-item="${t}" ${career.money >= cost ? '' : 'disabled'}>$${cost}</button>
+          <button class="btn" data-buy-to="${t}" ${career.money >= cost ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
         </div>`;
       }).join('')).join('');
 
@@ -295,15 +307,18 @@ export class UI {
     // ---- squad panel ----
     if (this.selChar === undefined) this.selChar = 'player';
     if (this.selChar !== 'player' && !career.crew[this.selChar]) this.selChar = 'player';
+    const deployed = career.crew.filter(c => !c.benched).length;
     const tabs = [['player', 'YOU'], ...career.crew.map((m, i) => [i, m.name])];
     $('char-tabs').innerHTML = tabs.map(([who, label]) => {
+      const benched = who !== 'player' && career.crew[who].benched;
       const hp = who === 'player'
         ? (career.playerHp == null ? 1 : career.playerHp / (100 + career.skills.tough * 25))
         : (career.crew[who].hp == null ? 1 : career.crew[who].hp / CREW_TIERS[career.crew[who].tier].hp);
-      return `<button class="btn char-tab ${String(this.selChar) === String(who) ? 'char-tab-sel' : ''}" data-char="${who}">
-        ${label}<i class="tab-hp" style="width:${Math.max(2, hp * 100)}%;background:${healthColor(hp)}"></i></button>`;
-    }).join('') + (career.crew.length < 5
-      ? `<button class="btn btn-ghost char-tab" data-hire-menu="1">+ HIRE</button>` : '');
+      return `<button class="btn char-tab ${String(this.selChar) === String(who) ? 'char-tab-sel' : ''} ${benched ? 'char-tab-benched' : ''}" data-char="${who}">
+        ${label}${benched ? ' 🪑' : ''}<i class="tab-hp" style="width:${Math.max(2, hp * 100)}%;background:${healthColor(hp)}"></i></button>`;
+    }).join('') + (career.crew.length < 8
+      ? `<button class="btn btn-ghost char-tab" data-hire-menu="1">+ HIRE</button>` : '')
+      + `<span class="dim" style="align-self:center;font-size:10px">${deployed}/5 deploy</span>`;
 
     const who = this.selChar;
     const isPlayer = who === 'player';
@@ -319,9 +334,12 @@ export class UI {
     const slotHtml = (slot, label) => {
       const it = ch.gear[slot];
       const def = it ? ITEM_TYPES[it.type] : null;
-      return `<div class="doll-slot" data-slot="${slot}" data-who="${who}" title="${label}">
+      const chip = def?.kind === 'gun' && def.ammo
+        ? `<span class="ammo-chip slot-chip">${AMMO_TYPES[def.ammo].name} ×${ch.pack.items.reduce((n, e) => n + (ITEM_TYPES[e.it.type].ammoType === def.ammo ? e.it.rounds : 0), 0)}</span>`
+        : '';
+      return `<div class="doll-slot ${slot.startsWith('gun') ? 'doll-slot-gun' : ''}" data-slot="${slot}" data-who="${who}" title="${label}${def ? ' — ' + def.name : ''}">
         ${it ? `<div class="inv-item doll-it" data-item="${it.uid}" style="width:100%;height:100%;">
-          <span class="inv-ico" style="${iconStyle(def.icon)}"></span></div>` : `<span class="doll-lbl">${label}</span>`}
+          <span class="inv-ico" style="${iconStyle(def.icon)}"></span>${chip}</div>` : `<span class="doll-lbl">${label}</span>`}
       </div>`;
     };
 
@@ -353,6 +371,7 @@ export class UI {
       <div class="char-actions">
         ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}>🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
         ${next ? `<button class="btn" data-upgrade="${who}" ${career.money >= upCost ? '' : 'disabled'}>⬆ ${next.toUpperCase()} $${upCost}</button>` : ''}
+        ${!isPlayer ? `<button class="btn" data-bench="${who}">${m.benched ? '▶ DEPLOY' : '🪑 BENCH'}</button>` : ''}
         ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">SELL $${Math.round(CREW_TIERS[m.tier].price * 0.5)}</button>` : ''}
       </div>
       ${this.hireOpen ? `<div class="hire-menu">${Object.entries(CREW_TIERS).map(([id, t]) => {
@@ -366,6 +385,8 @@ export class UI {
       document.querySelectorAll(sel).forEach(b => b.onclick = () => { audio.uiClick(); fn(b.getAttribute(attr)); });
     };
     wire('[data-buy-item]', 'data-buy-item', actions.buyItem);
+    wire('[data-buy-to]', 'data-buy-to', (t) => actions.buyItemTo(t, this.selChar));
+    wire('[data-bench]', 'data-bench', (i) => actions.toggleBench(parseInt(i)));
     wire('[data-train]', 'data-train', actions.train);
     wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
     wire('[data-upgrade]', 'data-upgrade', (i) => actions.upgradeCrew(parseInt(i)));

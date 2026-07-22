@@ -11,7 +11,7 @@ import { NavMesh } from './nav.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, sellValue, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
-  ammoInPack, consumeAmmo, bestUsableGun, STASH_COLS,
+  ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 
 // ============================================================ setup
@@ -69,6 +69,7 @@ let career;
 
 function newCareer() {
   const playerCh = makeCharacter();
+  autoPlace(playerCh.pack, makeItem('ammo_9mm'));
   autoPlace(playerCh.pack, makeItem('medkit'));
   autoPlace(playerCh.pack, makeItem('grenade'));
   autoPlace(playerCh.pack, makeItem('grenade'));
@@ -90,7 +91,10 @@ function load() {
     const s = localStorage.getItem(SAVE_KEY);
     if (s) {
       const c = JSON.parse(s);
-      if (c && c.rank >= 1 && c.playerCh && c.stash?.items) return c;
+      if (c && c.rank >= 1 && c.playerCh && c.stash?.items) {
+        for (const m of c.crew || []) if (m.benched === undefined) m.benched = false;
+        return c;
+      }
     }
   } catch { /* ignore */ }
   return null;
@@ -191,8 +195,8 @@ function startMatch() {
   match = makeMatch();
   const squad = SQUADS[career.rank];
 
-  // spawn crew — anyone with a pulse fights; the flatlined sit out until you pay the doctor
-  career.crew.filter(cm => cm.hp == null || cm.hp > 0).forEach((cm, i) => {
+  // spawn crew — deployed, breathing, and carrying exactly what you stocked them with
+  career.crew.filter(cm => !cm.benched && (cm.hp == null || cm.hp > 0)).slice(0, 5).forEach((cm, i) => {
     const t = CREW_TIERS[cm.tier];
     const mits = armorMits(cm.ch);
     const c = new Combatant({
@@ -206,6 +210,9 @@ function startMatch() {
     c.healKits = countInPack(cm.ch, 'medkit');
     c.nades = countInPack(cm.ch, 'grenade');
     c.shotsFired = 0;
+    c.gunOptions = ['gun1', 'gun2'].map(s => cm.ch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
+    c.ammoPools = buildAmmoPools(cm.ch);
+    c._initialPools = { ...c.ammoPools };
     // wounds carry over — patch them in the black market or they fight hurt
     if (cm.hp != null) c.hp = Math.min(c.maxHp, cm.hp);
     if (cm.limbs) { c.armDmg = cm.limbs.arm || 0; c.legDmg = cm.limbs.leg || 0; }
@@ -236,16 +243,20 @@ function startMatch() {
     if (r.arch === 'medic') c.healKits = 3;
     if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; }
     if (r.boss) { c.nades = 2; c.healKits = 2; }
+    // the house stocks its fighters (fresh every match, no economy to grind):
+    // 5 mags' worth, then they go to the knife like everyone else
+    const et = ITEM_TYPES[r.w]?.ammo;
+    if (et) c.ammoPools[et] = WEAPONS[r.w].mag * 5;
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
   match.enemiesAlive = match.enemies.length;
   world.enemyDmgScale = 0.85 * (hasMut('hard_rounds') ? 1.15 : 1);
 
-  // reset player — loadout straight off the paper doll
+  // reset player — loadout straight off the paper doll; the knife rides along always
   const pch = career.playerCh;
   const guns = ['gun1', 'gun2'].map(s => pch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
-  player.slots = guns.length ? guns : ['pistol']; // house loaner: nobody enters unarmed
+  player.slots = [...guns, 'knife'];
   player.slotIdx = 0;
   player._mountViewmodel();
   player.skills = career.skills;
@@ -676,12 +687,14 @@ function updateEvents(dt) {
 // ============================================================ match end
 function finishMatch() {
   document.exitPointerLock();
-  // crew burn real supplies: ammo per shot fired, kits and frags they used
+  // crew burn real supplies: rounds actually fired (per pool), kits and frags used
   for (const c of match.crew) {
     const ch = c.character;
     if (ch) {
-      const wdef = ITEM_TYPES[c.weaponId];
-      if (wdef?.ammo) consumeAmmo(ch, wdef.ammo, c.shotsFired || 0);
+      for (const [type, initial] of Object.entries(c._initialPools || {})) {
+        const used = initial - (c.ammoPools[type] || 0);
+        if (used > 0) consumeAmmo(ch, type, used);
+      }
       while (countInPack(ch, 'medkit') > c.healKits) useFromPack(ch, 'medkit');
       while (countInPack(ch, 'grenade') > c.nades) useFromPack(ch, 'grenade');
     }
@@ -854,8 +867,15 @@ function moveItem(uid, to) {
   if (to.kind === 'slot') {
     const ch = getChar(to.who);
     if (!ch || !slotAccepts(to.slot, it)) return false;
-    detachItem(found);
     const old = ch.gear[to.slot];
+    // slot→slot with a compatible occupant: swap in place, nothing goes home
+    if (found.loc.kind === 'slot' && old && slotAccepts(found.loc.slot, old)) {
+      const srcCh = getChar(found.loc.who);
+      srcCh.gear[found.loc.slot] = old;
+      ch.gear[to.slot] = it;
+      return true;
+    }
+    detachItem(found);
     ch.gear[to.slot] = it;
     if (old) autoPlace(career.stash, old); // displaced piece goes home
     return true;
@@ -984,11 +1004,40 @@ function renderShop(earnings) {
     hire: (tierId) => {
       const t = CREW_TIERS[tierId];
       const cost = Math.round(t.price * priceMult());
-      if (career.money >= cost && career.crew.length < 5) {
+      if (career.money >= cost && career.crew.length < 8) {
         career.money -= cost;
-        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, ch: makeCharacter() });
+        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch: makeCharacter() });
         audio.cashRegister(); save(); renderShop(earnings);
       }
+    },
+    toggleBench: (idx) => {
+      const m = career.crew[idx];
+      if (!m) return;
+      // deploy cap: 5 in the pit at once
+      const deployed = career.crew.filter(c => !c.benched).length;
+      if (m.benched && deployed >= 5) return;
+      m.benched = !m.benched;
+      audio.uiClick(); save(); renderShop(earnings);
+    },
+    buyItemTo: (type, who) => {
+      const def = ITEM_TYPES[type];
+      const cost = Math.round(def.price * priceMult());
+      if (!def || career.money < cost) return;
+      const ch = getChar(who);
+      if (!ch) return;
+      career.money -= cost;
+      const it = makeItem(type);
+      if (def.kind === 'gun') {
+        if (!ch.gear.gun1) ch.gear.gun1 = it;
+        else if (!ch.gear.gun2) ch.gear.gun2 = it;
+        else autoPlace(career.stash, it);
+      } else if (def.kind === 'armor') {
+        if (!ch.gear[def.slot]) ch.gear[def.slot] = it;
+        else autoPlace(career.stash, it);
+      } else {
+        if (!autoPlace(ch.pack, it)) autoPlace(career.stash, it); // pack full → stash
+      }
+      audio.cashRegister(); save(); renderShop(earnings);
     },
     train: (skillId) => {
       const t = TRAINING[skillId];

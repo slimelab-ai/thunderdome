@@ -321,13 +321,26 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
 .char-body { display: flex; gap: 12px; }
 .doll { display: flex; flex-direction: column; gap: 6px; }
 .doll-slot {
-  width: 84px; height: 46px; border: 1px dashed #3a3a48; border-radius: 4px; position: relative;
+  width: 64px; height: 64px; border: 1px dashed #3a3a48; border-radius: 4px; position: relative;
   background: rgba(14,14,18,0.7); display: flex; align-items: center; justify-content: center;
 }
 .doll-lbl { font-size: 9px; letter-spacing: 2px; color: #555; font-weight: 800; }
 .doll-guns { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.doll-guns .doll-slot { height: 40px; }
+.doll-slot-gun { width: 96px; height: 52px; }
 .doll-it { position: relative !important; }
+/* icons keep their aspect: square, centered, sized to the tile's short side */
+.inv-ico {
+  inset: auto !important; left: 50% !important; top: 50% !important;
+  transform: translate(-50%, -50%);
+  height: min(85%, 48px); width: auto; aspect-ratio: 1;
+}
+.ammo-chip {
+  display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: 1px;
+  background: rgba(255,185,46,0.12); border: 1px solid rgba(255,185,46,0.4); color: var(--gold);
+  border-radius: 2px; padding: 0 4px; margin-left: 6px; vertical-align: middle;
+}
+.slot-chip { position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%); margin: 0; white-space: nowrap; }
+.char-tab-benched { opacity: 0.45; }
 .pack-side { flex: 1; }
 .char-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .char-actions .btn { padding: 5px 10px; font-size: 11px; }

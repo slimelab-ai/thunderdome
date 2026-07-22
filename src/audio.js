@@ -92,6 +92,10 @@ class AudioEngine {
 
   dryFire() { this._tone(1200, 0.04, { type: 'square', gain: 0.07 }); }
 
+  slash(vol = 1) {
+    this._noise(0.16, { filterType: 'bandpass', freq: 2600, q: 2.5, gain: 0.28 * vol, decay: 0.1, freqEnd: 900 });
+  }
+
   reload(stage = 0) {
     if (stage === 0) { this._noise(0.06, { freq: 3000, gain: 0.2, decay: 0.03 }); this._tone(500, 0.05, { type: 'square', gain: 0.06, freqEnd: 300 }); }
     else { this._noise(0.08, { freq: 2200, gain: 0.28, decay: 0.045 }); this._tone(700, 0.06, { type: 'square', gain: 0.08, freqEnd: 350 }); }

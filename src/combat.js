@@ -69,8 +69,8 @@ export function applySpread(dir, spreadDeg) {
  * shooter: { team, isPlayer? }
  * Returns { type: 'wall'|'flesh'|'player'|'miss', point, part?, combatant?, dist }
  */
-export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1) {
-  const wall = wallHit(world.colliders, origin, dir);
+export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1, maxDist = 200) {
+  const wall = wallHit(world.colliders, origin, dir, maxDist);
 
   // combatant part meshes
   _raycaster.set(origin, dir);
