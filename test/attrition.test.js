@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { AttritionMarket, CircuitMarket } from '../src/market.js';
 import { makeItem } from '../src/items.js';
 import {
-  newAttritionState, advanceDraft, runAttritionAI, suggestedAttritionBankroll,
-  attritionOdds, attritionBetOptions, resupplyAttrition,
+  newAttritionState, fundDraftRound, runAttritionAI, suggestedAttritionBankroll,
+  attritionOdds, attritionBetOptions, resupplyAttrition, draftCanCoverDebt,
 } from '../src/attrition.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -22,15 +22,35 @@ test('circuits retains its 55% sale adapter', () => {
   assert.equal(market.quoteSell(makeItem('rifle')), 825);
 });
 
-test('twenty alternating envelopes disburse equal full bankrolls', () => {
+test('ten fight-linked envelopes disburse equal full bankrolls', () => {
   const state = newAttritionState(suggestedAttritionBankroll(), () => 0);
   let playerMoney = 0;
-  for (let guard = 0; guard < 30 && !state.draft.complete; guard++) {
-    playerMoney = advanceDraft(state, playerMoney);
+  let enemyFirstTurns = 0;
+  for (let round = 0; round < 10; round++) {
+    playerMoney = fundDraftRound(state, playerMoney, () => enemyFirstTurns++);
   }
-  assert.equal(state.draft.turn, 20);
+  assert.equal(state.draft.fundedRounds, 10);
+  assert.equal(enemyFirstTurns, 5);
   assert.equal(playerMoney, state.bankroll);
   assert.equal(state.enemyMoney, state.bankroll);
+});
+
+test('each funded round records one envelope', () => {
+  const state = newAttritionState(25000, () => 0.9);
+  let playerMoney = fundDraftRound(state, 0);
+  assert.equal(playerMoney, 2500);
+  // Main gates funding by round; the primitive tracks each funded bout explicitly.
+  assert.equal(state.draft.fundedRounds, 1);
+  assert.equal(state.draft.lastEnvelope, 2500);
+});
+
+test('the next draft envelope protects only a recoverable deficit', () => {
+  const state = newAttritionState(25000, () => 0.5);
+  fundDraftRound(state, 0);
+  assert.equal(draftCanCoverDebt(state, -2400), true);
+  assert.equal(draftCanCoverDebt(state, -2600), false);
+  state.draft.complete = true;
+  assert.equal(draftCanCoverDebt(state, -1), false);
 });
 
 test('rival AI pivots away from a squeezed 9mm pool and explains the buy', () => {

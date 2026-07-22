@@ -223,8 +223,9 @@ export class UI {
     this._shopArgs = [career, player, nextSquad, earnings, actions];
     $('shop-money').textContent = career.money.toLocaleString();
     const attrition = career.mode === 'attrition';
+    const draftBout = attrition && career.attrition.round <= 10;
     $('shop-sub').textContent = attrition
-      ? `Attrition · Round ${career.attrition.round} · shared market · rival $${career.attrition.enemyMoney.toLocaleString()}`
+      ? `Attrition · Round ${career.attrition.round} · ${draftBout ? `draft envelope ${career.attrition.draft.fundedRounds}/10 (+$${career.attrition.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.attrition.enemyMoney.toLocaleString()}`
       : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
         (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
 
@@ -288,18 +289,12 @@ export class UI {
 
     // ---- next bout ----
     $('next-bout').innerHTML = attrition
-      ? `<b>THE RIVAL SYNDICATE</b><br>Strategy: ${career.attrition.enemy.strategy.toUpperCase()}<br><span class="dim">${career.attrition.enemy.log[0] || 'Watching your opening purchases.'}</span>`
+      ? `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.attrition.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${career.attrition.enemy.strategy.toUpperCase()}<br><span class="dim">${career.attrition.enemy.log[0] || 'Watching your opening purchases.'}</span>`
       : `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
 
-    const draftBtn = $('btn-draft');
-    draftBtn.classList.toggle('hidden', !attrition || career.attrition.draft.complete);
-    if (attrition && !career.attrition.draft.complete) {
-      draftBtn.textContent = `CLAIM DRAFT ENVELOPE · ${career.attrition.draft.turn + 1}/20`;
-      draftBtn.onclick = actions.advanceDraft;
-    }
-    $('btn-next-fight').disabled = attrition && !career.attrition.draft.complete;
+    $('btn-next-fight').disabled = false;
     $('sell-bin').textContent = attrition ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
@@ -512,11 +507,13 @@ export class UI {
     $('death-stats').innerHTML = stats;
   }
 
-  renderChampion(statsHtml) {
+  renderChampion(statsHtml, attritionComplete = false) {
     $('champ-stats').innerHTML = statsHtml;
+    $('btn-newgame').textContent = attritionComplete ? 'RETURN TO MAIN MENU' : 'NEXT CIRCUIT ➤';
   }
 
-  renderExecuted(statsHtml) {
+  renderExecuted(statsHtml, attritionComplete = false) {
     $('executed-stats').innerHTML = statsHtml;
+    $('btn-executed-new').textContent = attritionComplete ? 'RETURN TO MAIN MENU' : 'NEXT CONTESTANT — NEW CAREER';
   }
 }

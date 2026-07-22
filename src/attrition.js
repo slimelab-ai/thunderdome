@@ -13,7 +13,7 @@ export function suggestedAttritionBankroll() {
 export function newAttritionState(bankroll = suggestedAttritionBankroll(), random = Math.random) {
   const starter = random() < 0.5 ? 'player' : 'enemy';
   return {
-    bankroll, draft: { turn: 0, current: starter, starter, complete: false },
+    bankroll, draft: { version: 2, fundedRounds: 0, starter, complete: false, pendingEnemyShop: false, lastEnvelope: 0 },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
     enemy: { strategy: 'balanced', inventory: {}, log: [] }, market: null,
   };
@@ -53,22 +53,29 @@ export function resupplyAttrition(state, market, random = Math.random) {
 }
 
 export function draftShare(state) {
-  // Slightly uneven envelopes make each pick matter, but both sides total the same bankroll.
+  // Ten fight-linked envelopes total exactly one starting bankroll per squad.
   const base = Math.floor(state.bankroll / ATTRITION_DRAFT_TURNS / 100) * 100;
-  return state.draft.turn >= ATTRITION_DRAFT_TURNS * 2 - 2
+  return state.draft.fundedRounds === ATTRITION_DRAFT_TURNS - 1
     ? state.bankroll - base * (ATTRITION_DRAFT_TURNS - 1)
     : base;
 }
 
-export function advanceDraft(state, playerMoney, onEnemyTurn) {
-  if (state.draft.complete) return playerMoney;
+export function fundDraftRound(state, playerMoney, onEnemyFirst) {
+  if (state.draft.complete || state.draft.fundedRounds >= ATTRITION_DRAFT_TURNS) return playerMoney;
   const amount = draftShare(state);
-  if (state.draft.current === 'player') playerMoney += amount;
-  else { state.enemyMoney += amount; onEnemyTurn?.(amount); }
-  state.draft.turn++;
-  state.draft.current = state.draft.current === 'player' ? 'enemy' : 'player';
-  if (state.draft.turn >= ATTRITION_DRAFT_TURNS * 2) state.draft.complete = true;
+  playerMoney += amount;
+  state.enemyMoney += amount;
+  const enemyFirst = (state.draft.fundedRounds % 2 === 0) === (state.draft.starter === 'enemy');
+  state.draft.fundedRounds++;
+  state.draft.lastEnvelope = amount;
+  state.draft.pendingEnemyShop = !enemyFirst;
+  if (enemyFirst) onEnemyFirst?.(amount);
+  if (state.draft.fundedRounds >= ATTRITION_DRAFT_TURNS) state.draft.complete = true;
   return playerMoney;
+}
+
+export function draftCanCoverDebt(state, money) {
+  return money < 0 && !state.draft.complete && money + draftShare(state) >= 0;
 }
 
 const STRATEGIES = {
