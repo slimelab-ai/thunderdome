@@ -222,8 +222,11 @@ export class UI {
   renderShop(career, player, nextSquad, earnings, actions) {
     this._shopArgs = [career, player, nextSquad, earnings, actions];
     $('shop-money').textContent = career.money.toLocaleString();
-    $('shop-sub').textContent = `Circuit ${career.circuit} · Rank ${career.rank} contender` +
-      (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
+    const attrition = career.mode === 'attrition';
+    $('shop-sub').textContent = attrition
+      ? `Attrition · Round ${career.attrition.round} · shared market · rival $${career.attrition.enemyMoney.toLocaleString()}`
+      : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
+        (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
 
     const eb = $('earnings-box');
     if (earnings) {
@@ -237,7 +240,7 @@ export class UI {
     } else eb.classList.add('hidden');
 
     const pm = actions.priceMult();
-    const priceOf = (type) => Math.round(ITEM_TYPES[type].price * pm);
+    const priceOf = (type) => actions.priceOf ? actions.priceOf(type) : Math.round(ITEM_TYPES[type].price * pm);
 
     // ---- market ----
     const MARKET = [
@@ -261,9 +264,11 @@ export class UI {
       types.map(t => {
         const def = ITEM_TYPES[t];
         const cost = priceOf(t);
+        const mi = actions.marketInfo?.(t);
+        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
         return `<div class="market-row">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
-          <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span></span>
+          <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
           <button class="btn" data-buy-item="${t}" ${career.money >= cost ? '' : 'disabled'}>$${cost}</button>
           <button class="btn" data-buy-to="${t}" ${career.money >= cost ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
         </div>`;
@@ -282,9 +287,20 @@ export class UI {
     }).join('');
 
     // ---- next bout ----
-    $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
+    $('next-bout').innerHTML = attrition
+      ? `<b>THE RIVAL SYNDICATE</b><br>Strategy: ${career.attrition.enemy.strategy.toUpperCase()}<br><span class="dim">${career.attrition.enemy.log[0] || 'Watching your opening purchases.'}</span>`
+      : `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
+
+    const draftBtn = $('btn-draft');
+    draftBtn.classList.toggle('hidden', !attrition || career.attrition.draft.complete);
+    if (attrition && !career.attrition.draft.complete) {
+      draftBtn.textContent = `CLAIM DRAFT ENVELOPE · ${career.attrition.draft.turn + 1}/20`;
+      draftBtn.onclick = actions.advanceDraft;
+    }
+    $('btn-next-fight').disabled = attrition && !career.attrition.draft.complete;
+    $('sell-bin').textContent = attrition ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
     const CELL = 42;
@@ -461,7 +477,10 @@ export class UI {
 
 
   renderIntro(career, squad, odds, onBet) {
-    $('intro-rank').textContent = career.rank;
+    const attrition = career.mode === 'attrition';
+    $('intro-rank').parentElement.innerHTML = attrition
+      ? `ATTRITION ROUND <span id="intro-rank">${career.attrition.round}</span>`
+      : `RANK <span id="intro-rank">${career.rank}</span> BOUT`;
     $('intro-squad').textContent = squad.name;
     $('intro-flavor').textContent = squad.blurb;
 
@@ -476,7 +495,9 @@ export class UI {
       (hurt ? '<span class="limb-flag">⚠ PATCH UP AT THE MARKET</span>' : '') +
       (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
     const bets = [0, 200, 500, 1000];
-    $('bet-row').innerHTML = `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
+    $('bet-row').innerHTML = attrition
+      ? `<span class="dim">SELF-BET IS AUTOMATIC · BOTH SIDES STAKE 10% · YOUR $${career.money.toLocaleString()} vs RIVAL $${career.attrition.enemyMoney.toLocaleString()}</span>`
+      : `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
         ${b <= career.money ? '' : 'disabled'}>${b === 0 ? 'NO BET' : '$' + b}</button>`).join('');
     if (onBet) {
