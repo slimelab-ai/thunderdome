@@ -146,6 +146,16 @@ export const LINES = {
     "It's raining cocktails, folks! The FLAMMABLE kind!",
     "Fire on the floor! Marshmallows available at concessions!",
   ],
+  bounty: [
+    "The house wants {victim} GONE — TRIPLE money on that head!",
+    "BOUNTY on {victim}! Somebody upstairs is settling a score!",
+    "{victim} just became the most valuable target in the building!",
+  ],
+  bloodrules: [
+    "BLOOD RULES, people! Everything hits HARDER for the next fifteen!",
+    "The commission has waived the safety margins! Enjoy!",
+    "Thin skin time, folks! EVERYONE bleeds double!",
+  ],
   teamkill: [
     "THE CHALLENGER SHOT HIS OWN MAN! The bookies are LOSING it!",
     "Friendly fire! {victim} would like a word. From the floor!",

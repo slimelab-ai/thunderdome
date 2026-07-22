@@ -103,13 +103,14 @@ export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1) {
   }
 
   // resolve nearest
+  const gMult = world.globalDmgMult || 1; // BLOOD RULES etc.
   if (playerHit && (!fleshHit || playerHit.dist < fleshHit.dist)) {
-    const dmg = computeDamage(weapon, playerHit.part, playerHit.dist) * dmgScale;
+    const dmg = computeDamage(weapon, playerHit.part, playerHit.dist) * dmgScale * gMult;
     world.onPlayerDamaged(dmg, playerHit.part, origin);
     return { type: 'player', ...playerHit };
   }
   if (fleshHit) {
-    const dmg = computeDamage(weapon, fleshHit.part, fleshHit.dist) * dmgScale;
+    const dmg = computeDamage(weapon, fleshHit.part, fleshHit.dist) * dmgScale * gMult;
     fleshHit.combatant.applyDamage(world, fleshHit.part, dmg, shooter, fleshHit.point);
     return { type: 'flesh', ...fleshHit };
   }

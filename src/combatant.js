@@ -41,7 +41,11 @@ export class Combatant {
     // per-part mitigation (Tarkov-style slots); plain `armor` maps to body for enemies
     this.armorParts = opts.armorParts || { head: 0, body: opts.armor || 0, limbs: 0 };
     this.boss = !!opts.boss;
+    this.archetype = opts.archetype || null; // 'medic' | 'shield' | 'rusher' | 'marksman'
     this.scale = opts.scale || (0.95 + Math.random() * 0.09); // natural height variety
+    this.mendCd = 4;
+    this.mendT = 0;
+    this.mendTarget = null;
     this.shirt = opts.shirt;
     this.alive = true;
     this.isPlayer = false;
@@ -52,7 +56,7 @@ export class Combatant {
     this.pos = new THREE.Vector3();
     this.yaw = 0;
     this.radius = 0.42 * this.scale;
-    this.baseSpeed = (2.9 + Math.random() * 0.3) * (opts.skill.speedMult || 1) * (this.boss ? 0.85 : 1);
+    this.baseSpeed = (2.9 + Math.random() * 0.3) * (opts.skill.speedMult || 1) * (this.boss ? 0.85 : 1) * (this.archetype === 'rusher' ? 1.3 : 1);
 
     // AI state
     this.target = null;
@@ -160,6 +164,28 @@ export class Combatant {
     this.gun.position.set(0.31, 0.9, -0.25);
     g.add(this.gun);
 
+    // archetype dressing
+    if (this.archetype === 'shield') {
+      const shield = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.07),
+        new THREE.MeshLambertMaterial({ color: 0x252c33 }));
+      shield.position.set(0, 1.05, 0.34);
+      shield.userData = { combatant: this, part: 'shield' };
+      g.add(shield);
+      this.shieldMesh = shield;
+    } else if (this.archetype === 'medic') {
+      const cross = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.02),
+        new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      cross.position.set(0, 1.2, 0.15);
+      g.add(cross);
+      this.medCross = cross;
+    } else if (this.archetype === 'rusher') {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.28),
+        new THREE.MeshBasicMaterial({ color: 0xff5a1a }));
+      band.position.set(0, 1.62, 0);
+      g.add(band);
+      this.rushBand = band;
+    }
+
     // name tag — crew only; giant red enemy labels made targets trivial to spot
     if (this.team === 'player') {
       this.tag = nameTagSprite(this.name, '#86ff3c');
@@ -175,6 +201,7 @@ export class Combatant {
     this.group = g;
     this.parts = [this.head, this.torso, this.armL, this.armR, this.legL, this.legR];
     if (this.vest) this.parts.push(this.vest);
+    if (this.shieldMesh) this.parts.push(this.shieldMesh); // the shield physically eats frontal shots
   }
 
   addTo(world, pos) {
@@ -183,6 +210,14 @@ export class Combatant {
     world.scene.add(this.group);
     world.combatants.push(this);
     for (const p of this.parts) world.hitMeshes.push(p);
+    if (this.archetype === 'marksman') {
+      // the laser IS the telegraph — see red, move
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      this.laser = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.7 }));
+      this.laser.visible = false;
+      this.laser.frustumCulled = false;
+      world.scene.add(this.laser);
+    }
     this.group.updateMatrixWorld(true);
   }
 
@@ -195,8 +230,10 @@ export class Combatant {
 
   applyDamage(world, part, dmg, shooter, point) {
     if (!this.alive) return;
+    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point); audio.ricochet(); }
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
+    this.mendT = 0;
     if (part === 'torso') dmg *= (1 - this.armorParts.body);
     else if (part === 'head') dmg *= (1 - this.armorParts.head);
     else dmg *= (1 - this.armorParts.limbs);
@@ -206,9 +243,9 @@ export class Combatant {
     if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + 0.4);
     if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + 0.4);
 
-    world.fx.blood(point);
+    if (part !== 'shield') world.fx.blood(point);
     const camDist = point.distanceTo(world.cameraPos);
-    if (camDist < 25) audio.hitFlesh();
+    if (camDist < 25 && part !== 'shield') audio.hitFlesh();
 
     if (this.hp <= 0) {
       this.die(world, shooter, part);
@@ -221,13 +258,15 @@ export class Combatant {
     this.alive = false;
     this.deathT = 0;
     this.tag.visible = false;
+    if (this.laser) this.laser.visible = false;
+    if (this.bountyLight) { this.group.remove(this.bountyLight); this.bountyLight = null; }
     // remove hitboxes
     world.hitMeshes = world.hitMeshes.filter(m => m.userData.combatant !== this);
     audio.hurt();
     // squadmates who watch this go down get cautious: no more single-file feeding
     // into whatever corner just killed their buddy
     for (const c of world.combatants) {
-      if (c !== this && c.alive && c.team === this.team && c.pos.distanceTo(this.pos) < 9) {
+      if (c !== this && c.alive && c.team === this.team && c.archetype !== 'rusher' && c.pos.distanceTo(this.pos) < 9) {
         c.cautionT = Math.max(c.cautionT, 0.9 + Math.random() * 1.1);
       }
     }
@@ -277,6 +316,31 @@ export class Combatant {
       }
     }
 
+    // medics keep their squad in the fight
+    if (this.archetype === 'medic') {
+      this.mendCd -= dt;
+      if (this.mendT > 0) {
+        this.mendT -= dt;
+        if (this.mendT <= 0 && this.mendTarget?.alive) {
+          const t = this.mendTarget;
+          t.hp = Math.min(t.maxHp, t.hp + t.maxHp * 0.4);
+          t.armDmg = 0; t.legDmg = 0;
+          this.mendCd = 9;
+          this.mendTarget = null;
+        }
+      } else if (this.mendCd <= 0 && this.sinceHit > 1.5 && (!this.mendTarget || !this.mendTarget.alive)) {
+        this.mendTarget = null;
+        let bd = 13 * 13;
+        for (const c of world.combatants) {
+          if (c === this || !c.alive || c.team !== this.team) continue;
+          if (c.hp < c.maxHp * 0.6) {
+            const d = this.pos.distanceToSquared(c.pos);
+            if (d < bd) { bd = d; this.mendTarget = c; }
+          }
+        }
+      }
+    }
+
     // patience meter: parked in one spot with a live target → eventually surge
     const sdx = this.pos.x - this.stallAnchor.x, sdz = this.pos.z - this.stallAnchor.z;
     if (sdx * sdx + sdz * sdz > 9) {
@@ -319,8 +383,8 @@ export class Combatant {
         fleeing = true;
       }
     }
-    // live grenades: everyone scatters — no more marching onto a cooking frag
-    if (world.grenades) for (const gr of world.grenades) {
+    // live grenades: everyone scatters — except rushers, who were warned and do not care
+    if (world.grenades && this.archetype !== 'rusher') for (const gr of world.grenades) {
       const dx = this.pos.x - gr.pos.x, dz = this.pos.z - gr.pos.z;
       const d2 = dx * dx + dz * dz;
       if (d2 < 6.5 * 6.5) {
@@ -334,7 +398,7 @@ export class Combatant {
     this._strafing = false;
     this.sprintNow = false;
 
-    if (this.target && !fleeing && this.healingT <= 0) {
+    if (this.target && !fleeing && this.healingT <= 0 && this.mendT <= 0) {
       const tp = this._targetPos();
       const dx = tp.x - this.pos.x, dz = tp.z - this.pos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
@@ -407,16 +471,23 @@ export class Combatant {
       }
       const opening = this.openingT > 0;
 
-      const needTravel = dist > engage || (!sight && !this.peekSide) || pushHigh || this.pushT > 0;
-      if ((needTravel || opening) && this.cautionT > 0) {
+      // medic en route to a patient
+      const assist = this.archetype === 'medic' && this.mendTarget?.alive && this.mendCd <= 0;
+      if (assist) {
+        const adx = this.mendTarget.pos.x - this.pos.x, adz = this.mendTarget.pos.z - this.pos.z;
+        if (adx * adx + adz * adz < 2.2 * 2.2) this.mendT = 1.6;
+      }
+
+      const needTravel = dist > engage || (!sight && !this.peekSide) || pushHigh || this.pushT > 0 || assist;
+      if ((needTravel || opening) && this.cautionT > 0 && !assist) {
         // a squadmate just died up ahead — hold and jink instead of feeding the corner
         this._strafing = true;
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
       } else if (needTravel || opening) {
         this._traveling = true;
-        const gx = opening ? this.openingGoal.x : tp.x;
-        const gz = opening ? this.openingGoal.z : tp.z;
-        const gy = opening ? (this.openingGoal.y || 0) : this.target.pos.y;
+        const gx = opening ? this.openingGoal.x : assist ? this.mendTarget.pos.x : tp.x;
+        const gz = opening ? this.openingGoal.z : assist ? this.mendTarget.pos.z : tp.z;
+        const gy = opening ? (this.openingGoal.y || 0) : assist ? this.mendTarget.pos.y : this.target.pos.y;
         this.sprintNow = (opening || dist > 11 || !sight) && this.legDmg < 0.6;
         // travel through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame
@@ -477,6 +548,20 @@ export class Combatant {
       // ---- shooting ----
       const los = dist < engage * 2.2 && (sight || this.peekSide !== 0) && !this.sprintNow;
 
+      // marksman laser telegraph
+      if (this.laser) {
+        this.laser.visible = los && this.alive;
+        if (this.laser.visible) {
+          const le = this.peekSide
+            ? new THREE.Vector3(eye.x + -fz * 0.6 * this.peekSide, eye.y, eye.z + fx * 0.6 * this.peekSide)
+            : eye;
+          const pts = this.laser.geometry.attributes.position.array;
+          pts[0] = le.x; pts[1] = le.y; pts[2] = le.z;
+          pts[3] = aim.x; pts[4] = aim.y; pts[5] = aim.z;
+          this.laser.geometry.attributes.position.needsUpdate = true;
+        }
+      }
+
       // point-blank surprises get answered fast; long-range spotting takes longer
       if (los && !this.hadLoS) this.reactionLeft = this.skill.reaction * (0.7 + Math.random() * 0.6) * Math.min(1.2, Math.max(0.35, dist / 12));
       this.hadLoS = los;
@@ -501,6 +586,7 @@ export class Combatant {
         audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
         world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7));
 
+        this.shotsFired = (this.shotsFired || 0) + 1;
         this.burstLeft--;
         if (this.burstLeft <= 0) {
           this.burstLeft = this._burstSize();
@@ -637,7 +723,7 @@ export class Combatant {
     // ---- pose ----
     // articulated crouch: torso/head sink, hips drop, legs fold — a real squat,
     // and the hitboxes (same meshes) follow the pose
-    const wantCrouch = this.healingT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
+    const wantCrouch = this.healingT > 0 || this.mendT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
     const drop = (1 - this.crouchK) * 1.55;
     const legBend = Math.acos(Math.max(0.2, Math.min(1, (0.85 - drop) / 0.85)));
@@ -658,6 +744,9 @@ export class Combatant {
     this.armR.position.y = 1.4 - drop;
     this.legL.position.y = 0.85 - drop;
     this.legR.position.y = 0.85 - drop;
+    if (this.shieldMesh) this.shieldMesh.position.y = 1.05 - drop;
+    if (this.medCross) this.medCross.position.y = 1.2 - drop;
+    if (this.rushBand) this.rushBand.position.y = 1.62 - drop;
 
     const sw = Math.sin(this.animPhase) * 0.55 * this.moveAmount * (this.crouchK < 0.9 ? 0.5 : 1);
     const limp = this.legDmg > 0.3;
@@ -706,6 +795,7 @@ export class Combatant {
   }
 
   removeFrom(world) {
+    if (this.laser) world.scene.remove(this.laser);
     world.scene.remove(this.group);
     world.hitMeshes = world.hitMeshes.filter(m => m.userData.combatant !== this);
     const i = world.combatants.indexOf(this);

@@ -1,5 +1,8 @@
 import { WEAPONS, WEAPON_ORDER } from './weapons.js';
 import { audio } from './audio.js';
+import {
+  ITEM_TYPES, AMMO_TYPES, countInPack, characterWeight, weightSpeedMult, gridRows,
+} from './items.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -10,36 +13,12 @@ function healthColor(f) {
   return `rgb(${r},${g},60)`;
 }
 
-// Modular armor: independent slots, sequential tiers within each.
-export const ARMOR_SLOTS = {
-  head: {
-    label: 'HEAD', tiers: [
-      { name: 'Bare Skull', price: 0, mit: 0 },
-      { name: 'STEEL POT', price: 450, mit: 0.35, desc: 'Surplus helmet. −35% head damage.' },
-      { name: 'OPS-CORE RIG', price: 1200, mit: 0.55, desc: 'High-cut composite. −55% head damage.' },
-    ],
-  },
-  body: {
-    label: 'BODY', tiers: [
-      { name: 'T-Shirt', price: 0, mit: 0 },
-      { name: 'STAB VEST', price: 500, mit: 0.3, desc: 'Cheap kevlar. −30% torso damage.' },
-      { name: 'CERAMIC PLATES', price: 1300, mit: 0.55, desc: 'Military surplus. −55% torso damage.' },
-    ],
-  },
-  limbs: {
-    label: 'LIMBS', tiers: [
-      { name: 'Bare Limbs', price: 0, mit: 0, accum: 0 },
-      { name: 'COMBAT PADS', price: 400, mit: 0.25, accum: 0.45, desc: '−25% limb damage, injuries accumulate slower.' },
-      { name: 'EXO BRACING', price: 950, mit: 0.4, accum: 0.65, desc: '−40% limb damage, aim/limp penalties heavily dampened.' },
-    ],
-  },
-};
-
-export const CONSUMABLES = {
-  medkit: { name: 'MEDKIT', key: 'H', price: 160, max: 3, desc: 'Channel 2.2s, restore 65 HP. Firing cancels.' },
-  splint: { name: 'SPLINT KIT', key: 'V', price: 110, max: 3, desc: 'Channel 1.8s, fixes busted arms and legs.' },
-  grenade: { name: 'FRAG GRENADE', key: 'G', price: 90, max: 4, desc: 'The crowd-pleaser. 2.8s fuse, hurts everyone.' },
-};
+// icon sheet is 6×4 cells
+function iconStyle(icon) {
+  const col = icon % 6, row = (icon / 6) | 0;
+  return `background-image:url(/assets/icons/items_sheet.png);background-size:600% 400%;` +
+    `background-position:${(col / 5) * 100}% ${(row / 3) * 100}%;`;
+}
 
 // Recruits are PERMANENT: they come with nothing but a pistol and their base stats.
 // You arm and armor them from the stash; when they go down mid-match they're back
@@ -54,6 +33,11 @@ export const TRAINING = {
   aim: { name: 'MARKSMANSHIP', max: 2, prices: [700, 1500], desc: 'Tighter spread, tamer recoil.' },
   cardio: { name: 'CARDIO', max: 2, prices: [600, 1300], desc: 'Move faster, snap to sights quicker.' },
   tough: { name: 'PAIN TOLERANCE', max: 2, prices: [800, 1700], desc: '+25 max HP per level.' },
+};
+
+const MUT_NAMES = {
+  blood_money: 'RICH CROWD', dim: 'BROWNOUT', pricey_docs: 'MEDICAL RACKET',
+  hair_trigger: 'HAIR TRIGGERS', hard_rounds: 'HOT LOADS', swarm: 'FULL CARD',
 };
 
 const CREW_NAMES = ['Moose', 'Wren', 'Sledge', 'Ivy', 'Tarmac', 'Nadia', 'Brick', 'Kestrel', 'Yusuf', 'Dora', 'Flint', 'Marrow'];
@@ -80,7 +64,8 @@ export class UI {
       pause: $('screen-pause'),
     };
     this._eventTimer = null;
-    this.kitOpen = -1;
+    this.selChar = 'player';
+    this.hireOpen = false;
   }
 
   showScreen(name) {
@@ -112,8 +97,15 @@ export class UI {
     if (player.legDmg > 0.25) tags += '<span class="st-tag">LIMPING</span>';
     if (this.el.statusTags._last !== tags) { this.el.statusTags.innerHTML = tags; this.el.statusTags._last = tags; }
 
-    // ammo / weapon
+    // ammo / weapon — reserve is real rounds in the backpack now
     this.el.ammoMag.textContent = player.mag;
+    const res = player.reserve();
+    const resEl = $('ammo-reserve');
+    const resTxt = res === Infinity ? '∞' : String(res);
+    if (resEl.textContent !== resTxt) {
+      resEl.textContent = resTxt;
+      resEl.style.color = res !== Infinity && res <= player.weapon.mag ? 'var(--blood)' : '';
+    }
     this.el.weaponName.textContent = player.weapon.name;
     this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
 
@@ -129,15 +121,17 @@ export class UI {
     this.el.money.textContent = career.money.toLocaleString();
     this.el.frenzy.classList.toggle('hidden', !match.frenzy);
 
-    // consumables
-    const cons = career.consumables;
-    const consKey = `${cons.medkit}|${cons.splint}|${cons.grenade}`;
+    // consumables (straight out of the backpack)
+    const nMed = countInPack(player.character, 'medkit');
+    const nSpl = countInPack(player.character, 'splint');
+    const nNade = countInPack(player.character, 'grenade');
+    const consKey = `${nMed}|${nSpl}|${nNade}`;
     if (this.el.consRow._last !== consKey) {
       this.el.consRow._last = consKey;
       this.el.consRow.innerHTML =
-        `<span class="${cons.medkit ? '' : 'cons-empty'}"><b>H</b> 🩹${cons.medkit}</span>` +
-        `<span class="${cons.splint ? '' : 'cons-empty'}"><b>V</b> 🩼${cons.splint}</span>` +
-        `<span class="${cons.grenade ? '' : 'cons-empty'}"><b>G</b> 💣${cons.grenade}</span>`;
+        `<span class="${nMed ? '' : 'cons-empty'}"><b>H</b> 🩹${nMed}</span>` +
+        `<span class="${nSpl ? '' : 'cons-empty'}"><b>V</b> 🩼${nSpl}</span>` +
+        `<span class="${nNade ? '' : 'cons-empty'}"><b>G</b> 💣${nNade}</span>`;
     }
 
     // heal channel
@@ -222,10 +216,12 @@ export class UI {
     if (text) this.el.interact.textContent = text;
   }
 
-  // ---------- SHOP ----------
+  // ---------- SHOP: market / stash grid / squad dolls with drag & drop ----------
   renderShop(career, player, nextSquad, earnings, actions) {
+    this._shopArgs = [career, player, nextSquad, earnings, actions];
     $('shop-money').textContent = career.money.toLocaleString();
-    $('shop-sub').textContent = `Rank ${career.rank} contender · Next bout: Rank ${career.rank}`;
+    $('shop-sub').textContent = `Circuit ${career.circuit} · Rank ${career.rank} contender` +
+      (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
 
     const eb = $('earnings-box');
     if (earnings) {
@@ -233,190 +229,227 @@ export class UI {
       eb.innerHTML = `<span>LAST BOUT:</span> <span>💀 ${earnings.kills} kills → <b>$${earnings.killMoney}</b></span>` +
         (earnings.headshots ? `<span>🎯 ${earnings.headshots} headshots → <b>$${earnings.hsMoney}</b></span>` : '') +
         `<span>🏆 win purse → <b>$${earnings.winBonus}</b></span>` +
-        (earnings.frenzyMoney ? `<span>💰 frenzy bonus → <b>$${earnings.frenzyMoney}</b></span>` : '') +
+        (earnings.frenzyMoney ? `<span>💰 frenzy → <b>$${earnings.frenzyMoney}</b></span>` : '') +
+        (earnings.betWinnings ? `<span>🎲 bet → <b>$${earnings.betWinnings}</b></span>` : '') +
         `<span>TOTAL: <b>$${earnings.total}</b></span>`;
     } else eb.classList.add('hidden');
 
-    // weapons: your own copy (permanent loadout slot) + extra copies for the crew stash
-    $('shop-weapons').innerHTML = WEAPON_ORDER.map(id => {
-      const w = WEAPONS[id];
-      if (id === 'pistol') return '';
-      const owned = career.weapons.includes(id);
-      const afford = career.money >= w.price;
-      const stashN = career.stash.weapons[id] || 0;
-      return `<div class="shop-item ${owned ? 'owned' : ''}">
-        <div class="si-info"><div class="si-name">${w.name}${stashN ? ` <span class="dim">· stash ×${stashN}</span>` : ''}</div><div class="si-desc">${w.desc}</div></div>
-        <div class="roster-btns">
-        ${owned ? '<span class="si-owned">YOURS</span>'
-          : `<button class="btn" data-buy-weapon="${id}" ${afford ? '' : 'disabled'}>$${w.price}</button>`}
-        <button class="btn" data-stash-weapon="${id}" ${afford ? '' : 'disabled'} title="buy a copy for the crew stash">+CREW</button>
-        </div>
-      </div>`;
-    }).join('');
+    const pm = actions.priceMult();
+    const priceOf = (type) => Math.round(ITEM_TYPES[type].price * pm);
 
-    // armor slots: your own progression + crew copies into the stash
-    $('shop-armor').innerHTML = Object.entries(ARMOR_SLOTS).map(([slot, def]) => {
-      const cur = career.armor[slot];
-      return `<div class="armor-slot-label">${def.label} — <span class="dim">${def.tiers[cur].name}</span></div>` +
-        def.tiers.map((t, i) => {
-          if (i === 0) return '';
-          const worn = cur === i;
-          const canBuy = !worn && career.money >= t.price;
-          const stashN = career.stash.armor[slot][i] || 0;
-          return `<div class="shop-item ${worn ? 'owned' : ''}">
-            <div class="si-info"><div class="si-name">${t.name}${stashN ? ` <span class="dim">· stash ×${stashN}</span>` : ''}</div><div class="si-desc">${t.desc}</div></div>
-            <div class="roster-btns">
-            ${worn ? '<span class="si-owned">WORN</span>'
-              : `<button class="btn" data-buy-armor="${slot}:${i}" ${canBuy ? '' : 'disabled'}>$${t.price}</button>`}
-            <button class="btn" data-stash-armor="${slot}:${i}" ${career.money >= t.price ? '' : 'disabled'} title="buy a copy for the crew stash">+CREW</button>
-            </div>
-          </div>`;
-        }).join('');
-    }).join('');
-
-    // consumables
-    $('shop-consumables').innerHTML = Object.entries(CONSUMABLES).map(([id, c]) => {
-      const held = career.consumables[id] || 0;
-      const canBuy = held < c.max && career.money >= c.price;
-      return `<div class="shop-item">
-        <div class="si-info"><div class="si-name">${c.name} <span class="dim">[${c.key}] · holding ${held}/${c.max}</span></div><div class="si-desc">${c.desc}</div></div>
-        <button class="btn" data-buy-consumable="${id}" ${canBuy ? '' : 'disabled'}>$${c.price}</button>
-      </div>`;
-    }).join('');
-
-    // crew hire (permanent signings)
-    const crewCount = career.crew.length;
-    $('shop-crew').innerHTML = Object.entries(CREW_TIERS).map(([id, t]) => {
-      const afford = career.money >= t.price && crewCount < 5;
-      return `<div class="shop-item">
-        <div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
-        <button class="btn" data-hire="${id}" ${afford ? '' : 'disabled'}>$${t.price}</button>
-      </div>`;
-    }).join('') + (crewCount >= 5 ? '<div class="si-desc" style="padding:4px">Roster is full (5 max).</div>' : '');
-
-    // ---- medical ----
-    const playerMax = 100 + career.skills.tough * 25;
-    const playerHp = career.playerHp == null ? playerMax : Math.min(playerMax, career.playerHp);
-    const pCost = actions.playerPatchCost();
-    const limbFlags = (l) => (l.arm > 0.05 ? ' <span class="limb-flag">ARM</span>' : '') + (l.leg > 0.05 ? ' <span class="limb-flag">LEG</span>' : '');
-    const hpBar = (hp, max) => `<span class="mini-hp"><i style="width:${(hp / max) * 100}%; background:${hp / max > 0.6 ? 'var(--acid)' : hp / max > 0.3 ? 'var(--gold)' : 'var(--blood)'}"></i></span> ${Math.round(hp)}/${max}`;
-    $('shop-medical').innerHTML = `<div class="shop-item">
-      <div class="si-info"><div class="si-name">YOU ${limbFlags(career.playerLimbs)}</div>
-      <div class="si-desc">${hpBar(playerHp, playerMax)}</div></div>
-      ${pCost > 0 ? `<button class="btn" data-patch="player" ${career.money > 0 ? '' : 'disabled'}>PATCH $${Math.min(pCost, career.money)}${career.money < pCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
-    </div>`;
-
-    // ---- roster: permanent hires with a real kit editor ----
-    const stashGuns = Object.entries(career.stash.weapons).filter(([, n]) => n > 0)
-      .map(([id, n]) => `${WEAPONS[id].name}×${n}`);
-    const stashArmorList = ['head', 'body', 'limbs'].flatMap(s =>
-      Object.entries(career.stash.armor[s]).filter(([, n]) => n > 0)
-        .map(([t, n]) => `${ARMOR_SLOTS[s].tiers[t].name}×${n}`));
-    const stashDesc = [...stashGuns, ...stashArmorList].join(', ');
-
-    const kitEditor = (c, i) => {
-      const wOpts = ['pistol', ...Object.keys(career.stash.weapons).filter(id => (career.stash.weapons[id] || 0) > 0)];
-      if (c.gear.weapon !== 'pistol' && !wOpts.includes(c.gear.weapon)) wOpts.push(c.gear.weapon);
-      const wBtns = wOpts.map(id => {
-        const cur = c.gear.weapon === id;
-        const n = career.stash.weapons[id] || 0;
-        return `<button class="btn kit-btn ${cur ? 'kit-cur' : ''}" data-assign-weapon="${i}:${id}" ${cur ? '' : ''}>${WEAPONS[id].name.split(' ')[0]}${id !== 'pistol' && !cur ? ` ×${n}` : ''}</button>`;
-      }).join('');
-      const slotBtns = (slot) => ARMOR_SLOTS[slot].tiers.map((t, tier) => {
-        const cur = c.gear[slot] === tier;
-        const n = career.stash.armor[slot][tier] || 0;
-        const usable = cur || tier === 0 || n > 0;
-        return `<button class="btn kit-btn ${cur ? 'kit-cur' : ''}" data-assign-armor="${i}:${slot}:${tier}" ${usable ? '' : 'disabled'}>${tier === 0 ? 'NONE' : `T${tier}${!cur && n ? ` ×${n}` : ''}`}</button>`;
-      }).join('');
-      return `<div class="kit-editor">
-        <div class="kit-row"><span>GUN</span>${wBtns}</div>
-        <div class="kit-row"><span>HEAD</span>${slotBtns('head')}</div>
-        <div class="kit-row"><span>BODY</span>${slotBtns('body')}</div>
-        <div class="kit-row"><span>LEGS</span>${slotBtns('limbs')}</div>
-        <div class="kit-row"><span>🩹 ${c.gear.medkit || 0}</span>
-          <button class="btn kit-btn" data-give="${i}:medkit:-1" ${(c.gear.medkit || 0) > 0 ? '' : 'disabled'}>−</button>
-          <button class="btn kit-btn" data-give="${i}:medkit:1" ${career.consumables.medkit > 0 && (c.gear.medkit || 0) < 2 ? '' : 'disabled'}>+</button>
-          <span style="margin-left:10px">💣 ${c.gear.grenade || 0}</span>
-          <button class="btn kit-btn" data-give="${i}:grenade:-1" ${(c.gear.grenade || 0) > 0 ? '' : 'disabled'}>−</button>
-          <button class="btn kit-btn" data-give="${i}:grenade:1" ${career.consumables.grenade > 0 && (c.gear.grenade || 0) < 2 ? '' : 'disabled'}>+</button>
-        </div>
-      </div>`;
-    };
-
-    $('shop-roster').innerHTML = (career.crew.length
-      ? career.crew.map((c, i) => {
-        const max = CREW_TIERS[c.tier].hp;
-        const hp = c.hp == null ? max : Math.min(max, c.hp);
-        const cost = actions.crewPatchCost(c);
-        const next = c.tier === 'rookie' ? 'veteran' : c.tier === 'veteran' ? 'elite' : null;
-        const upCost = next ? CREW_TIERS[next].price - CREW_TIERS[c.tier].price + 200 : 0;
-        const g = c.gear || {};
-        const kitSummary = `${WEAPONS[g.weapon || 'pistol'].name} · ⛑${g.head || '–'} 🦺${g.body || '–'} 🦵${g.limbs || '–'} · 🩹${g.medkit || 0} 💣${g.grenade || 0}`;
-        return `<div class="shop-item roster-card">
-          <div class="si-info">
-            <div class="si-name">${c.name} <span class="dim">${CREW_TIERS[c.tier].name} · ${c.kills || 0} kills</span>${limbFlags(c.limbs || {})}</div>
-            <div class="si-desc">${hpBar(hp, max)}<br>${kitSummary}</div>
-          </div>
-          <div class="roster-btns roster-btns-col">
-            <div>
-              <button class="btn" data-kit="${i}">${this.kitOpen === i ? 'KIT ▴' : 'KIT ▾'}</button>
-              ${cost > 0 ? `<button class="btn" data-patch="${i}" ${career.money > 0 ? '' : 'disabled'}>🏥 $${Math.min(cost, career.money)}${career.money < cost ? ' ⚠' : ''}</button>` : ''}
-            </div>
-            <div>
-              ${next ? `<button class="btn" data-upgrade="${i}" ${career.money >= upCost ? '' : 'disabled'}>⬆ $${upCost}</button>` : ''}
-              <button class="btn btn-ghost" data-sell="${i}">SELL $${Math.round(CREW_TIERS[c.tier].price * 0.5)}</button>
-            </div>
-          </div>
-          ${this.kitOpen === i ? kitEditor(c, i) : ''}
+    // ---- market ----
+    const MARKET = [
+      ['🔫 HARDWARE', ['smg', 'shotgun', 'rifle', 'dmr', 'pistol']],
+      ['🦺 ARMOR', ['helm1', 'helm2', 'vest1', 'vest2', 'pads1', 'pads2']],
+      ['📦 AMMUNITION', ['ammo_9mm', 'ammo_buck', 'ammo_762', 'ammo_308']],
+      ['💊 MEDICAL & LOUD', ['medkit', 'splint', 'grenade']],
+    ];
+    $('market-list').innerHTML = MARKET.map(([label, types]) => `
+      <div class="armor-slot-label">${label}</div>` +
+      types.map(t => {
+        const def = ITEM_TYPES[t];
+        const cost = priceOf(t);
+        return `<div class="market-row">
+          <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
+          <span class="mk-name">${def.name}<span class="mk-w">${def.weight}kg</span></span>
+          <button class="btn" data-buy-item="${t}" ${career.money >= cost ? '' : 'disabled'}>$${cost}</button>
         </div>`;
-      }).join('')
-      : '<div class="si-desc" style="padding:4px">You fight alone. Brave. Stupid, but brave.</div>')
-      + `<div class="si-desc" style="padding:6px 4px">STASH: ${stashDesc || 'empty — +CREW buttons buy gear copies for your squad'}</div>`;
+      }).join('')).join('');
 
-    // training
+    // ---- training ----
     $('shop-training').innerHTML = Object.entries(TRAINING).map(([id, t]) => {
       const lvl = career.skills[id];
       const maxed = lvl >= t.max;
-      const price = maxed ? 0 : t.prices[lvl];
-      const afford = !maxed && career.money >= price;
+      const price = maxed ? 0 : Math.round(t.prices[lvl] * pm);
       return `<div class="shop-item ${maxed ? 'owned' : ''}">
         <div class="si-info"><div class="si-name">${t.name} ${'★'.repeat(lvl)}${'☆'.repeat(t.max - lvl)}</div><div class="si-desc">${t.desc}</div></div>
         ${maxed ? '<span class="si-owned">MAXED</span>'
-          : `<button class="btn" data-train="${id}" ${afford ? '' : 'disabled'}>$${price}</button>`}
+          : `<button class="btn" data-train="${id}" ${career.money >= price ? '' : 'disabled'}>$${price}</button>`}
       </div>`;
     }).join('');
 
-    // next bout
+    // ---- next bout ----
     $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
-      <span class="dim">${nextSquad.roster.length} fighters · threat level ${'🔥'.repeat(Math.min(5, 11 - career.rank))}</span>`;
+      <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
+      (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
 
-    // wire buttons
+    // ---- stash grid ----
+    const CELL = 42;
+    const stashRows = gridRows(career.stash);
+    const gridHtml = (grid, dropName, who) => {
+      const rows = grid.rows > 0 ? grid.rows : stashRows;
+      let html = `<div class="inv-grid" data-drop="${dropName}" ${who !== undefined ? `data-who="${who}"` : ''}
+        style="width:${grid.cols * CELL}px;height:${rows * CELL}px;">`;
+      for (const e of grid.items) {
+        const def = ITEM_TYPES[e.it.type];
+        html += `<div class="inv-item" data-item="${e.it.uid}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
+          style="left:${e.x * CELL}px;top:${e.y * CELL}px;width:${def.w * CELL}px;height:${def.h * CELL}px;">
+          <span class="inv-ico" style="${iconStyle(def.icon)}"></span>
+          ${e.it.rounds != null ? `<span class="inv-count">${e.it.rounds}</span>` : ''}
+        </div>`;
+      }
+      return html + '</div>';
+    };
+    $('stash-wrap').innerHTML = gridHtml(career.stash, 'stash');
+
+    // ---- squad panel ----
+    if (this.selChar === undefined) this.selChar = 'player';
+    if (this.selChar !== 'player' && !career.crew[this.selChar]) this.selChar = 'player';
+    const tabs = [['player', 'YOU'], ...career.crew.map((m, i) => [i, m.name])];
+    $('char-tabs').innerHTML = tabs.map(([who, label]) => {
+      const hp = who === 'player'
+        ? (career.playerHp == null ? 1 : career.playerHp / (100 + career.skills.tough * 25))
+        : (career.crew[who].hp == null ? 1 : career.crew[who].hp / CREW_TIERS[career.crew[who].tier].hp);
+      return `<button class="btn char-tab ${String(this.selChar) === String(who) ? 'char-tab-sel' : ''}" data-char="${who}">
+        ${label}<i class="tab-hp" style="width:${Math.max(2, hp * 100)}%;background:${healthColor(hp)}"></i></button>`;
+    }).join('') + (career.crew.length < 5
+      ? `<button class="btn btn-ghost char-tab" data-hire-menu="1">+ HIRE</button>` : '');
+
+    const who = this.selChar;
+    const isPlayer = who === 'player';
+    const m = isPlayer ? null : career.crew[who];
+    const ch = isPlayer ? career.playerCh : m.ch;
+    const maxHp = isPlayer ? 100 + career.skills.tough * 25 : CREW_TIERS[m.tier].hp;
+    const hp = isPlayer ? (career.playerHp == null ? maxHp : career.playerHp) : (m.hp == null ? maxHp : m.hp);
+    const limbs = isPlayer ? career.playerLimbs : (m.limbs || { arm: 0, leg: 0 });
+    const patchCost = isPlayer ? actions.playerPatchCost() : actions.crewPatchCost(m);
+    const wt = characterWeight(ch).toFixed(1);
+    const wMult = weightSpeedMult(ch);
+
+    const slotHtml = (slot, label) => {
+      const it = ch.gear[slot];
+      const def = it ? ITEM_TYPES[it.type] : null;
+      return `<div class="doll-slot" data-slot="${slot}" data-who="${who}" title="${label}">
+        ${it ? `<div class="inv-item doll-it" data-item="${it.uid}" style="width:100%;height:100%;">
+          <span class="inv-ico" style="${iconStyle(def.icon)}"></span></div>` : `<span class="doll-lbl">${label}</span>`}
+      </div>`;
+    };
+
+    const limbFlag = (l) => (l.arm > 0.05 ? ' <span class="limb-flag">ARM</span>' : '') + (l.leg > 0.05 ? ' <span class="limb-flag">LEG</span>' : '');
+    const next = !isPlayer && (m.tier === 'rookie' ? 'veteran' : m.tier === 'veteran' ? 'elite' : null);
+    const upCost = next ? Math.round((CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200) * pm) : 0;
+
+    $('char-panel').innerHTML = `
+      <div class="char-head">
+        <div>
+          <b>${isPlayer ? 'YOU' : m.name}</b>
+          <span class="dim">${isPlayer ? 'the challenger' : CREW_TIERS[m.tier].name + ' · ' + (m.kills || 0) + ' kills'}</span>
+          ${limbFlag(limbs)}${hp <= 0 ? ' <span class="limb-flag">OUT — NEEDS MEDICAL</span>' : ''}
+        </div>
+        <div class="char-hp"><span class="mini-hp"><i style="width:${(hp / maxHp) * 100}%;background:${healthColor(hp / maxHp)}"></i></span>${Math.round(hp)}/${maxHp}</div>
+      </div>
+      <div class="char-body">
+        <div class="doll">
+          ${slotHtml('head', 'HEAD')}
+          ${slotHtml('body', 'BODY')}
+          ${slotHtml('limbs', 'LEGS')}
+          <div class="doll-guns">${slotHtml('gun1', 'GUN 1')}${slotHtml('gun2', 'GUN 2')}</div>
+        </div>
+        <div class="pack-side">
+          <div class="dim" style="margin-bottom:3px">BACKPACK · ${wt}kg${wMult < 0.995 ? ` <span class="limb-flag">−${Math.round((1 - wMult) * 100)}% SPEED</span>` : ''}</div>
+          ${gridHtml(ch.pack, 'pack', who)}
+        </div>
+      </div>
+      <div class="char-actions">
+        ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}>🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
+        ${next ? `<button class="btn" data-upgrade="${who}" ${career.money >= upCost ? '' : 'disabled'}>⬆ ${next.toUpperCase()} $${upCost}</button>` : ''}
+        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">SELL $${Math.round(CREW_TIERS[m.tier].price * 0.5)}</button>` : ''}
+      </div>
+      ${this.hireOpen ? `<div class="hire-menu">${Object.entries(CREW_TIERS).map(([id, t]) => {
+        const cost = Math.round(t.price * pm);
+        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
+        <button class="btn" data-hire="${id}" ${career.money >= cost && career.crew.length < 5 ? '' : 'disabled'}>$${cost}</button></div>`;
+      }).join('')}</div>` : ''}`;
+
+    // ---- wire buttons ----
     const wire = (sel, attr, fn) => {
       document.querySelectorAll(sel).forEach(b => b.onclick = () => { audio.uiClick(); fn(b.getAttribute(attr)); });
     };
-    wire('[data-buy-weapon]', 'data-buy-weapon', actions.buyWeapon);
-    wire('[data-stash-weapon]', 'data-stash-weapon', actions.buyStashWeapon);
-    wire('[data-buy-armor]', 'data-buy-armor', (v) => { const [slot, tier] = v.split(':'); actions.buyArmor(slot, parseInt(tier)); });
-    wire('[data-stash-armor]', 'data-stash-armor', (v) => { const [slot, tier] = v.split(':'); actions.buyStashArmor(slot, parseInt(tier)); });
-    wire('[data-buy-consumable]', 'data-buy-consumable', actions.buyConsumable);
-    wire('[data-hire]', 'data-hire', actions.hire);
+    wire('[data-buy-item]', 'data-buy-item', actions.buyItem);
     wire('[data-train]', 'data-train', actions.train);
-    wire('[data-assign-weapon]', 'data-assign-weapon', (v) => { const [i, id] = v.split(':'); actions.assignWeapon(parseInt(i), id); });
-    wire('[data-assign-armor]', 'data-assign-armor', (v) => { const [i, slot, tier] = v.split(':'); actions.assignArmor(parseInt(i), slot, parseInt(tier)); });
-    wire('[data-give]', 'data-give', (v) => { const [i, kind, dir] = v.split(':'); actions.giveItem(parseInt(i), kind, parseInt(dir)); });
     wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
     wire('[data-upgrade]', 'data-upgrade', (i) => actions.upgradeCrew(parseInt(i)));
-    wire('[data-sell]', 'data-sell', (i) => actions.sellCrew(parseInt(i)));
-    wire('[data-kit]', 'data-kit', (i) => {
-      this.kitOpen = this.kitOpen === parseInt(i) ? -1 : parseInt(i);
-      this.renderShop(career, player, nextSquad, earnings, actions);
+    wire('[data-sell-crew]', 'data-sell-crew', (i) => { actions.sellCrew(parseInt(i)); this.selChar = 'player'; });
+    wire('[data-hire]', 'data-hire', (id) => { this.hireOpen = false; actions.hire(id); });
+    wire('[data-char]', 'data-char', (whoSel) => {
+      this.selChar = whoSel === 'player' ? 'player' : parseInt(whoSel);
+      this.hireOpen = false;
+      this.renderShop(...this._shopArgs);
+    });
+    wire('[data-hire-menu]', 'data-hire-menu', () => {
+      this.hireOpen = !this.hireOpen;
+      this.renderShop(...this._shopArgs);
+    });
+
+    this._bindDrag(actions, CELL);
+  }
+
+  // pointer-based drag & drop between stash / packs / doll slots / the SELL bin
+  _bindDrag(actions, CELL) {
+    document.querySelectorAll('.inv-item').forEach(el => {
+      el.onpointerdown = (e) => {
+        e.preventDefault();
+        const uid = el.getAttribute('data-item');
+        const ghost = el.cloneNode(true);
+        ghost.classList.add('inv-ghost');
+        ghost.style.width = `${el.offsetWidth}px`;
+        ghost.style.height = `${el.offsetHeight}px`;
+        document.body.appendChild(ghost);
+        const moveGhost = (ev) => {
+          ghost.style.left = `${ev.clientX - el.offsetWidth / 2}px`;
+          ghost.style.top = `${ev.clientY - el.offsetHeight / 2}px`;
+        };
+        moveGhost(e);
+        el.classList.add('inv-dragging');
+        document.body.classList.add('dragging');
+        const onMove = (ev) => moveGhost(ev);
+        const onUp = (ev) => {
+          document.removeEventListener('pointermove', onMove);
+          document.removeEventListener('pointerup', onUp);
+          ghost.remove();
+          el.classList.remove('inv-dragging');
+          document.body.classList.remove('dragging');
+          const at = document.elementFromPoint(ev.clientX, ev.clientY);
+          if (!at) return;
+          const sellBin = at.closest('#sell-bin');
+          const slotEl = at.closest('[data-slot]');
+          const gridEl = at.closest('[data-drop]');
+          if (sellBin) return actions.moveItem(uid, { kind: 'sell' });
+          if (slotEl) return actions.moveItem(uid, { kind: 'slot', who: this._whoAttr(slotEl), slot: slotEl.getAttribute('data-slot') });
+          if (gridEl) {
+            const kind = gridEl.getAttribute('data-drop');
+            const r = gridEl.getBoundingClientRect();
+            const x = Math.floor((ev.clientX - r.left) / CELL);
+            const y = Math.floor((ev.clientY - r.top) / CELL);
+            return actions.moveItem(uid, kind === 'stash'
+              ? { kind: 'stash', x, y }
+              : { kind: 'pack', who: this._whoAttr(gridEl), x, y });
+          }
+        };
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+      };
     });
   }
 
-  renderIntro(rank, squad) {
-    $('intro-rank').textContent = rank;
+  _whoAttr(el) {
+    const w = el.getAttribute('data-who');
+    return w === 'player' ? 'player' : parseInt(w);
+  }
+
+
+  renderIntro(career, squad, odds, onBet) {
+    $('intro-rank').textContent = career.rank;
     $('intro-squad').textContent = squad.name;
     $('intro-flavor').textContent = squad.blurb;
+    const bets = [0, 200, 500, 1000];
+    $('bet-row').innerHTML = `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
+      bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
+        ${b <= career.money ? '' : 'disabled'}>${b === 0 ? 'NO BET' : '$' + b}</button>`).join('');
+    if (onBet) {
+      document.querySelectorAll('[data-bet]').forEach(btn =>
+        btn.onclick = () => onBet(parseInt(btn.getAttribute('data-bet'))));
+    }
   }
 
   renderDeath(line, stats) {

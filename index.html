@@ -90,8 +90,8 @@
         <button id="btn-new" class="btn btn-big">NEW CAREER</button>
       </div>
       <div class="menu-controls">
-        <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> toggle lean</div>
-        <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–5</b> weapons</div>
+        <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean (tap toggles, hold holds)</div>
+        <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–2</b> weapons</div>
         <div><b>H</b> medkit &nbsp; <b>V</b> splint &nbsp; <b>G</b> grenade</div>
         <div class="menu-warn">Locational damage is real. Get shot in the arm — your aim goes. Get shot in the leg — you limp. Play slow. Play smart.</div>
       </div>
@@ -103,6 +103,7 @@
       <div class="intro-rank">RANK <span id="intro-rank">10</span> BOUT</div>
       <div class="intro-vs">YOUR CREW <span>vs</span> <em id="intro-squad">THE GUTTER RATS</em></div>
       <div id="intro-flavor" class="intro-flavor"></div>
+      <div id="bet-row"></div>
       <button id="btn-fight" class="btn btn-big btn-blood">⚔ FIGHT</button>
       <div class="intro-hint">Click FIGHT to lock in — the game goes fullscreen. ESC pauses.</div>
     </div>
@@ -120,26 +121,22 @@
       <div id="earnings-box" class="hidden"></div>
       <div class="shop-cols">
         <div class="shop-col">
-          <div class="shop-col-title">🔫 ARMORY</div>
-          <div id="shop-weapons"></div>
-          <div class="shop-col-title" style="margin-top:14px">💊 SUPPLIES</div>
-          <div id="shop-consumables"></div>
-          <div class="shop-col-title" style="margin-top:14px">🦺 PROTECTION</div>
-          <div id="shop-armor"></div>
-        </div>
-        <div class="shop-col">
-          <div class="shop-col-title">🏥 MEDICAL <span class="dim">(wounds carry over — pay up or fight hurt)</span></div>
-          <div id="shop-medical"></div>
-          <div class="shop-col-title" style="margin-top:14px">🧟 HIRE MUSCLE <span class="dim">(permanent — arm them yourself)</span></div>
-          <div id="shop-crew"></div>
-          <div class="shop-col-title" style="margin-top:14px">👥 YOUR CREW</div>
-          <div id="shop-roster"></div>
-        </div>
-        <div class="shop-col">
-          <div class="shop-col-title">🏋 TRAINING</div>
+          <div class="shop-col-title">🛒 THE MARKET <span class="dim">(purchases land in your stash)</span></div>
+          <div id="market-list"></div>
+          <div class="shop-col-title" style="margin-top:14px">🏋 TRAINING</div>
           <div id="shop-training"></div>
+        </div>
+        <div class="shop-col">
+          <div class="shop-col-title">📦 STASH <span class="dim">(drag anywhere — gear, packs, or the bin)</span></div>
+          <div id="stash-scroll"><div id="stash-wrap"></div></div>
+          <div id="sell-bin">💰 SELL — drop anything here to liquidate (55%)</div>
           <div class="shop-col-title" style="margin-top:14px">📋 NEXT BOUT</div>
           <div id="next-bout"></div>
+        </div>
+        <div class="shop-col">
+          <div class="shop-col-title">👥 THE SQUAD <span class="dim">(wounds carry over — pay up or fight hurt)</span></div>
+          <div id="char-tabs"></div>
+          <div id="char-panel"></div>
         </div>
       </div>
       <div class="shop-footer">
@@ -163,7 +160,8 @@
       <div class="champ-pre">RANK 1 IS DEAD. LONG LIVE</div>
       <h1 class="champ-title">THE CHAMPION</h1>
       <div id="champ-stats" class="champ-stats"></div>
-      <button id="btn-newgame" class="btn btn-big">RUN IT BACK — NEW CAREER</button>
+      <button id="btn-newgame" class="btn btn-big btn-blood">NEXT CIRCUIT ➤</button>
+      <div class="death-hint">Same pit. Worse odds. Better money. It never ends until you do.</div>
     </div>
   </div>
 

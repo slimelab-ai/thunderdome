@@ -1,5 +1,13 @@
 # THUNDERDOME — Content Roadmap
 
+> **Status:** Phase 1 shipped, upgraded beyond the original spec: 15 ranks, four
+> enemy archetypes (medic/shield/rusher/marksman), circuits-as-the-game with house
+> condition mutators (not NG+ — the score is circuits × blood money, executions
+> end runs), pre-match self-betting, BOUNTY + BLOOD RULES events, and a full
+> grid-inventory economy (bottomless stash, per-character backpacks with weight,
+> paper-doll loadouts, two-gun limit, four ammo types bought between matches,
+> liquidate-anything). Item icons authored via gpt-image-2.
+
 The 10-rank ladder clears too fast once a kitted crew comes online. The goal is to
 stretch a career into a long arc without diluting the core loop (lethal bouts →
 blood money → gear/crew decisions → harder bouts).

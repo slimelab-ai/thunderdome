@@ -4,10 +4,15 @@ import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
-import { UI, ARMOR_SLOTS, CONSUMABLES, CREW_TIERS, TRAINING, nextCrewName } from './ui.js';
+import { UI, CREW_TIERS, TRAINING, nextCrewName } from './ui.js';
 import { WEAPONS } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
+import {
+  ITEM_TYPES, AMMO_TYPES, makeItem, sellValue, autoPlace, removeFromGrid, canPlace,
+  makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
+  ammoInPack, consumeAmmo, bestUsableGun, STASH_COLS,
+} from './items.js';
 
 // ============================================================ setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -58,21 +63,25 @@ world.nav = new NavMesh(arena.colliders);
 const player = new Player(camera, world);
 
 // ============================================================ career / save
-const SAVE_KEY = 'thunderdome-save-v1';
+// v2: unified grid inventory — old v1 saves are a different economy entirely, no migration
+const SAVE_KEY = 'thunderdome-save-v2';
 let career;
 
 function newCareer() {
+  const playerCh = makeCharacter();
+  autoPlace(playerCh.pack, makeItem('medkit'));
+  autoPlace(playerCh.pack, makeItem('grenade'));
+  autoPlace(playerCh.pack, makeItem('grenade'));
   return {
-    money: 0, rank: 10,
-    weapons: ['pistol'],
-    armor: { head: 0, body: 0, limbs: 0 },
-    stash: { weapons: {}, armor: { head: {}, body: {}, limbs: {} } }, // purchased crew copies
-    consumables: { medkit: 1, splint: 1, grenade: 2 },
+    money: 0, rank: 15, circuit: 1, mutators: [],
+    playerCh,
     playerHp: null,                    // null = full; persists between matches
     playerLimbs: { arm: 0, leg: 0 },
     skills: { aim: 0, cardio: 0, tough: 0 },
-    crew: [],
-    totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0 },
+    crew: [],                          // {name, tier, kills, hp, limbs, ch}
+    stash: { cols: STASH_COLS, rows: 0, items: [] },
+    bet: 0,
+    totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0, circuitsCleared: 0 },
   };
 }
 function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); } catch { /* private mode */ } }
@@ -81,32 +90,7 @@ function load() {
     const s = localStorage.getItem(SAVE_KEY);
     if (s) {
       const c = JSON.parse(s);
-      if (c && c.rank >= 1) {
-        // migrate older saves
-        if (c.armor === undefined) c.armor = { head: 0, body: c.armorTier || 0, limbs: 0 };
-        if (c.consumables === undefined) c.consumables = { medkit: 1, splint: 1, grenade: 2 };
-        if (c.stash === undefined) c.stash = {};
-        if (c.stash.weapons === undefined) c.stash.weapons = {};
-        if (c.stash.armor === undefined) {
-          // hand-me-down arrays → purchased-copy counts
-          c.stash.armor = { head: {}, body: {}, limbs: {} };
-          for (const slot of ['head', 'body', 'limbs']) {
-            for (const t of c.stash[slot] || []) c.stash.armor[slot][t] = (c.stash.armor[slot][t] || 0) + 1;
-            delete c.stash[slot];
-          }
-        }
-        if (c.playerHp === undefined) c.playerHp = null;
-        if (c.playerLimbs === undefined) c.playerLimbs = { arm: 0, leg: 0 };
-        const legacyTierWeapon = { rookie: 'pistol', veteran: 'smg', elite: 'rifle' };
-        for (const m of c.crew || []) {
-          if (!m.gear) m.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0 };
-          if (!m.gear.weapon) m.gear.weapon = legacyTierWeapon[m.tier] || 'pistol';
-          if (m.hp === undefined) m.hp = null;
-          if (m.limbs === undefined) m.limbs = { arm: 0, leg: 0 };
-          m.alive = true; // recruits are permanent now — the fallen walk again
-        }
-        return c;
-      }
+      if (c && c.rank >= 1 && c.playerCh && c.stash?.items) return c;
     }
   } catch { /* ignore */ }
   return null;
@@ -120,17 +104,48 @@ function squadNames(n) {
 }
 
 const SQUADS = {
-  10: { name: 'THE GUTTER RATS', shirt: 0x5a4632, blurb: 'Sewer scavengers with stolen pistols. Your warm-up act. Try not to embarrass the house.', roster: [{ w: 'pistol', hp: 75, sp: 2.9, re: 1.15 }, { w: 'pistol', hp: 75, sp: 2.9, re: 1.15 }] },
-  9: { name: 'THE RUST DOGS', shirt: 0x6e3b28, blurb: 'Junkyard enforcers. Three of them, all mean, none smart.', roster: [{ w: 'pistol', hp: 82, sp: 2.5, re: 1.0 }, { w: 'pistol', hp: 82, sp: 2.5, re: 1.0 }, { w: 'pistol', hp: 82, sp: 2.5, re: 1.0 }] },
-  8: { name: 'THE JACKALS', shirt: 0x7a6a2a, blurb: 'Street crew that graduated to automatic weapons last month. The SMG is new. The malice is not.', roster: [{ w: 'smg', hp: 88, sp: 1.9, re: 0.8 }, { w: 'pistol', hp: 88, sp: 1.9, re: 0.8 }, { w: 'pistol', hp: 88, sp: 1.9, re: 0.8 }] },
-  7: { name: 'BLACKLINE PMC', shirt: 0x22262e, blurb: 'Washed-out private military contractors. Disciplined bursts, matching uniforms, dead eyes.', roster: [{ w: 'smg', hp: 95, sp: 1.65, re: 0.7 }, { w: 'smg', hp: 95, sp: 1.65, re: 0.7 }, { w: 'smg', hp: 95, sp: 1.65, re: 0.7 }] },
-  6: { name: 'THE VIPER BOYS', shirt: 0x1e4d2b, blurb: 'Four brothers, one shotgun, zero impulse control. They will rush you.', roster: [{ w: 'shotgun', hp: 105, sp: 1.6, re: 0.65 }, { w: 'smg', hp: 100, sp: 1.6, re: 0.65 }, { w: 'smg', hp: 100, sp: 1.6, re: 0.65 }, { w: 'pistol', hp: 100, sp: 1.6, re: 0.65 }] },
-  5: { name: 'IRON PACK', shirt: 0x3a3f4a, blurb: 'Ex-dockworkers turned killers. First crew on the ladder with body armor. Aim for the legs and laugh.', roster: [{ w: 'rifle', hp: 110, sp: 1.4, re: 0.6, ar: 0.25 }, { w: 'shotgun', hp: 110, sp: 1.4, re: 0.6, ar: 0.25 }, { w: 'smg', hp: 105, sp: 1.5, re: 0.6 }, { w: 'smg', hp: 105, sp: 1.5, re: 0.6 }] },
-  4: { name: 'THE HOUNDS OF VRY', shirt: 0x4a1f24, blurb: 'A cult that worships violence. Rifles, armor, and unsettling chanting.', roster: [{ w: 'rifle', hp: 120, sp: 1.2, re: 0.55, ar: 0.25 }, { w: 'rifle', hp: 120, sp: 1.2, re: 0.55, ar: 0.25 }, { w: 'smg', hp: 115, sp: 1.3, re: 0.55 }, { w: 'shotgun', hp: 115, sp: 1.3, re: 0.55, ar: 0.25 }] },
-  3: { name: 'CARTEL SICARIOS', shirt: 0x1a1a1a, blurb: 'Professional hitmen moonlighting for sport. Five guns, no wasted movement.', roster: [{ w: 'rifle', hp: 125, sp: 1.05, re: 0.5, ar: 0.3 }, { w: 'rifle', hp: 125, sp: 1.05, re: 0.5, ar: 0.3 }, { w: 'smg', hp: 120, sp: 1.1, re: 0.5 }, { w: 'smg', hp: 120, sp: 1.1, re: 0.5 }, { w: 'shotgun', hp: 120, sp: 1.1, re: 0.5, ar: 0.3 }] },
-  2: { name: 'GHOST SECTION', shirt: 0x2a2f3a, blurb: 'Former special forces. The bookies stopped taking bets against them two seasons ago.', roster: [{ w: 'rifle', hp: 135, sp: 0.95, re: 0.42, ar: 0.4 }, { w: 'rifle', hp: 135, sp: 0.95, re: 0.42, ar: 0.4 }, { w: 'dmr', hp: 130, sp: 0.9, re: 0.42, ar: 0.4 }, { w: 'smg', hp: 130, sp: 1.0, re: 0.42, ar: 0.4 }, { w: 'rifle', hp: 135, sp: 0.95, re: 0.42, ar: 0.4 }] },
-  1: { name: "DEATH'S HEAD SYNDICATE", shirt: 0x111114, blurb: 'The champion GOLIATH and his honor guard. Thirty-one bouts. Thirty-one closed caskets. Yours is pre-ordered.', roster: [{ w: 'rifle', hp: 650, sp: 0.85, re: 0.4, ar: 0.5, boss: true, name: 'GOLIATH', scale: 1.32 }, { w: 'rifle', hp: 140, sp: 0.9, re: 0.4, ar: 0.4 }, { w: 'dmr', hp: 135, sp: 0.85, re: 0.4, ar: 0.4 }, { w: 'shotgun', hp: 140, sp: 0.9, re: 0.4, ar: 0.4 }] },
+  15: { name: 'THE GUTTER RATS', shirt: 0x5a4632, blurb: 'Sewer scavengers with stolen pistols. Your warm-up act. Try not to embarrass the house.', roster: [{ w: 'pistol', hp: 75, sp: 2.9, re: 1.15 }, { w: 'pistol', hp: 75, sp: 2.9, re: 1.15 }] },
+  14: { name: 'THE RUST DOGS', shirt: 0x6e3b28, blurb: 'Junkyard enforcers. Three of them, all mean, none smart.', roster: [{ w: 'pistol', hp: 82, sp: 2.5, re: 1.0 }, { w: 'pistol', hp: 82, sp: 2.5, re: 1.0 }, { w: 'pistol', hp: 82, sp: 2.5, re: 1.0 }] },
+  13: { name: 'THE JACKALS', shirt: 0x7a6a2a, blurb: 'Street crew that graduated to automatic weapons last month. The SMG is new. The malice is not.', roster: [{ w: 'smg', hp: 88, sp: 1.95, re: 0.85 }, { w: 'pistol', hp: 88, sp: 1.95, re: 0.85 }, { w: 'pistol', hp: 88, sp: 1.95, re: 0.85 }] },
+  12: { name: 'BLACKLINE PMC', shirt: 0x22262e, blurb: 'Washed-out private military contractors. Disciplined bursts, matching uniforms, dead eyes.', roster: [{ w: 'smg', hp: 95, sp: 1.7, re: 0.72 }, { w: 'smg', hp: 95, sp: 1.7, re: 0.72 }, { w: 'smg', hp: 95, sp: 1.7, re: 0.72 }] },
+  11: { name: 'THE VIPER BOYS', shirt: 0x1e4d2b, blurb: 'Four brothers, one shotgun, zero impulse control. They will rush you.', roster: [{ w: 'shotgun', hp: 105, sp: 1.65, re: 0.68 }, { w: 'smg', hp: 100, sp: 1.65, re: 0.68 }, { w: 'smg', hp: 100, sp: 1.65, re: 0.68 }, { w: 'pistol', hp: 100, sp: 1.65, re: 0.68 }] },
+  10: { name: 'IRON PACK', shirt: 0x3a3f4a, blurb: 'Ex-dockworkers turned killers. First crew on the ladder with body armor. Aim for the legs and laugh.', roster: [{ w: 'rifle', hp: 108, sp: 1.5, re: 0.62, ar: 0.25 }, { w: 'shotgun', hp: 108, sp: 1.5, re: 0.62, ar: 0.25 }, { w: 'smg', hp: 104, sp: 1.55, re: 0.62 }, { w: 'smg', hp: 104, sp: 1.55, re: 0.62 }] },
+  9: { name: 'THE SAWBONES', shirt: 0x3d5a52, blurb: 'A fighting clinic. Their medic drags men back from the dead mid-bout — shoot the one with the white cross FIRST.', roster: [{ w: 'rifle', hp: 112, sp: 1.4, re: 0.6, ar: 0.25 }, { w: 'smg', hp: 108, sp: 1.45, re: 0.6 }, { w: 'shotgun', hp: 112, sp: 1.4, re: 0.6 }, { w: 'smg', hp: 100, sp: 1.5, re: 0.6, arch: 'medic' }] },
+  8: { name: 'THE STAMPEDE', shirt: 0x6b3a1e, blurb: 'They do one thing: RUN AT YOU. The two in front do not stop for grenades, caution, or common sense.', roster: [{ w: 'shotgun', hp: 150, sp: 1.5, re: 0.55, arch: 'rusher' }, { w: 'shotgun', hp: 150, sp: 1.5, re: 0.55, arch: 'rusher' }, { w: 'smg', hp: 110, sp: 1.4, re: 0.58 }, { w: 'rifle', hp: 112, sp: 1.35, re: 0.58, ar: 0.25 }] },
+  7: { name: 'SHIELDWALL', shirt: 0x2f3a4a, blurb: 'Riot shields and patience. Shooting the wall from the front is donating ammo — get an angle.', roster: [{ w: 'pistol', hp: 130, sp: 1.35, re: 0.55, ar: 0.25, arch: 'shield' }, { w: 'pistol', hp: 130, sp: 1.35, re: 0.55, ar: 0.25, arch: 'shield' }, { w: 'rifle', hp: 115, sp: 1.3, re: 0.55, ar: 0.25 }, { w: 'smg', hp: 105, sp: 1.4, re: 0.55, arch: 'medic' }] },
+  6: { name: 'GLASSEYE CARTEL', shirt: 0x403050, blurb: 'Their marksman paints you with a laser before the round arrives. When you see red, MOVE.', roster: [{ w: 'dmr', hp: 110, sp: 1.0, re: 0.5, ar: 0.25, arch: 'marksman' }, { w: 'rifle', hp: 118, sp: 1.25, re: 0.52, ar: 0.25 }, { w: 'rifle', hp: 118, sp: 1.25, re: 0.52, ar: 0.25 }, { w: 'smg', hp: 110, sp: 1.3, re: 0.52 }] },
+  5: { name: 'THE HOUNDS OF VRY', shirt: 0x4a1f24, blurb: 'A cult that worships violence, now with a shield deacon and a battlefield surgeon. The chanting is worse in person.', roster: [{ w: 'rifle', hp: 122, sp: 1.15, re: 0.5, ar: 0.3 }, { w: 'rifle', hp: 122, sp: 1.15, re: 0.5, ar: 0.3 }, { w: 'pistol', hp: 135, sp: 1.25, re: 0.5, ar: 0.3, arch: 'shield' }, { w: 'shotgun', hp: 155, sp: 1.35, re: 0.5, arch: 'rusher' }, { w: 'smg', hp: 110, sp: 1.3, re: 0.5, arch: 'medic' }] },
+  4: { name: 'CARTEL SICARIOS', shirt: 0x1a1a1a, blurb: 'Professional hitmen moonlighting for sport. Five guns, no wasted movement, one laser you will learn to hate.', roster: [{ w: 'rifle', hp: 126, sp: 1.05, re: 0.48, ar: 0.3 }, { w: 'rifle', hp: 126, sp: 1.05, re: 0.48, ar: 0.3 }, { w: 'dmr', hp: 115, sp: 0.9, re: 0.45, ar: 0.3, arch: 'marksman' }, { w: 'smg', hp: 120, sp: 1.1, re: 0.48 }, { w: 'shotgun', hp: 120, sp: 1.1, re: 0.48, ar: 0.3 }] },
+  3: { name: 'GHOST SECTION', shirt: 0x2a2f3a, blurb: 'Former special forces with a combat medic. The bookies stopped taking bets against them two seasons ago.', roster: [{ w: 'rifle', hp: 135, sp: 0.95, re: 0.42, ar: 0.4 }, { w: 'rifle', hp: 135, sp: 0.95, re: 0.42, ar: 0.4 }, { w: 'dmr', hp: 128, sp: 0.85, re: 0.42, ar: 0.4, arch: 'marksman' }, { w: 'smg', hp: 128, sp: 1.0, re: 0.42, ar: 0.4, arch: 'medic' }, { w: 'rifle', hp: 135, sp: 0.95, re: 0.42, ar: 0.4 }] },
+  2: { name: 'THE CULL', shirt: 0x101418, blurb: 'The league\'s cleanup crew: a shield, a stampede, a surgeon and a laser, moving as one organism.', roster: [{ w: 'pistol', hp: 150, sp: 1.05, re: 0.42, ar: 0.4, arch: 'shield' }, { w: 'shotgun', hp: 170, sp: 1.15, re: 0.42, arch: 'rusher' }, { w: 'smg', hp: 130, sp: 1.05, re: 0.42, ar: 0.4, arch: 'medic' }, { w: 'dmr', hp: 130, sp: 0.8, re: 0.4, ar: 0.4, arch: 'marksman' }, { w: 'rifle', hp: 140, sp: 0.9, re: 0.4, ar: 0.4 }] },
+  1: { name: "DEATH'S HEAD SYNDICATE", shirt: 0x111114, blurb: 'The champion GOLIATH and his honor guard. Thirty-one bouts. Thirty-one closed caskets. Yours is pre-ordered.', roster: [{ w: 'rifle', hp: 650, sp: 0.85, re: 0.4, ar: 0.5, boss: true, name: 'GOLIATH', scale: 1.32 }, { w: 'pistol', hp: 150, sp: 1.0, re: 0.42, ar: 0.4, arch: 'shield' }, { w: 'dmr', hp: 132, sp: 0.8, re: 0.4, ar: 0.4, arch: 'marksman' }, { w: 'smg', hp: 132, sp: 1.0, re: 0.42, ar: 0.4, arch: 'medic' }, { w: 'shotgun', hp: 168, sp: 1.1, re: 0.42, arch: 'rusher' }] },
 };
+
+// ---- circuits: this IS the game. Each lap is harder and richer; the run ends
+// when the house collects you. Score = circuits + lifetime blood money.
+const MUTATORS = {
+  blood_money: { name: 'RICH CROWD', desc: '+25% payouts' },
+  dim: { name: 'BROWNOUT', desc: 'House keeps the lights low' },
+  pricey_docs: { name: 'MEDICAL RACKET', desc: 'Doctors charge +50%' },
+  hair_trigger: { name: 'HAIR TRIGGERS', desc: 'Enemies react faster' },
+  hard_rounds: { name: 'HOT LOADS', desc: 'Enemy rounds hit +15% harder' },
+  swarm: { name: 'FULL CARD', desc: 'Every squad fields an extra body' },
+};
+function rollMutators(circuit) {
+  if (circuit <= 1) return [];
+  const pool = Object.keys(MUTATORS);
+  const picks = [];
+  while (picks.length < Math.min(2 + ((circuit / 3) | 0), 4)) {
+    const m = pool[(Math.random() * pool.length) | 0];
+    if (!picks.includes(m)) picks.push(m);
+  }
+  return picks;
+}
+const hasMut = (id) => career.mutators.includes(id);
+const circuitN = () => career.circuit - 1;
+const payMult = () => (1 + circuitN() * 0.35) * (hasMut('blood_money') ? 1.25 : 1);
+const priceMult = () => 1 + circuitN() * 0.22;
+const medMult = () => priceMult() * (hasMut('pricey_docs') ? 1.5 : 1);
 
 const DEATH_LINES = [
   'The crowd files out. The mop comes in.',
@@ -176,23 +191,21 @@ function startMatch() {
   match = makeMatch();
   const squad = SQUADS[career.rank];
 
-  // spawn crew — everyone on the roster fights, carrying exactly what you gave them
-  career.crew.forEach((cm, i) => {
+  // spawn crew — anyone with a pulse fights; the flatlined sit out until you pay the doctor
+  career.crew.filter(cm => cm.hp == null || cm.hp > 0).forEach((cm, i) => {
     const t = CREW_TIERS[cm.tier];
-    if (!cm.gear) cm.gear = { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0, weapon: 'pistol' };
+    const mits = armorMits(cm.ch);
     const c = new Combatant({
-      name: cm.name, team: 'player', weaponId: cm.gear.weapon || 'pistol',
-      skill: { spreadMult: t.spreadMult, reaction: t.reaction, speedMult: t.speedMult },
+      name: cm.name, team: 'player', weaponId: bestUsableGun(cm.ch),
+      skill: { spreadMult: t.spreadMult, reaction: t.reaction, speedMult: t.speedMult * weightSpeedMult(cm.ch) },
       hp: t.hp, shirt: 0x2e5d33,
-      armorParts: {
-        head: ARMOR_SLOTS.head.tiers[cm.gear.head].mit,
-        body: ARMOR_SLOTS.body.tiers[cm.gear.body].mit,
-        limbs: ARMOR_SLOTS.limbs.tiers[cm.gear.limbs].mit,
-      },
+      armorParts: mits,
     });
     c.careerRef = cm;
-    c.healKits = cm.gear.medkit;
-    c.nades = cm.gear.grenade;
+    c.character = cm.ch;
+    c.healKits = countInPack(cm.ch, 'medkit');
+    c.nades = countInPack(cm.ch, 'grenade');
+    c.shotsFired = 0;
     // wounds carry over — patch them in the black market or they fight hurt
     if (cm.hp != null) c.hp = Math.min(c.maxHp, cm.hp);
     if (cm.limbs) { c.armDmg = cm.limbs.arm || 0; c.legDmg = cm.limbs.leg || 0; }
@@ -200,36 +213,47 @@ function startMatch() {
     match.crew.push(c);
   });
 
-  // spawn enemies
-  const names = squadNames(squad.roster.length);
-  squad.roster.forEach((r, i) => {
+  // spawn enemies (circuit scaling + mutators applied here)
+  const cn = circuitN();
+  const roster = [...squad.roster];
+  if (hasMut('swarm') && roster.length <= 4) roster.push({ ...roster[roster.length - 1] });
+  const names = squadNames(roster.length);
+  roster.forEach((r, i) => {
     const c = new Combatant({
       name: r.name || names[i], team: 'enemy', weaponId: r.w,
-      skill: { spreadMult: r.sp, reaction: r.re, speedMult: 1 + (10 - career.rank) * 0.012 },
-      hp: r.hp, shirt: squad.shirt, armor: r.ar || 0, boss: r.boss, scale: r.scale,
+      skill: {
+        spreadMult: r.sp * Math.max(0.55, 1 - cn * 0.1),
+        reaction: r.re * Math.max(0.45, 1 - cn * 0.08) * (hasMut('hair_trigger') ? 0.8 : 1),
+        speedMult: 1 + (15 - career.rank) * 0.008 + cn * 0.03,
+      },
+      hp: Math.round(r.hp * (1 + cn * 0.4) * (r.boss ? 1 + cn * 0.15 : 1)),
+      shirt: squad.shirt, armor: r.ar || 0, boss: r.boss, scale: r.scale,
+      archetype: r.arch,
     });
     // higher-league fighters carry supplies
-    c.nades = career.rank <= 3 ? 2 : career.rank <= 7 ? 1 : 0;
-    c.healKits = career.rank <= 6 ? 1 : 0;
+    c.nades = career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
+    c.healKits = career.rank <= 9 ? 1 : 0;
+    if (r.arch === 'medic') c.healKits = 3;
+    if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; }
     if (r.boss) { c.nades = 2; c.healKits = 2; }
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
   match.enemiesAlive = match.enemies.length;
+  world.enemyDmgScale = 0.85 * (hasMut('hard_rounds') ? 1.15 : 1);
 
-  // reset player
-  player.slots = [...career.weapons];
-  if (player.slotIdx >= player.slots.length) player.slotIdx = player.slots.length - 1;
+  // reset player — loadout straight off the paper doll
+  const pch = career.playerCh;
+  const guns = ['gun1', 'gun2'].map(s => pch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
+  player.slots = guns.length ? guns : ['pistol']; // house loaner: nobody enters unarmed
+  player.slotIdx = 0;
   player._mountViewmodel();
   player.skills = career.skills;
-  player.armor = {
-    head: ARMOR_SLOTS.head.tiers[career.armor.head].mit,
-    body: ARMOR_SLOTS.body.tiers[career.armor.body].mit,
-    limbs: ARMOR_SLOTS.limbs.tiers[career.armor.limbs].mit,
-    limbAccum: ARMOR_SLOTS.limbs.tiers[career.armor.limbs].accum || 0,
-  };
-  player.consumables = career.consumables;
+  player.armor = armorMits(pch);
+  player.character = pch;
+  player.weightMult = weightSpeedMult(pch);
   player.resetForMatch(arena.spawns.player);
+  player.loadMagsFromPack();
   // player wounds carry over too
   if (career.playerHp != null) player.hp = Math.min(player.maxHp, career.playerHp);
   player.armDmg = career.playerLimbs.arm || 0;
@@ -239,6 +263,10 @@ function startMatch() {
 
   match.campAnchor.x = player.pos.x;
   match.campAnchor.z = player.pos.z;
+  world.globalDmgMult = 1;
+
+  // escrow the bet
+  if (career.bet > 0) career.money -= career.bet;
 
   announcer.clear();
   announcer.say('matchStart', {}, { force: true });
@@ -252,9 +280,13 @@ function startMatch() {
 }
 
 // ============================================================ kills / damage
+function betOdds() {
+  return 1 + (16 - career.rank) * 0.12 + circuitN() * 0.15;
+}
+
 function payout(base) {
-  const mult = match.frenzy ? 2 : 1;
-  const amt = base * mult;
+  const mult = (match.frenzy ? 2 : 1) * payMult();
+  const amt = Math.round(base * mult);
   if (match.frenzy) match.frenzyMoney += base;
   career.money += amt;
   career.totals.earned += amt;
@@ -277,7 +309,11 @@ function handleKill(killer, victim, part) {
     match.kills++;
     if (headshot) match.headshots++;
 
-    const base = 150 + (10 - career.rank) * 25;
+    let base = 140 + (15 - career.rank) * 20;
+    if (victim.bountyT > 0) {
+      base *= 3;
+      ui.eventBanner('BOUNTY COLLECTED', `${victim.name} was worth triple`, 'var(--gold)');
+    }
     if (killer.isPlayer) {
       player.stats.matchKills++;
       career.totals.kills++;
@@ -467,10 +503,29 @@ function randomFloorSpot(margin = 5) {
   };
 }
 
-const EVENTS = ['lightsout', 'gas', 'frenzy', 'airdrop', 'molotov'];
+const EVENTS = ['lightsout', 'gas', 'frenzy', 'airdrop', 'molotov', 'bounty', 'bloodrules'];
 function fireEvent() {
-  const ev = EVENTS[(Math.random() * EVENTS.length) | 0];
+  let ev = EVENTS[(Math.random() * EVENTS.length) | 0];
+  if (ev === 'bounty' && !match.enemies.some(c => c.alive && !c.boss)) ev = 'frenzy';
   audio.klaxon();
+  if (ev === 'bounty') {
+    const marks = match.enemies.filter(c => c.alive && !c.boss);
+    const mark = marks[(Math.random() * marks.length) | 0];
+    mark.bountyT = 22;
+    mark.bountyLight = new THREE.PointLight(0xffb92e, 30, 7, 1.5);
+    mark.bountyLight.position.y = 2.3;
+    mark.group.add(mark.bountyLight);
+    ui.eventBanner('BOUNTY POSTED', `${mark.name} is worth TRIPLE for 20 seconds`, 'var(--gold)');
+    announcer.say('bounty', { victim: mark.name }, { force: true });
+    return;
+  }
+  if (ev === 'bloodrules') {
+    match.bloodT = 15;
+    world.globalDmgMult = 1.5;
+    ui.eventBanner('BLOOD RULES', 'Everyone takes +50% damage. Everyone.', 'var(--blood)');
+    announcer.say('bloodrules', {}, { force: true });
+    return;
+  }
   if (ev === 'lightsout') {
     match.lightsOut = 11;
     ui.eventBanner('LIGHTS OUT', 'Someone cut the power. How unfortunate.');
@@ -519,8 +574,24 @@ function updateEvents(dt) {
     }
   }
 
-  // lights out
-  const targetFactor = match.lightsOut > 0 ? 0.05 : 1;
+  // bounty ticks + blood rules
+  for (const c of match.enemies) {
+    if (c.bountyT > 0) {
+      c.bountyT -= dt;
+      if (c.bountyLight) c.bountyLight.intensity = 22 + Math.sin(match.time * 8) * 14;
+      if ((c.bountyT <= 0 || !c.alive) && c.bountyLight) {
+        c.group.remove(c.bountyLight);
+        c.bountyLight = null;
+      }
+    }
+  }
+  if (match.bloodT > 0) {
+    match.bloodT -= dt;
+    if (match.bloodT <= 0) world.globalDmgMult = 1;
+  }
+
+  // lights out (BROWNOUT circuits never run the house at full wattage)
+  const targetFactor = match.lightsOut > 0 ? 0.05 : (hasMut('dim') ? 0.6 : 1);
   world._lightFactor = world._lightFactor ?? 1;
   world._lightFactor += (targetFactor - world._lightFactor) * Math.min(1, dt * 3);
   for (const l of arena.lights) l.light.intensity = l.base * world._lightFactor;
@@ -605,45 +676,70 @@ function updateEvents(dt) {
 // ============================================================ match end
 function finishMatch() {
   document.exitPointerLock();
-  // crew supply counts reflect what they actually used this match (down or not)
+  // crew burn real supplies: ammo per shot fired, kits and frags they used
   for (const c of match.crew) {
-    if (c.careerRef?.gear) {
-      c.careerRef.gear.medkit = Math.max(0, Math.min(c.careerRef.gear.medkit, c.healKits));
-      c.careerRef.gear.grenade = Math.max(0, Math.min(c.careerRef.gear.grenade, c.nades));
+    const ch = c.character;
+    if (ch) {
+      const wdef = ITEM_TYPES[c.weaponId];
+      if (wdef?.ammo) consumeAmmo(ch, wdef.ammo, c.shotsFired || 0);
+      while (countInPack(ch, 'medkit') > c.healKits) useFromPack(ch, 'medkit');
+      while (countInPack(ch, 'grenade') > c.nades) useFromPack(ch, 'grenade');
     }
-    // health persists; the downed get scraped up at half strength
+    // health persists; the downed stay at zero until someone pays the doctor
     if (c.careerRef) {
-      c.careerRef.hp = c.alive ? Math.round(c.hp) : Math.round(c.maxHp * 0.5);
+      c.careerRef.hp = c.alive ? Math.round(c.hp) : 0;
       c.careerRef.limbs = { arm: +c.armDmg.toFixed(2), leg: +c.legDmg.toFixed(2) };
     }
   }
-  // player too: survive and keep your wounds, or get revived at half
-  career.playerHp = player.alive ? Math.round(player.hp) : Math.round(player.maxHp * 0.5);
+  // settle the bet
+  if (career.bet > 0) {
+    if (match.won) {
+      const winnings = Math.round(career.bet * betOdds());
+      career.money += winnings;
+      career.totals.earned += winnings;
+      match.betWinnings = winnings;
+    }
+    career.bet = 0;
+  }
+  // player: keep your wounds, or — if dead — get auto-charged for the minimum
+  // stabilization to 1hp NOW, before the money can be spent on anything else.
+  if (player.alive) {
+    career.playerHp = Math.round(player.hp);
+  } else {
+    career.playerHp = 1;
+    career.money -= 25; // the house medic's "you live" fee, non-negotiable
+  }
   career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
   clearCombatants();
 
   if (match.won) {
-    const winBonus = 400 + (10 - career.rank) * 150;
+    const winBonus = Math.round((350 + (15 - career.rank) * 90) * payMult());
     career.money += winBonus;
     career.totals.earned += winBonus;
     const earnings = {
       kills: match.kills, headshots: match.headshots,
       killMoney: match.killMoney, hsMoney: match.hsMoney,
       frenzyMoney: match.frenzyMoney, winBonus,
-      total: match.killMoney + match.hsMoney + match.frenzyMoney + winBonus,
+      betWinnings: match.betWinnings || 0,
+      total: match.killMoney + match.hsMoney + match.frenzyMoney + winBonus + (match.betWinnings || 0),
     };
     audio.cashRegister();
 
     if (career.rank === 1) {
+      // circuit cleared — the ladder resets harder and richer. This IS the game.
+      career.totals.circuitsCleared++;
+      career.circuit++;
+      career.rank = 15;
+      career.mutators = rollMutators(career.circuit);
+      save();
       phase = 'champion';
       ui.renderChampion(
+        `<b style="color:var(--gold)">CIRCUIT ${career.circuit - 1} CLEARED</b> — the league reseeds, the odds get worse, the money gets better.<br><br>` +
         `Career kills: <b>${career.totals.kills}</b> (${career.totals.headshots} headshots)<br>` +
-        `Total blood money earned: <b style="color:var(--gold)">$${career.totals.earned.toLocaleString()}</b><br>` +
-        `Times carried out on a stretcher: <b>${career.totals.deaths}</b><br>` +
-        `Crew knockouts absorbed: <b>${career.totals.crewLost}</b>`
+        `Total blood money: <b style="color:var(--gold)">$${career.totals.earned.toLocaleString()}</b><br>` +
+        `Circuit ${career.circuit} conditions: <b>${career.mutators.map(m => MUTATORS[m].name).join(' · ') || 'standard card'}</b>`
       );
       ui.showScreen('champion');
-      localStorage.removeItem(SAVE_KEY);
       return;
     }
 
@@ -678,19 +774,93 @@ function finishMatch() {
   }
 }
 
-// medical pricing: this is the drain that makes dying expensive
+// medical pricing: this is the drain that makes dying expensive (circuits inflate it)
 function playerPatchCost() {
   const max = 100 + career.skills.tough * 25;
   const missing = career.playerHp == null ? 0 : Math.max(0, max - career.playerHp);
   const limbs = (career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05) ? 80 : 0;
-  return Math.round(missing * 2.2) + limbs;
+  return Math.round((missing * 2.2 + limbs) * medMult());
 }
 function crewPatchCost(m) {
   if (!m) return 0;
   const max = CREW_TIERS[m.tier].hp;
   const missing = m.hp == null ? 0 : Math.max(0, max - m.hp);
   const limbs = (m.limbs && (m.limbs.arm > 0.05 || m.limbs.leg > 0.05)) ? 60 : 0;
-  return Math.round(missing * 1.6) + limbs;
+  return Math.round((missing * 1.6 + limbs) * medMult());
+}
+
+// ---- inventory plumbing for the shop UI ----
+const getChar = (who) => who === 'player' ? career.playerCh : career.crew[who]?.ch;
+
+function findItem(uid) {
+  const s = career.stash.items.find(e => e.it.uid === uid);
+  if (s) return { it: s.it, loc: { kind: 'stash' } };
+  const chars = [['player', career.playerCh], ...career.crew.map((m, i) => [i, m.ch])];
+  for (const [who, ch] of chars) {
+    for (const slot of ['head', 'body', 'limbs', 'gun1', 'gun2']) {
+      if (ch.gear[slot]?.uid === uid) return { it: ch.gear[slot], loc: { kind: 'slot', who, slot } };
+    }
+    const p = ch.pack.items.find(e => e.it.uid === uid);
+    if (p) return { it: p.it, loc: { kind: 'pack', who } };
+  }
+  return null;
+}
+
+function detachItem(found) {
+  const { it, loc } = found;
+  if (loc.kind === 'stash') removeFromGrid(career.stash, it.uid);
+  else if (loc.kind === 'pack') removeFromGrid(getChar(loc.who).pack, it.uid);
+  else getChar(loc.who).gear[loc.slot] = null;
+}
+
+function slotAccepts(slot, it) {
+  const def = ITEM_TYPES[it.type];
+  if (slot === 'gun1' || slot === 'gun2') return def.kind === 'gun';
+  return def.kind === 'armor' && def.slot === slot;
+}
+
+// move an item to {kind:'stash'|'pack'|'slot'|'sell', who?, slot?, x?, y?}; returns true on success
+function moveItem(uid, to) {
+  const found = findItem(uid);
+  if (!found) return false;
+  const { it } = found;
+  const def = ITEM_TYPES[it.type];
+
+  if (to.kind === 'sell') {
+    detachItem(found);
+    career.money += sellValue(it);
+    audio.cashRegister();
+    return true;
+  }
+  if (to.kind === 'stash') {
+    detachItem(found);
+    if (to.x != null && canPlace(career.stash, it, to.x, to.y)) career.stash.items.push({ it, x: to.x, y: to.y });
+    else autoPlace(career.stash, it);
+    return true;
+  }
+  if (to.kind === 'pack') {
+    if (def.kind !== 'consumable' && def.kind !== 'ammo') return false; // packs carry supplies, not hardware
+    const ch = getChar(to.who);
+    if (!ch) return false;
+    const src = { ...found };
+    detachItem(found);
+    if (to.x != null && canPlace(ch.pack, it, to.x, to.y)) { ch.pack.items.push({ it, x: to.x, y: to.y }); return true; }
+    if (autoPlace(ch.pack, it)) return true;
+    // pack full — bounce back to stash
+    if (src.loc.kind === 'stash') autoPlace(career.stash, it);
+    else autoPlace(career.stash, it);
+    return false;
+  }
+  if (to.kind === 'slot') {
+    const ch = getChar(to.who);
+    if (!ch || !slotAccepts(to.slot, it)) return false;
+    detachItem(found);
+    const old = ch.gear[to.slot];
+    ch.gear[to.slot] = it;
+    if (old) autoPlace(career.stash, old); // displaced piece goes home
+    return true;
+  }
+  return false;
 }
 
 // opening plays: a pre-match nudge so squads don't pour down the same lane every bout
@@ -735,76 +905,19 @@ function renderShop(earnings) {
   ui.renderShop(career, player, SQUADS[career.rank], earnings, {
     playerPatchCost,
     crewPatchCost,
-    buyWeapon: (id) => {
-      const w = WEAPONS[id];
-      if (career.money >= w.price && !career.weapons.includes(id)) {
-        career.money -= w.price;
-        career.weapons.push(id);
+    priceMult,
+    buyItem: (type) => {
+      const def = ITEM_TYPES[type];
+      const cost = Math.round(def.price * priceMult());
+      if (def && career.money >= cost) {
+        career.money -= cost;
+        autoPlace(career.stash, makeItem(type));
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
-    buyArmor: (slot, tier) => {
-      const t = ARMOR_SLOTS[slot]?.tiers[tier];
-      // any tier, straight off the rack — no ladder-climbing through gear you don't want
-      if (t && career.money >= t.price && career.armor[slot] !== tier) {
-        career.money -= t.price;
-        career.armor[slot] = tier;
-        audio.cashRegister(); save(); renderShop(earnings);
-      }
-    },
-    buyStashWeapon: (id) => {
-      const w = WEAPONS[id];
-      if (w && career.money >= w.price) {
-        career.money -= w.price;
-        career.stash.weapons[id] = (career.stash.weapons[id] || 0) + 1;
-        audio.cashRegister(); save(); renderShop(earnings);
-      }
-    },
-    buyStashArmor: (slot, tier) => {
-      const t = ARMOR_SLOTS[slot]?.tiers[tier];
-      if (t && career.money >= t.price) {
-        career.money -= t.price;
-        career.stash.armor[slot][tier] = (career.stash.armor[slot][tier] || 0) + 1;
-        audio.cashRegister(); save(); renderShop(earnings);
-      }
-    },
-    assignWeapon: (idx, id) => {
-      const m = career.crew[idx];
-      if (!m || m.gear.weapon === id) return;
-      if (id !== 'pistol') {
-        if ((career.stash.weapons[id] || 0) <= 0) return;
-        career.stash.weapons[id]--;
-      }
-      if (m.gear.weapon && m.gear.weapon !== 'pistol') {
-        career.stash.weapons[m.gear.weapon] = (career.stash.weapons[m.gear.weapon] || 0) + 1;
-      }
-      m.gear.weapon = id;
-      audio.uiClick(); save(); renderShop(earnings);
-    },
-    assignArmor: (idx, slot, tier) => {
-      const m = career.crew[idx];
-      if (!m || m.gear[slot] === tier) return;
-      if (tier > 0) {
-        if ((career.stash.armor[slot][tier] || 0) <= 0) return;
-        career.stash.armor[slot][tier]--;
-      }
-      if (m.gear[slot] > 0) {
-        career.stash.armor[slot][m.gear[slot]] = (career.stash.armor[slot][m.gear[slot]] || 0) + 1;
-      }
-      m.gear[slot] = tier;
-      audio.uiClick(); save(); renderShop(earnings);
-    },
-    giveItem: (idx, kind, dir) => {
-      const m = career.crew[idx];
-      if (!m) return;
-      if (dir > 0 && (career.consumables[kind] || 0) > 0 && (m.gear[kind] || 0) < 2) {
-        career.consumables[kind]--;
-        m.gear[kind] = (m.gear[kind] || 0) + 1;
-      } else if (dir < 0 && (m.gear[kind] || 0) > 0) {
-        m.gear[kind]--;
-        career.consumables[kind] = (career.consumables[kind] || 0) + 1;
-      } else return;
-      audio.uiClick(); save(); renderShop(earnings);
+    moveItem: (uid, to) => {
+      if (moveItem(uid, to)) { audio.uiClick(); save(); }
+      renderShop(earnings);
     },
     patchPlayer: () => {
       const cost = playerPatchCost();
@@ -847,13 +960,12 @@ function renderShop(earnings) {
     sellCrew: (idx) => {
       const m = career.crew[idx];
       if (!m) return;
-      // gear back to stash, 50% of signing fee back
-      if (m.gear.weapon && m.gear.weapon !== 'pistol') career.stash.weapons[m.gear.weapon] = (career.stash.weapons[m.gear.weapon] || 0) + 1;
-      for (const slot of ['head', 'body', 'limbs']) {
-        if (m.gear[slot] > 0) career.stash.armor[slot][m.gear[slot]] = (career.stash.armor[slot][m.gear[slot]] || 0) + 1;
+      // everything they carry goes back to the stash, 50% of signing fee back
+      for (const slot of ['head', 'body', 'limbs', 'gun1', 'gun2']) {
+        const it = m.ch.gear[slot];
+        if (it && !(it.type === 'pistol' && slot === 'gun1')) autoPlace(career.stash, it);
       }
-      career.consumables.medkit += m.gear.medkit || 0;
-      career.consumables.grenade += m.gear.grenade || 0;
+      for (const e of [...m.ch.pack.items]) autoPlace(career.stash, e.it);
       career.money += Math.round(CREW_TIERS[m.tier].price * 0.5);
       career.crew.splice(idx, 1);
       audio.cashRegister(); save(); renderShop(earnings);
@@ -862,26 +974,19 @@ function renderShop(earnings) {
       const m = career.crew[idx];
       const next = m?.tier === 'rookie' ? 'veteran' : m?.tier === 'veteran' ? 'elite' : null;
       if (!next) return;
-      const cost = CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200;
+      const cost = Math.round((CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200) * priceMult());
       if (career.money >= cost) {
         career.money -= cost;
         m.tier = next;
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
-    buyConsumable: (id) => {
-      const c = CONSUMABLES[id];
-      if (c && career.money >= c.price && (career.consumables[id] || 0) < c.max) {
-        career.money -= c.price;
-        career.consumables[id] = (career.consumables[id] || 0) + 1;
-        audio.cashRegister(); save(); renderShop(earnings);
-      }
-    },
     hire: (tierId) => {
       const t = CREW_TIERS[tierId];
-      if (career.money >= t.price && career.crew.length < 5) {
-        career.money -= t.price;
-        career.crew.push({ name: nextCrewName(), tier: tierId, alive: true, kills: 0, gear: { head: 0, body: 0, limbs: 0, medkit: 0, grenade: 0, weapon: 'pistol' } });
+      const cost = Math.round(t.price * priceMult());
+      if (career.money >= cost && career.crew.length < 5) {
+        career.money -= cost;
+        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, ch: makeCharacter() });
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -899,7 +1004,15 @@ function renderShop(earnings) {
 
 function showIntro() {
   phase = 'intro';
-  ui.renderIntro(career.rank, SQUADS[career.rank]);
+  career.bet = 0;
+  const rerender = () => ui.renderIntro(career, SQUADS[career.rank], betOdds(), (amt) => {
+    if (amt <= career.money) {
+      career.bet = amt;
+      audio.uiClick();
+      rerender();
+    }
+  });
+  rerender();
   ui.showScreen('intro');
 }
 
@@ -974,7 +1087,7 @@ on('btn-continue', () => { showIntro(); });
 on('btn-fight', () => startMatch());
 on('btn-next-fight', () => showIntro());
 on('btn-retry', () => openShop());
-on('btn-newgame', () => { career = newCareer(); save(); ui.showScreen('menu'); showIntro(); });
+on('btn-newgame', () => { openShop(); }); // champion screen → shop, next circuit already armed
 on('btn-executed-new', () => { career = newCareer(); save(); showIntro(); });
 on('btn-resume', () => {
   phase = 'match';
@@ -982,6 +1095,7 @@ on('btn-resume', () => {
   enterCombatMode();
 });
 on('btn-abandon', () => {
+  if (career.bet > 0) { career.money += career.bet; career.bet = 0; } // no contest, stake returned
   clearCombatants();
   phase = 'shop';
   openShop();

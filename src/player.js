@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WEAPONS, buildViewmodel } from './weapons.js';
 import { fireRay, applySpread, resolveCircle, wallHit, STEP_REACH, STAND_LIMIT } from './combat.js';
+import { ITEM_TYPES, countInPack, useFromPack, ammoInPack, consumeAmmo, makeCharacter } from './items.js';
 import { audio } from './audio.js';
 
 const EYE_STAND = 1.62;
@@ -27,8 +28,10 @@ export class Player {
     this.armDmg = 0;
     this.legDmg = 0;
     this.armor = { head: 0, body: 0, limbs: 0, limbAccum: 0 };  // per-slot mitigation
-    this.consumables = { medkit: 0, splint: 0, grenade: 0 };    // shared ref to career.consumables
-    this.healing = null;      // {kind, label, t, dur}
+    this.character = makeCharacter();  // live ref to career.playerCh: pack = meds/ammo
+    this.weightMult = 1;
+    this.magBySlot = [];               // mags persist per gun — no free refills on switch
+    this.healing = null;               // {kind, label, t, dur}
     this.throwCd = 0;
     this.skills = { aim: 0, cardio: 0, tough: 0 };
 
@@ -77,7 +80,23 @@ export class Player {
   get eyeHeight() { return this.crouching ? EYE_CROUCH : EYE_STAND; }
   get heightScale() { return this.crouching ? 0.75 : 1; }
   get speedMult() {
-    return (1 - this.legDmg * 0.45) * (1 + this.skills.cardio * 0.1);
+    return (1 - this.legDmg * 0.45) * (1 + this.skills.cardio * 0.1) * (this.weightMult || 1);
+  }
+
+  // ---------- ammo (real rounds out of the backpack; the pistol runs on house rounds) ----------
+  ammoType() { return ITEM_TYPES[this.weapon.id]?.ammo || null; }
+  reserve() {
+    const t = this.ammoType();
+    return t ? ammoInPack(this.character, t) : Infinity;
+  }
+  loadMagsFromPack() {
+    this.magBySlot = this.slots.map((id) => {
+      const w = WEAPONS[id];
+      const t = ITEM_TYPES[id]?.ammo;
+      if (!t) return w.mag;
+      return consumeAmmo(this.character, t, w.mag);
+    });
+    this.mag = this.magBySlot[this.slotIdx] ?? this.weapon.mag;
   }
 
   _mountViewmodel() {
@@ -128,15 +147,29 @@ export class Player {
 
   onKey(code, down) {
     this.keys[code] = down;
-    if (!down) return;
+    if (!down) {
+      // lean key released: long hold = hold-to-lean (stand back up);
+      // short tap = toggle (stand only if we were already leaning that side)
+      if (code === 'KeyQ' || code === 'KeyE') {
+        const side = code === 'KeyE' ? 1 : -1;
+        const held = performance.now() / 1000 - (this._leanDownAt || 0);
+        if (held >= 0.3) this.leanToggle = 0;
+        else if (this._leanPrev === side) this.leanToggle = 0;
+      }
+      return;
+    }
     if (code === 'KeyR') this.startReload();
     if (code === 'KeyC') this.crouchToggled = !this.crouchToggled;
     if (code === 'KeyH') this.startHeal('medkit');
     if (code === 'KeyV') this.startHeal('splint');
     if (code === 'KeyG') this.throwGrenade();
-    // toggle lean: tap again to stand straight, tap the other side to switch
-    if (code === 'KeyQ') this.leanToggle = this.leanToggle === -1 ? 0 : -1;
-    if (code === 'KeyE') this.leanToggle = this.leanToggle === 1 ? 0 : 1;
+    // hybrid lean: tap toggles, holding past 0.3s behaves like hold-to-lean (release = stand)
+    if (code === 'KeyQ' || code === 'KeyE') {
+      const side = code === 'KeyE' ? 1 : -1;
+      this._leanDownAt = performance.now() / 1000;
+      this._leanPrev = this.leanToggle;
+      this.leanToggle = side;
+    }
     if (code.startsWith('Digit')) {
       const n = parseInt(code.slice(5)) - 1;
       if (n >= 0 && n < this.slots.length && n !== this.slotIdx) this.switchTo(n);
@@ -153,10 +186,10 @@ export class Player {
   startHeal(kind) {
     if (!this.alive || this.healing) return;
     if (kind === 'medkit') {
-      if (this.consumables.medkit <= 0 || this.hp >= this.maxHp - 1) return;
+      if (countInPack(this.character, 'medkit') <= 0 || this.hp >= this.maxHp - 1) return;
       this.healing = { kind, label: 'PATCHING UP…', t: 0, dur: 2.2 };
     } else {
-      if (this.consumables.splint <= 0 || (this.armDmg < 0.05 && this.legDmg < 0.05)) return;
+      if (countInPack(this.character, 'splint') <= 0 || (this.armDmg < 0.05 && this.legDmg < 0.05)) return;
       this.healing = { kind, label: 'SPLINTING…', t: 0, dur: 1.8 };
     }
     audio.reload(0);
@@ -165,8 +198,8 @@ export class Player {
   cancelHeal() { this.healing = null; }
 
   throwGrenade() {
-    if (!this.alive || this.healing || this.throwCd > 0 || this.consumables.grenade <= 0) return;
-    this.consumables.grenade--;
+    if (!this.alive || this.healing || this.throwCd > 0 || countInPack(this.character, 'grenade') <= 0) return;
+    useFromPack(this.character, 'grenade');
     this.throwCd = 0.7;
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
@@ -184,8 +217,9 @@ export class Player {
   }
 
   switchTo(n) {
+    this.magBySlot[this.slotIdx] = this.mag; // mags stay as you left them
     this.slotIdx = n;
-    this.mag = this.weapon.mag;   // arcade: fresh mag on switch
+    this.mag = this.magBySlot[n] ?? 0;
     this.reloading = 0;
     this.kick = 0.6;
     this._mountViewmodel();
@@ -194,6 +228,7 @@ export class Player {
 
   startReload() {
     if (this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
+    if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
     this.reloading = this.weapon.reload;
     audio.reload(0);
     setTimeout(() => { if (this.reloading > 0) audio.reload(1); }, this.weapon.reload * 600);
@@ -343,10 +378,10 @@ export class Player {
         this.cancelHeal(); // firing intent interrupts (item not consumed)
       } else if (this.healing && this.healing.t >= this.healing.dur) {
         if (this.healing.kind === 'medkit') {
-          this.consumables.medkit--;
+          useFromPack(this.character, 'medkit');
           this.hp = Math.min(this.maxHp, this.hp + 65);
         } else {
-          this.consumables.splint--;
+          useFromPack(this.character, 'splint');
           this.armDmg = 0;
           this.legDmg = 0;
         }
@@ -364,10 +399,14 @@ export class Player {
       this.camera.updateProjectionMatrix();
     }
 
-    // ---- reload ----
+    // ---- reload (rounds come out of the backpack) ----
     if (this.reloading > 0) {
       this.reloading -= dt;
-      if (this.reloading <= 0) { this.mag = w.mag; this.reloading = 0; }
+      if (this.reloading <= 0) {
+        const t = this.ammoType();
+        this.mag += t ? consumeAmmo(this.character, t, w.mag - this.mag) : (w.mag - this.mag);
+        this.reloading = 0;
+      }
     }
 
     // ---- firing ----

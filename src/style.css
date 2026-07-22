@@ -279,6 +279,63 @@ html, body {
 .pause-inner h2 { font-family: Impact, "Arial Black", sans-serif; font-size: 48px; letter-spacing: 4px; }
 .pause-sub { color: #777; font-style: italic; margin-bottom: 10px; }
 
+/* ============ INVENTORY ============ */
+#market-list { max-height: 46vh; overflow-y: auto; }
+.market-row { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; margin-bottom: 4px; }
+.mk-icon { width: 30px; height: 30px; background-repeat: no-repeat; flex: none; }
+.mk-name { flex: 1; font-size: 12px; font-weight: 700; }
+.mk-w { color: #666; font-size: 10px; margin-left: 6px; font-weight: 400; }
+.market-row .btn { padding: 3px 10px; font-size: 11px; }
+
+#stash-scroll { max-height: 42vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: rgba(8,8,10,0.6); padding: 4px; }
+.inv-grid {
+  position: relative;
+  background-image: linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.05) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+.inv-item {
+  position: absolute; box-sizing: border-box;
+  background: rgba(28,28,36,0.92); border: 1px solid #3a3a48; border-radius: 3px;
+  cursor: grab; touch-action: none;
+}
+.inv-item:hover { border-color: var(--gold); z-index: 2; }
+.inv-ico { position: absolute; inset: 2px; background-repeat: no-repeat; pointer-events: none; }
+.inv-count { position: absolute; right: 2px; bottom: 0; font-size: 10px; font-weight: 800; color: var(--gold); text-shadow: 0 1px 2px #000; pointer-events: none; }
+.inv-ghost { position: fixed; z-index: 200; opacity: 0.8; pointer-events: none; }
+.inv-dragging { opacity: 0.3; }
+body.dragging { cursor: grabbing; }
+body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
+
+#sell-bin {
+  margin-top: 8px; padding: 10px; text-align: center; font-size: 12px; font-weight: 700; letter-spacing: 1px;
+  border: 1px dashed #4a4a58; border-radius: 4px; color: #888;
+}
+
+#char-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.char-tab { position: relative; padding: 6px 12px 9px; font-size: 11px; }
+.char-tab-sel { border-color: var(--acid); color: var(--acid); }
+.tab-hp { position: absolute; left: 3px; bottom: 3px; height: 2px; display: block; }
+.char-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.char-hp { font-size: 12px; }
+.char-body { display: flex; gap: 12px; }
+.doll { display: flex; flex-direction: column; gap: 6px; }
+.doll-slot {
+  width: 84px; height: 46px; border: 1px dashed #3a3a48; border-radius: 4px; position: relative;
+  background: rgba(14,14,18,0.7); display: flex; align-items: center; justify-content: center;
+}
+.doll-lbl { font-size: 9px; letter-spacing: 2px; color: #555; font-weight: 800; }
+.doll-guns { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.doll-guns .doll-slot { height: 40px; }
+.doll-it { position: relative !important; }
+.pack-side { flex: 1; }
+.char-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.char-actions .btn { padding: 5px 10px; font-size: 11px; }
+.hire-menu { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+
+#bet-row { margin-bottom: 18px; display: flex; gap: 6px; align-items: center; justify-content: center; font-size: 12px; }
+.bet-btn { padding: 6px 14px; font-size: 12px; }
+
 /* money popup */
 .money-pop {
   position: fixed; color: var(--gold); font-weight: 900; font-size: 17px; text-shadow: 0 2px 4px #000;
