@@ -103,8 +103,12 @@
       <div class="intro-rank">RANK <span id="intro-rank">10</span> BOUT</div>
       <div class="intro-vs">YOUR CREW <span>vs</span> <em id="intro-squad">THE GUTTER RATS</em></div>
       <div id="intro-flavor" class="intro-flavor"></div>
+      <div id="intro-status"></div>
       <div id="bet-row"></div>
-      <button id="btn-fight" class="btn btn-big btn-blood">⚔ FIGHT</button>
+      <div class="intro-actions">
+        <button id="btn-intro-back" class="btn">◀ BLACK MARKET</button>
+        <button id="btn-fight" class="btn btn-big btn-blood">⚔ FIGHT</button>
+      </div>
       <div class="intro-hint">Click FIGHT to lock in — the game goes fullscreen. ESC pauses.</div>
     </div>
   </div>
@@ -166,9 +170,10 @@
   </div>
 
   <div id="screen-executed" class="screen hidden">
-    <div class="death-inner">
-      <h1 class="death-title">EXECUTED</h1>
-      <div class="death-line">You went into debt to the house. The house doesn't do payment plans.</div>
+    <div class="executed-inner">
+      <div class="executed-pre">☠ DEBT COLLECTED ☠</div>
+      <h1 class="executed-title">EXECUTED</h1>
+      <div class="executed-sub">CAREER TERMINATED — THE HOUSE DOESN'T DO PAYMENT PLANS</div>
       <div id="executed-stats" class="death-stats"></div>
       <button id="btn-executed-new" class="btn btn-big">NEXT CONTESTANT — NEW CAREER</button>
       <div class="death-hint">The crowd barely noticed. There's always another challenger.</div>

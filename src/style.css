@@ -267,6 +267,33 @@ html, body {
 .death-stats { color: #777; margin-bottom: 30px; font-size: 14px; line-height: 1.9; }
 .death-hint { margin-top: 14px; font-size: 12px; color: #555; }
 
+/* executed — must NOT be mistaken for a routine death screen */
+#screen-executed {
+  background:
+    repeating-linear-gradient(-45deg, rgba(140,10,14,0.16) 0 26px, rgba(0,0,0,0) 26px 52px),
+    radial-gradient(ellipse at 50% 30%, #2a0508 0%, #0a0304 70%);
+  animation: executed-flash 0.6s ease-out;
+}
+@keyframes executed-flash {
+  0% { background-color: #7d0d12; }
+  100% { background-color: transparent; }
+}
+.executed-inner { text-align: center; border: 2px solid var(--blood); padding: 48px 64px; background: rgba(8,2,3,0.82); box-shadow: 0 0 80px rgba(227,36,43,0.35), inset 0 0 40px rgba(227,36,43,0.12); }
+.executed-pre { letter-spacing: 8px; color: var(--gold); font-size: 15px; font-weight: 800; margin-bottom: 6px; }
+.executed-title {
+  font-family: Impact, "Arial Black", sans-serif; font-size: 120px; letter-spacing: 10px; line-height: 1;
+  color: #fff; -webkit-text-stroke: 3px var(--blood); text-shadow: 0 0 50px rgba(227,36,43,0.9);
+  animation: executed-stamp 0.45s cubic-bezier(0.2, 2.2, 0.4, 1);
+}
+@keyframes executed-stamp { 0% { transform: scale(2.4) rotate(-6deg); opacity: 0; } 100% { transform: scale(1) rotate(-2deg); opacity: 1; } }
+.executed-sub { letter-spacing: 3px; color: #ff8a8e; font-size: 13px; font-weight: 800; margin: 12px 0 22px; }
+
+/* intro extras */
+#intro-status { display: flex; gap: 14px; justify-content: center; align-items: center; margin-bottom: 14px; font-weight: 800; }
+.intro-money { color: var(--gold); font-size: 20px; font-family: Impact, "Arial Black", sans-serif; }
+.intro-hp { font-size: 14px; }
+.intro-actions { display: flex; gap: 12px; justify-content: center; align-items: center; }
+
 /* champion */
 .champ-inner { text-align: center; }
 .champ-pre { letter-spacing: 5px; color: #999; font-size: 14px; }

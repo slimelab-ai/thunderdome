@@ -772,6 +772,7 @@ function finishMatch() {
         `$${career.totals.earned.toLocaleString()} earned and spent.`
       );
       ui.showScreen('executed');
+      audio.shot('dmr', 1); // one round, behind the bleachers
       localStorage.removeItem(SAVE_KEY);
       return;
     }
@@ -1006,7 +1007,10 @@ function renderShop(earnings) {
       const cost = Math.round(t.price * priceMult());
       if (career.money >= cost && career.crew.length < 8) {
         career.money -= cost;
-        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch: makeCharacter() });
+        const ch = makeCharacter();
+        autoPlace(ch.pack, makeItem('ammo_9mm')); // signs on stocked, like you did
+        autoPlace(ch.pack, makeItem('medkit'));
+        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch });
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -1136,6 +1140,7 @@ on('btn-continue', () => { showIntro(); });
 on('btn-fight', () => startMatch());
 on('btn-next-fight', () => showIntro());
 on('btn-retry', () => openShop());
+on('btn-intro-back', () => { career.bet = 0; openShop(); });
 on('btn-newgame', () => { openShop(); }); // champion screen → shop, next circuit already armed
 on('btn-executed-new', () => { career = newCareer(); save(); showIntro(); });
 on('btn-resume', () => {

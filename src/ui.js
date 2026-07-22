@@ -464,6 +464,17 @@ export class UI {
     $('intro-rank').textContent = career.rank;
     $('intro-squad').textContent = squad.name;
     $('intro-flavor').textContent = squad.blurb;
+
+    // don't let anyone stumble into the pit broke, bleeding, and surprised
+    const maxHp = 100 + career.skills.tough * 25;
+    const hp = career.playerHp == null ? maxHp : career.playerHp;
+    const hurt = hp < maxHp * 0.6 || career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05;
+    const benchedOut = career.crew.filter(c => c.hp != null && c.hp <= 0 && !c.benched).length;
+    $('intro-status').innerHTML =
+      `<span class="intro-money">$${career.money.toLocaleString()}</span>` +
+      `<span class="intro-hp" style="color:${healthColor(hp / maxHp)}">${Math.round(hp)}/${maxHp} HP</span>` +
+      (hurt ? '<span class="limb-flag">⚠ PATCH UP AT THE MARKET</span>' : '') +
+      (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
     const bets = [0, 200, 500, 1000];
     $('bet-row').innerHTML = `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
