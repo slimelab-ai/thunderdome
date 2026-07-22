@@ -47,6 +47,9 @@ export class Combatant {
     this.mendCd = 4;
     this.mendT = 0;
     this.mendTarget = null;
+    // soft combat role — a weighting nudge, not a hard rule:
+    // pointman pushes, flanker routes wide, support holds angles, shadow escorts the boss
+    this.role = opts.role || 'pointman';
     // live ammo: {ammoType: rounds}. Everyone burns real rounds; a dry fighter
     // switches guns, and a fighter with nothing left pulls the knife and charges.
     this.ammoPools = {};
@@ -375,7 +378,7 @@ export class Combatant {
       this.stallT = 0;
     } else if (this.target) {
       this.stallT += dt;
-      if (this.stallT > 8) {
+      if (this.stallT > (this.role === 'support' ? 13 : 8)) {
         this.stallT = 0;
         this.pushT = 3.5 + Math.random() * 1.5;
       }
@@ -430,7 +433,7 @@ export class Combatant {
       const dx = tp.x - this.pos.x, dz = tp.z - this.pos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
       const fx = dx / (dist || 1), fz = dz / (dist || 1);
-      const engage = w.aiRange * (this.boss ? 1.15 : 1);
+      const engage = w.aiRange * (this.boss ? 1.15 : 1) * (this.role === 'support' ? 1.35 : 1);
 
       if (this.strafeTimer <= 0) {
         this.strafeDir *= -1;
@@ -487,7 +490,7 @@ export class Combatant {
       // close-range fighters storm high ground; long-range fighters hold and shoot up
       const targetY = this.target.pos.y;
       const heightGap = targetY - this.pos.y;
-      const pushHigh = heightGap > 0.8 && w.aiRange <= 15;
+      const pushHigh = heightGap > 0.8 && w.aiRange <= 15 && this.role !== 'support';
       this._onVerticalRoute = false;
 
       // opening play: run the assigned lane until contact, arrival, or the whistle
@@ -505,16 +508,32 @@ export class Combatant {
         if (adx * adx + adz * adz < 2.2 * 2.2) this.mendT = 1.6;
       }
 
-      const needTravel = dist > engage || (!sight && !this.peekSide) || pushHigh || this.pushT > 0 || assist;
+      // support doesn't blind-push with the group — it holds angles until the stall-surge says otherwise
+      const blindPush = (!sight && !this.peekSide) && this.role !== 'support';
+      const needTravel = dist > engage || blindPush || pushHigh || this.pushT > 0 || assist;
       if ((needTravel || opening) && this.cautionT > 0 && !assist) {
         // a squadmate just died up ahead — hold and jink instead of feeding the corner
         this._strafing = true;
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
       } else if (needTravel || opening) {
         this._traveling = true;
-        const gx = opening ? this.openingGoal.x : assist ? this.mendTarget.pos.x : tp.x;
-        const gz = opening ? this.openingGoal.z : assist ? this.mendTarget.pos.z : tp.z;
-        const gy = opening ? (this.openingGoal.y || 0) : assist ? this.mendTarget.pos.y : this.target.pos.y;
+        let gx, gz, gy;
+        if (opening) {
+          gx = this.openingGoal.x; gz = this.openingGoal.z; gy = this.openingGoal.y || 0;
+        } else if (assist) {
+          gx = this.mendTarget.pos.x; gz = this.mendTarget.pos.z; gy = this.mendTarget.pos.y;
+        } else if (this.role === 'flanker' && !sight && dist > 9) {
+          // swing wide toward my side instead of piling down the middle
+          gx = Math.max(-20, Math.min(20, tp.x + this.flankSide * 8.5));
+          gz = tp.z + Math.sign(this.pos.z - tp.z) * 3;
+          gy = this.target.pos.y;
+        } else if (this.role === 'shadow' && this.team === 'player' && !sight &&
+                   Math.hypot(world.playerProxy.pos.x - this.pos.x, world.playerProxy.pos.z - this.pos.z) > 8) {
+          // bodyguard: never stray far from the boss while out of contact
+          gx = world.playerProxy.pos.x; gz = world.playerProxy.pos.z; gy = world.playerProxy.pos.y;
+        } else {
+          gx = tp.x; gz = tp.z; gy = this.target.pos.y;
+        }
         this.sprintNow = (opening || dist > 11 || !sight || (w.melee && dist > 3)) && this.legDmg < 0.6;
         // travel through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame

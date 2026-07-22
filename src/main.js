@@ -270,6 +270,7 @@ function startMatch() {
   player.armDmg = career.playerLimbs.arm || 0;
   player.legDmg = career.playerLimbs.leg || 0;
 
+  assignRoles();
   assignOpeningPlays();
 
   match.campAnchor.x = player.pos.x;
@@ -882,6 +883,22 @@ function moveItem(uid, to) {
     return true;
   }
   return false;
+}
+
+// combat roles: rolled per match so squads spread instead of blob-rushing together.
+// Crew always includes a shadow (your bodyguard) and support (overwatch); the rest
+// split pointman/flanker. Enemy archetypes imply their roles.
+function assignRoles() {
+  const shuffle = (a) => a.sort(() => Math.random() - 0.5);
+  const crewRoles = shuffle(['shadow', 'support', 'flanker', 'pointman', 'flanker']);
+  match.crew.forEach((c, i) => { c.role = crewRoles[i % crewRoles.length]; });
+  const enemyRoles = shuffle(['pointman', 'flanker', 'support', 'flanker', 'pointman']);
+  match.enemies.forEach((c, i) => {
+    if (c.archetype === 'rusher' || c.archetype === 'shield') c.role = 'pointman';
+    else if (c.archetype === 'marksman') c.role = 'support';
+    else if (c.archetype === 'medic') c.role = 'support';
+    else c.role = enemyRoles[i % enemyRoles.length];
+  });
 }
 
 // opening plays: a pre-match nudge so squads don't pour down the same lane every bout
