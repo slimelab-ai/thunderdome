@@ -15,8 +15,8 @@ import {
 } from './items.js';
 import { createMarket } from './market.js';
 import {
-  newAttritionState, advanceDraft, runAttritionAI, enemyRoster,
-  attritionOdds, attritionBetOptions, resupplyAttrition,
+  newAttritionState, fundDraftRound, runAttritionAI, enemyRoster,
+  attritionOdds, attritionBetOptions, resupplyAttrition, draftCanCoverDebt,
 } from './attrition.js';
 
 // ============================================================ setup
@@ -103,8 +103,21 @@ function load() {
     if (s) {
       const c = JSON.parse(s);
       if (c && c.rank >= 1 && c.playerCh && c.stash?.items) {
+        if ((c.mode === 'attrition' || c.attrition) && c.attrition?.complete) {
+          localStorage.removeItem(SAVE_KEY);
+          return null;
+        }
         for (const m of c.crew || []) if (m.benched === undefined) m.benched = false;
         c.mode ||= c.attrition ? 'attrition' : 'circuits'; c.attrition ||= null;
+        if (c.attrition?.draft && c.attrition.draft.version !== 2) {
+          const old = c.attrition.draft;
+          c.attrition.draft = {
+            version: 2,
+            fundedRounds: old.complete ? 10 : Math.min(10, Math.floor((old.turn || 0) / 2)),
+            starter: old.starter || 'player', complete: !!old.complete,
+            pendingEnemyShop: false, lastEnvelope: 0,
+          };
+        }
         return c;
       }
     }
@@ -204,6 +217,13 @@ function clearCombatants() {
 }
 
 function startMatch() {
+  if (career.mode === 'attrition' && career.attrition.draft.pendingEnemyShop) {
+    for (let i = 0; i < 8; i++) runAttritionAI(career.attrition, market, {
+      hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
+    });
+    career.attrition.draft.pendingEnemyShop = false;
+    save();
+  }
   clearCombatants();
   match = makeMatch();
   const attrition = career.mode === 'attrition';
@@ -767,17 +787,19 @@ function finishMatch() {
     for (let i = 0; i < 3; i++) runAttritionAI(a, market, {
       hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     });
-    const playerBroke = career.money < 0;
-    const enemyBroke = a.enemyMoney < 0;
-    save();
+    const playerBroke = career.money < 0 && !draftCanCoverDebt(a, career.money);
+    const enemyBroke = a.enemyMoney < 0 && !draftCanCoverDebt(a, a.enemyMoney);
     if (playerBroke || enemyBroke) {
+      a.complete = true;
+      save();
       phase = playerBroke ? 'executed' : 'champion';
       const result = `Attrition ended after <b>${a.round - 1} rounds</b> · you ${a.playerWins}–${a.enemyWins} rival.<br>` +
         `Final bankrolls: <b style="color:var(--gold)">$${career.money}</b> vs <b>$${a.enemyMoney}</b>.`;
-      if (playerBroke) { ui.renderExecuted(result); ui.showScreen('executed'); }
-      else { ui.renderChampion(result); ui.showScreen('champion'); }
+      if (playerBroke) { ui.renderExecuted(result, true); ui.showScreen('executed'); }
+      else { ui.renderChampion(result, true); ui.showScreen('champion'); }
       return;
     }
+    save();
     openShop({ kills: match.kills, headshots: match.headshots, killMoney: 0, hsMoney: 0,
       frenzyMoney: 0, winBonus: 0, betWinnings: match.betWinnings || 0,
       total: match.won ? match.betWinnings || 0 : 0 });
@@ -992,9 +1014,21 @@ function assignOpeningPlays() {
 }
 
 function openShop(earnings = null) {
+  if (career.mode === 'attrition') ensureAttritionRoundFunding();
   phase = 'shop';
   ui.showScreen('shop');
   renderShop(earnings);
+}
+
+function ensureAttritionRoundFunding() {
+  const a = career.attrition;
+  if (!a || a.complete || a.draft.fundedRounds >= Math.min(a.round, 10)) return;
+  career.money = fundDraftRound(a, career.money, () => {
+    for (let i = 0; i < 8; i++) runAttritionAI(a, market, {
+      hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
+    });
+  });
+  save();
 }
 
 function renderShop(earnings) {
@@ -1004,21 +1038,6 @@ function renderShop(earnings) {
     priceMult,
     priceOf: (type) => market.quoteBuy(type, 1, priceMult()),
     marketInfo: (type) => market.info(type),
-    advanceDraft: () => {
-      if (career.mode !== 'attrition' || career.attrition.draft.complete) return;
-      while (!career.attrition.draft.complete && career.attrition.draft.current === 'enemy') {
-        career.money = advanceDraft(career.attrition, career.money, () => {
-          for (let i = 0; i < 8; i++) runAttritionAI(career.attrition, market);
-        });
-      }
-      if (!career.attrition.draft.complete) career.money = advanceDraft(career.attrition, career.money);
-      while (!career.attrition.draft.complete && career.attrition.draft.current === 'enemy') {
-        career.money = advanceDraft(career.attrition, career.money, () => {
-          for (let i = 0; i < 8; i++) runAttritionAI(career.attrition, market);
-        });
-      }
-      save(); renderShop(earnings);
-    },
     buyItem: (type) => {
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
@@ -1241,8 +1260,23 @@ on('btn-fight', () => startMatch());
 on('btn-next-fight', () => showIntro());
 on('btn-retry', () => openShop());
 on('btn-intro-back', () => { career.bet = 0; openShop(); });
-on('btn-newgame', () => { openShop(); }); // champion screen → shop, next circuit already armed
-on('btn-executed-new', () => { career = newCareer(); save(); showIntro(); });
+function returnToMainMenu() {
+  localStorage.removeItem(SAVE_KEY);
+  career = newCareer('circuits');
+  market = createMarket('circuits');
+  document.getElementById('btn-continue').classList.add('hidden');
+  document.getElementById('btn-new').textContent = 'NEW CIRCUITS CAREER';
+  ui.showScreen('menu');
+  phase = 'menu';
+}
+on('btn-newgame', () => {
+  if (career.mode === 'attrition' && career.attrition?.complete) returnToMainMenu();
+  else openShop(); // circuits: next lap is already armed
+});
+on('btn-executed-new', () => {
+  if (career.mode === 'attrition' && career.attrition?.complete) returnToMainMenu();
+  else { career = newCareer(); save(); showIntro(); }
+});
 on('btn-resume', () => {
   phase = 'match';
   ui.showHUDOnly();
