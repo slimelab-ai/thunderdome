@@ -253,10 +253,10 @@ function startMatch() {
   match.enemiesAlive = match.enemies.length;
   world.enemyDmgScale = 0.85 * (hasMut('hard_rounds') ? 1.15 : 1);
 
-  // reset player — loadout straight off the paper doll; the knife rides along always
+  // reset player — loadout straight off the paper doll; the knife lives on [3]
   const pch = career.playerCh;
   const guns = ['gun1', 'gun2'].map(s => pch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
-  player.slots = [...guns, 'knife'];
+  player.slots = guns;
   player.slotIdx = 0;
   player._mountViewmodel();
   player.skills = career.skills;

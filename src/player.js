@@ -31,6 +31,10 @@ export class Player {
     this.character = makeCharacter();  // live ref to career.playerCh: pack = meds/ammo
     this.weightMult = 1;
     this.magBySlot = [];               // mags persist per gun — no free refills on switch
+    this.knifeOut = false;             // knife lives on [3], not the scroll cycle
+    this.swingT = 0;                   // viewmodel slash arc
+    this._lungeT = 0;
+    this._lungeTarget = null;
     this.healing = null;               // {kind, label, t, dur}
     this.throwCd = 0;
     this.skills = { aim: 0, cardio: 0, tough: 0 };
@@ -76,7 +80,10 @@ export class Player {
     this.stats = { kills: 0, headshots: 0, deaths: 0, earned: 0, matchKills: 0, matchHeadshots: 0 };
   }
 
-  get weapon() { return WEAPONS[this.slots[this.slotIdx]]; }
+  get weapon() {
+    if (this.knifeOut || !this.slots.length) return WEAPONS.knife;
+    return WEAPONS[this.slots[this.slotIdx]];
+  }
   get eyeHeight() { return this.crouching ? EYE_CROUCH : EYE_STAND; }
   get heightScale() { return this.crouching ? 0.75 : 1; }
   get speedMult() {
@@ -103,7 +110,7 @@ export class Player {
   }
 
   _mountViewmodel() {
-    const id = this.slots[this.slotIdx];
+    const id = this.weapon.id;
     if (this.currentVM) this.vmRoot.remove(this.currentVM.group);
     if (!this.viewmodels[id]) this.viewmodels[id] = buildViewmodel(id);
     this.currentVM = this.viewmodels[id];
@@ -126,6 +133,8 @@ export class Player {
     this.crouchToggled = false;
     this.lean = 0; this.leanAmount = 0; this.leanToggle = 0; this.mantle = null; this.mantleCooldown = 0;
     this.healing = null; this.throwCd = 0;
+    this.knifeOut = this.slots.length === 0;
+    this.swingT = 0; this._lungeT = 0; this._lungeTarget = null;
   }
 
   healLimbs() { this.armDmg = 0; this.legDmg = 0; }
@@ -164,6 +173,7 @@ export class Player {
     if (code === 'KeyR') this.startReload();
     if (code === 'KeyC') this.crouchToggled = !this.crouchToggled;
     if (code === 'Space') this.spacePressed = true; // edge, consumed by update
+    if (code === 'Digit3') this.drawKnife();
     if (code === 'KeyH') this.startHeal('medkit');
     if (code === 'KeyV') this.startHeal('splint');
     if (code === 'KeyG') this.throwGrenade();
@@ -174,9 +184,9 @@ export class Player {
       this._leanPrev = this.leanToggle;
       this.leanToggle = side;
     }
-    if (code.startsWith('Digit')) {
+    if (code === 'Digit1' || code === 'Digit2') {
       const n = parseInt(code.slice(5)) - 1;
-      if (n >= 0 && n < this.slots.length && n !== this.slotIdx) this.switchTo(n);
+      if (n < this.slots.length && (n !== this.slotIdx || this.knifeOut)) this.switchTo(n);
     }
   }
 
@@ -214,20 +224,34 @@ export class Player {
     this.kick = Math.min(1, this.kick + 0.7);
   }
 
+  // scroll cycles GUNS only; scrolling while the knife is out returns to the last gun
   onWheel(deltaY) {
+    if (!this.slots.length) return;
+    if (this.knifeOut) return this.switchTo(this.slotIdx);
     if (this.slots.length < 2) return;
     const n = (this.slotIdx + (deltaY > 0 ? 1 : -1) + this.slots.length) % this.slots.length;
     this.switchTo(n);
   }
 
   switchTo(n) {
-    this.magBySlot[this.slotIdx] = this.mag; // mags stay as you left them
+    if (!this.knifeOut) this.magBySlot[this.slotIdx] = this.mag; // mags stay as you left them
+    this.knifeOut = false;
     this.slotIdx = n;
     this.mag = this.magBySlot[n] ?? 0;
     this.reloading = 0;
     this.kick = 0.6;
     this._mountViewmodel();
     audio.reload(0);
+  }
+
+  drawKnife() {
+    if (this.knifeOut || !this.alive) return;
+    if (this.slots.length) this.magBySlot[this.slotIdx] = this.mag;
+    this.knifeOut = true;
+    this.reloading = 0;
+    this.kick = 0.8;
+    this._mountViewmodel();
+    audio.slash(0.4);
   }
 
   startReload() {
@@ -304,8 +328,10 @@ export class Player {
     const speed = 4.4 * this.speedMult * (this.sprinting ? 1.55 : 1) * (this.crouching ? 0.55 : 1) * (1 - this.ads * 0.35) * (this.healing ? 0.6 : 1);
 
     const accel = this.onGround ? 22 : 5;
-    this.vel.x += (wx * speed - this.vel.x) * Math.min(1, accel * dt);
-    this.vel.z += (wz * speed - this.vel.z) * Math.min(1, accel * dt);
+    if (this._lungeT <= 0) { // a melee lunge owns the velocity while it lasts
+      this.vel.x += (wx * speed - this.vel.x) * Math.min(1, accel * dt);
+      this.vel.z += (wz * speed - this.vel.z) * Math.min(1, accel * dt);
+    }
 
     // ---- clamber / jump / gravity ----
     this.mantleCooldown -= dt;
@@ -389,6 +415,9 @@ export class Player {
       if (this.stepAcc > 2.6) { this.stepAcc = 0; audio.footstep(); }
       this.bobT += dt * hSpeed * (this.legDmg > 0.3 ? 2.6 : 1.9);
     }
+
+    // ---- melee lunge resolution ----
+    this._resolveLunge(dt);
 
     // ---- healing channel ----
     this.throwCd -= dt;
@@ -496,6 +525,18 @@ export class Player {
     vm.position.x += Math.sin(this.bobT) * 0.008 * (1 - this.ads);
     vm.rotation.x = this.kick * 0.22 + (this.reloading > 0 ? Math.sin((w.reload - this.reloading) / w.reload * Math.PI) * 0.8 : 0);
     vm.rotation.z = this.kick * 0.05;
+    // knife slash: a fast diagonal arc you can actually SEE
+    if (this.swingT > 0) {
+      this.swingT -= dt;
+      const k = Math.sin((1 - Math.max(0, this.swingT) / 0.32) * Math.PI);
+      vm.rotation.x += -k * 1.5;
+      vm.rotation.z += k * 1.1;
+      vm.rotation.y = -k * 0.7;
+      vm.position.x -= k * 0.18;
+      vm.position.y += k * 0.05;
+    } else if (w.melee) {
+      vm.rotation.y = 0;
+    }
 
     // update world proxy — leaning exposes ~70% of the offset to enemy fire
     const pp = this.world.playerProxy;
@@ -532,17 +573,61 @@ export class Player {
     return best;
   }
 
+  // Apex-style melee: acquire a target in a forward cone, lunge to close, connect on arrival
   _slash() {
     const w = this.weapon;
     this.fireCooldown = 60 / w.rpm;
-    const origin = this.camera.position.clone();
-    const dir = new THREE.Vector3();
-    this.camera.getWorldDirection(dir);
+    this.swingT = 0.32;
     audio.slash();
-    this.kick = Math.min(1, this.kick + 0.85);
-    this.recoilPitch -= 0.012; // downward chop
-    const res = fireRay(this.world, this.world.playerShooter, origin, dir, w, 1, w.meleeRange);
-    if (res.type === 'flesh') audio.hitFlesh();
+
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    let best = null, bestScore = -Infinity;
+    for (const c of this.world.combatants) {
+      if (!c.alive || c.team === 'player') continue;
+      const to = c.aimPoint().sub(this.camera.position);
+      const dist = to.length();
+      if (dist > 4.2) continue;
+      to.normalize();
+      const dot = to.dot(fwd);
+      if (dot < 0.45) continue; // ~63° cone
+      const score = dot * 3 - dist * 0.4;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    if (best) {
+      // lunge at them
+      const dx = best.pos.x - this.pos.x, dz = best.pos.z - this.pos.z;
+      const d = Math.hypot(dx, dz) || 1;
+      const lungeSpd = Math.min(11, 4 + d * 3);
+      this.vel.x = (dx / d) * lungeSpd;
+      this.vel.z = (dz / d) * lungeSpd;
+      this._lungeTarget = best;
+      this._lungeT = 0.24;
+    }
+  }
+
+  _resolveLunge(dt) {
+    if (this._lungeT <= 0) return;
+    this._lungeT -= dt;
+    const t = this._lungeTarget;
+    if (!t || !t.alive) { this._lungeT = 0; return; }
+    const dx = t.pos.x - this.pos.x, dz = t.pos.z - this.pos.z;
+    const dist = Math.hypot(dx, dz);
+    // homing dash: re-steer every frame so the damping can't kill it
+    if (dist > 0.5) {
+      this.vel.x = (dx / dist) * 11;
+      this.vel.z = (dz / dist) * 11;
+    }
+    if (dist < 2.2 || this._lungeT <= 0) {
+      if (dist < 3.0) {
+        const dmg = WEAPONS.knife.dmg * (this.world.globalDmgMult || 1);
+        t.applyDamage(this.world, 'torso', dmg, this.world.playerShooter, t.aimPoint());
+        audio.hitFlesh();
+        this.shakeT = Math.max(this.shakeT, 0.12);
+      }
+      this._lungeT = 0;
+      this._lungeTarget = null;
+    }
   }
 
   _fire() {

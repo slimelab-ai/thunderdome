@@ -110,12 +110,13 @@ export class UI {
     this.el.weaponName.textContent = player.weapon.name;
     this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
 
-    // weapon slots
-    const slotsKey = player.slots.join(',') + player.slotIdx;
+    // weapon slots: guns on 1/2, the knife pinned on 3
+    const slotsKey = player.slots.join(',') + player.slotIdx + (player.knifeOut ? 'K' : '');
     if (this.el.weaponSlots._last !== slotsKey) {
       this.el.weaponSlots._last = slotsKey;
       this.el.weaponSlots.innerHTML = player.slots.map((id, i) =>
-        `<span class="wslot ${i === player.slotIdx ? 'active' : ''}">${i + 1}·${WEAPONS[id].name.split(' ')[0]}</span>`).join('');
+        `<span class="wslot ${!player.knifeOut && i === player.slotIdx ? 'active' : ''}">${i + 1}·${WEAPONS[id].name.split(' ')[0]}</span>`).join('') +
+        `<span class="wslot ${player.knifeOut ? 'active' : ''}">3·SHANK</span>`;
     }
 
     this.el.rank.textContent = career.rank;

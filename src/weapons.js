@@ -116,12 +116,22 @@ export function buildViewmodel(id) {
     g.add(box(0.045, 0.08, 0.22, M.wood, 0, 0.0, 0.24));           // stock
     muzzle.position.set(0, 0.045, -0.48);
   } else if (id === 'knife') {
-    const blade = box(0.012, 0.035, 0.24, M.metal, 0, 0.02, -0.14);
-    blade.rotation.x = -0.06;
+    // big bright blade, edge-forward, angled across the view — unmistakably a knife
+    const bladeMat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, emissive: 0x14161a });
+    const blade = box(0.016, 0.07, 0.34, bladeMat, 0, 0.05, -0.2);
+    blade.rotation.z = 0.5;
     g.add(blade);
-    g.add(box(0.02, 0.05, 0.03, M.accent, 0, 0.01, -0.02));   // guard
-    g.add(box(0.028, 0.045, 0.1, M.grip, 0, -0.005, 0.04));   // handle
-    muzzle.position.set(0, 0.02, -0.26);
+    const tip = box(0.016, 0.045, 0.09, bladeMat, 0.012, 0.075, -0.39);
+    tip.rotation.z = 0.5;
+    tip.rotation.y = 0.18;
+    g.add(tip);
+    const guard = box(0.09, 0.028, 0.035, M.accent, 0, 0.005, -0.02);
+    guard.rotation.z = 0.5;
+    g.add(guard);
+    const handle = box(0.036, 0.05, 0.14, M.grip, -0.012, -0.025, 0.05);
+    handle.rotation.z = 0.5;
+    g.add(handle);
+    muzzle.position.set(0, 0.06, -0.42);
   } else if (id === 'dmr') {
     g.add(box(0.05, 0.08, 0.4, M.metal, 0, 0.03, -0.06));
     g.add(cyl(0.012, 0.4, M.metalDark, 0, 0.05, -0.45));
