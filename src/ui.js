@@ -260,13 +260,13 @@ export class UI {
       return `<div class="armor-slot-label">${def.label} — <span class="dim">${def.tiers[cur].name}</span></div>` +
         def.tiers.map((t, i) => {
           if (i === 0) return '';
-          const owned = cur >= i;
-          const canBuy = cur === i - 1 && career.money >= t.price;
+          const worn = cur === i;
+          const canBuy = !worn && career.money >= t.price;
           const stashN = career.stash.armor[slot][i] || 0;
-          return `<div class="shop-item ${owned ? 'owned' : ''}">
+          return `<div class="shop-item ${worn ? 'owned' : ''}">
             <div class="si-info"><div class="si-name">${t.name}${stashN ? ` <span class="dim">· stash ×${stashN}</span>` : ''}</div><div class="si-desc">${t.desc}</div></div>
             <div class="roster-btns">
-            ${owned ? '<span class="si-owned">WORN</span>'
+            ${worn ? '<span class="si-owned">WORN</span>'
               : `<button class="btn" data-buy-armor="${slot}:${i}" ${canBuy ? '' : 'disabled'}>$${t.price}</button>`}
             <button class="btn" data-stash-armor="${slot}:${i}" ${career.money >= t.price ? '' : 'disabled'} title="buy a copy for the crew stash">+CREW</button>
             </div>
@@ -303,7 +303,7 @@ export class UI {
     $('shop-medical').innerHTML = `<div class="shop-item">
       <div class="si-info"><div class="si-name">YOU ${limbFlags(career.playerLimbs)}</div>
       <div class="si-desc">${hpBar(playerHp, playerMax)}</div></div>
-      ${pCost > 0 ? `<button class="btn" data-patch="player" ${career.money >= pCost ? '' : 'disabled'}>PATCH $${pCost}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
+      ${pCost > 0 ? `<button class="btn" data-patch="player" ${career.money > 0 ? '' : 'disabled'}>PATCH $${Math.min(pCost, career.money)}${career.money < pCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
     </div>`;
 
     // ---- roster: permanent hires with a real kit editor ----
@@ -360,7 +360,7 @@ export class UI {
           <div class="roster-btns roster-btns-col">
             <div>
               <button class="btn" data-kit="${i}">${this.kitOpen === i ? 'KIT ▴' : 'KIT ▾'}</button>
-              ${cost > 0 ? `<button class="btn" data-patch="${i}" ${career.money >= cost ? '' : 'disabled'}>🏥 $${cost}</button>` : ''}
+              ${cost > 0 ? `<button class="btn" data-patch="${i}" ${career.money > 0 ? '' : 'disabled'}>🏥 $${Math.min(cost, career.money)}${career.money < cost ? ' ⚠' : ''}</button>` : ''}
             </div>
             <div>
               ${next ? `<button class="btn" data-upgrade="${i}" ${career.money >= upCost ? '' : 'disabled'}>⬆ $${upCost}</button>` : ''}

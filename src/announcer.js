@@ -146,6 +146,12 @@ export const LINES = {
     "It's raining cocktails, folks! The FLAMMABLE kind!",
     "Fire on the floor! Marshmallows available at concessions!",
   ],
+  teamkill: [
+    "THE CHALLENGER SHOT HIS OWN MAN! The bookies are LOSING it!",
+    "Friendly fire! {victim} would like a word. From the floor!",
+    "Oh no. Oh no no no. That was YOUR GUY, genius!",
+    "Somebody explain trigger discipline to our challenger! {victim} paid the tuition!",
+  ],
   nade: [
     "FRAG OUT! Somebody's about to have a very loud problem!",
     "Live grenade on the floor, folks! Place your bets on the shrapnel!",

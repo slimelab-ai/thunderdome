@@ -475,6 +475,7 @@ export class Player {
     const w = this.weapon;
     this.mag--;
     this.fireCooldown = 60 / w.rpm;
+    this.world.playerFiredAt = performance.now() / 1000; // crew hears this and clears the lane
     const spread = this.currentSpread();
 
     const origin = this.camera.position.clone();

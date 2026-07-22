@@ -514,19 +514,28 @@ export class Combatant {
       this.yaw += Math.sin(performance.now() * 0.0005 + this.animPhase) * dt * 0.5;
     }
 
-    // ---- stay out of the boss's line of fire ---- (crew only)
+    // ---- clear the boss's line of fire ---- (crew only, and only when he's SHOOTING)
+    // They react to gunfire like people: a beat late, imperfectly. Your gaze moves no one,
+    // and a merc crossing you mid-burst can absolutely eat a round — that one's on you.
     if (this.team === 'player' && world.playerProxy.alive && world.playerAim) {
-      const pp = world.playerProxy;
-      const rx = this.pos.x - pp.pos.x, rz = this.pos.z - pp.pos.z;
-      const along = rx * world.playerAim.x + rz * world.playerAim.z;
-      if (along > 0.3 && along < 15) {
-        // perpendicular offset from the aim line
-        const px = rx - world.playerAim.x * along, pz = rz - world.playerAim.z * along;
-        const pd = Math.hypot(px, pz);
-        if (pd < 1.9) {
-          const strength = (1.9 - pd) * 3.2;
-          if (pd > 0.05) { move.x += (px / pd) * strength; move.z += (pz / pd) * strength; }
-          else { move.x += -world.playerAim.z * strength; move.z += world.playerAim.x * strength; }
+      const now = performance.now() / 1000;
+      const firing = world.playerFiredAt && now - world.playerFiredAt < 1.2;
+      if (firing) {
+        if (now - (this._ffSeen || -99) > 1.6) this._ffNotice = now + 0.15 + Math.random() * 0.35; // fresh burst → reaction time
+        this._ffSeen = now;
+        if (now >= this._ffNotice) {
+          const pp = world.playerProxy;
+          const rx = this.pos.x - pp.pos.x, rz = this.pos.z - pp.pos.z;
+          const along = rx * world.playerAim.x + rz * world.playerAim.z;
+          if (along > 0.3 && along < 12) {
+            const px = rx - world.playerAim.x * along, pz = rz - world.playerAim.z * along;
+            const pd = Math.hypot(px, pz);
+            if (pd < 1.1) {
+              const strength = (1.1 - pd) * 1.7;
+              if (pd > 0.05) { move.x += (px / pd) * strength; move.z += (pz / pd) * strength; }
+              else { move.x += -world.playerAim.z * strength; move.z += world.playerAim.x * strength; }
+            }
+          }
         }
       }
     }

@@ -79,7 +79,9 @@ export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1) {
   const hits = _raycaster.intersectObjects(world.hitMeshes, false);
   for (const h of hits) {
     const c = h.object.userData.combatant;
-    if (!c || !c.alive || c.team === shooter.team) continue;
+    if (!c || !c.alive) continue;
+    // AI never bullet-teamkills; the PLAYER's rounds hit whoever is in the lane
+    if (c.team === shooter.team && !shooter.isPlayer) continue;
     fleshHit = { combatant: c, part: h.object.userData.part, point: h.point, dist: h.distance };
     break;
   }

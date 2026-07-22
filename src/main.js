@@ -307,7 +307,8 @@ function handleKill(killer, victim, part) {
   } else {
     // crew member went down — they're bruised, not buried; gear stays theirs
     if (victim.careerRef) career.totals.crewLost++;
-    announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
+    if (killer && killer.isPlayer) announcer.say('teamkill', { victim: victim.name }, { force: true });
+    else announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
   }
 }
 
@@ -744,7 +745,8 @@ function renderShop(earnings) {
     },
     buyArmor: (slot, tier) => {
       const t = ARMOR_SLOTS[slot]?.tiers[tier];
-      if (t && career.money >= t.price && career.armor[slot] === tier - 1) {
+      // any tier, straight off the rack — no ladder-climbing through gear you don't want
+      if (t && career.money >= t.price && career.armor[slot] !== tier) {
         career.money -= t.price;
         career.armor[slot] = tier;
         audio.cashRegister(); save(); renderShop(earnings);
@@ -806,22 +808,41 @@ function renderShop(earnings) {
     },
     patchPlayer: () => {
       const cost = playerPatchCost();
-      if (cost > 0 && career.money >= cost) {
-        career.money -= cost;
+      const pay = Math.min(cost, career.money);
+      if (cost <= 0 || pay <= 0) return;
+      career.money -= pay;
+      const f = pay / cost;
+      if (f >= 0.999) {
         career.playerHp = null;
         career.playerLimbs = { arm: 0, leg: 0 };
-        audio.cashRegister(); save(); renderShop(earnings);
+      } else {
+        // broke? the doc does what the money covers
+        const max = 100 + career.skills.tough * 25;
+        const cur = career.playerHp == null ? max : career.playerHp;
+        career.playerHp = Math.min(max, Math.round(cur + (max - cur) * f));
+        career.playerLimbs.arm = +(career.playerLimbs.arm * (1 - f)).toFixed(2);
+        career.playerLimbs.leg = +(career.playerLimbs.leg * (1 - f)).toFixed(2);
       }
+      audio.cashRegister(); save(); renderShop(earnings);
     },
     patchCrew: (idx) => {
       const m = career.crew[idx];
       const cost = crewPatchCost(m);
-      if (m && cost > 0 && career.money >= cost) {
-        career.money -= cost;
+      const pay = Math.min(cost, career.money);
+      if (!m || cost <= 0 || pay <= 0) return;
+      career.money -= pay;
+      const f = pay / cost;
+      if (f >= 0.999) {
         m.hp = null;
         m.limbs = { arm: 0, leg: 0 };
-        audio.cashRegister(); save(); renderShop(earnings);
+      } else {
+        const max = CREW_TIERS[m.tier].hp;
+        const cur = m.hp == null ? max : m.hp;
+        m.hp = Math.min(max, Math.round(cur + (max - cur) * f));
+        m.limbs.arm = +((m.limbs.arm || 0) * (1 - f)).toFixed(2);
+        m.limbs.leg = +((m.limbs.leg || 0) * (1 - f)).toFixed(2);
       }
+      audio.cashRegister(); save(); renderShop(earnings);
     },
     sellCrew: (idx) => {
       const m = career.crew[idx];
