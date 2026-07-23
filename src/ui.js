@@ -55,7 +55,6 @@ export class UI {
     this._eventTimer = null;
     this.selChar = 'player';
     this.hireOpen = false;
-    this.shopView = 'market';
     this.controllerCarry = null;
     document.addEventListener('controllercancel', () => this._cancelControllerCarry());
     let resizeTimer;
@@ -240,28 +239,6 @@ export class UI {
       ? (actions.draftShopState?.() || { mustEndTurn: false, locked: false })
       : { mustEndTurn: false, locked: false };
     $('screen-shop').classList.toggle('turn-locked', draftTurn.locked);
-    const applyShopView = () => {
-      document.querySelectorAll('[data-shop-panel]').forEach(panel => {
-        panel.classList.toggle('shop-panel-active', panel.getAttribute('data-shop-panel') === this.shopView);
-      });
-      document.querySelectorAll('[data-shop-view]').forEach(tab => {
-        const active = tab.getAttribute('data-shop-view') === this.shopView;
-        tab.classList.toggle('shop-mobile-tab-active', active);
-        tab.setAttribute('aria-selected', String(active));
-      });
-    };
-    document.querySelectorAll('[data-shop-view]').forEach(tab => {
-      tab.onclick = () => {
-        audio.uiClick();
-        this.shopView = tab.getAttribute('data-shop-view');
-        applyShopView();
-        const tabs = $('shop-mobile-tabs');
-        if (getComputedStyle(tabs).display !== 'none') {
-          $('screen-shop').querySelector('.shop-inner').scrollTo({ top: tabs.offsetTop, behavior: 'auto' });
-        }
-      };
-    });
-    applyShopView();
     $('shop-sub').textContent = liquidation
       ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
       : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
@@ -371,8 +348,11 @@ export class UI {
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
-    const CELL = window.innerWidth <= 820
-      ? Math.max(28, Math.min(38, Math.floor((window.innerWidth - 32) / 10)))
+    const compactLandscape = window.innerWidth <= 1050 && window.innerWidth > window.innerHeight;
+    const CELL = compactLandscape
+      ? Math.max(22, Math.min(32, Math.floor(((window.innerWidth - 48) * 0.29) / 10)))
+      : window.innerWidth <= 820
+        ? Math.max(28, Math.min(38, Math.floor((window.innerWidth - 32) / 10)))
       : window.innerWidth < 1450 ? 38 : 42;
     const stashRows = gridRows(career.stash);
     const gridHtml = (grid, dropName, who) => {

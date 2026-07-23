@@ -1,5 +1,25 @@
 const FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item]';
 const CARRY_TARGETS = '[data-controller-target]';
+const IDENTITY_ATTRIBUTES = [
+  'data-char', 'data-buy-item', 'data-buy-to', 'data-hire-menu', 'data-patch',
+  'data-bench', 'data-train', 'data-sell-crew', 'data-hire',
+];
+
+export function controlIdentity(el) {
+  if (!el) return null;
+  if (el.id) return `id:${el.id}`;
+  if (el.hasAttribute?.('data-item')) return `data-item:${el.getAttribute('data-item')}`;
+  if (el.hasAttribute?.('data-controller-target')) {
+    return [
+      'target', el.getAttribute('data-controller-target'),
+      el.getAttribute('data-who') || '', el.getAttribute('data-slot') || '',
+    ].join(':');
+  }
+  for (const attribute of IDENTITY_ATTRIBUTES) {
+    if (el.hasAttribute?.(attribute)) return `${attribute}:${el.getAttribute(attribute)}`;
+  }
+  return null;
+}
 
 function center(rect) {
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -32,6 +52,9 @@ export class MenuNavigator {
   constructor(doc = document) {
     this.doc = doc;
     this.current = null;
+    this.lastIdentity = null;
+    this.lastCenter = null;
+    this.lastScreen = null;
     const leaveControllerMode = () => {
       doc.body.classList.remove('controller-mode');
       this._updateHint();
@@ -39,6 +62,9 @@ export class MenuNavigator {
     doc.addEventListener('pointerdown', leaveControllerMode, { passive: true });
     doc.addEventListener('screenchange', () => {
       this.current = null;
+      this.lastIdentity = null;
+      this.lastCenter = null;
+      this.lastScreen = null;
       this._updateHint();
     });
     doc.addEventListener('controllercarrychange', () => this._updateHint());
@@ -59,14 +85,21 @@ export class MenuNavigator {
     if (!items.length) return false;
     let index = items.indexOf(this.current);
     if (index < 0) index = items.indexOf(this.doc.activeElement);
+    if (index < 0 && this.lastScreen === root.id) {
+      const recovered = this._recover(items);
+      if (recovered) {
+        this._focus(recovered, root);
+        index = items.indexOf(recovered);
+      }
+    }
     if (index < 0) {
-      this._focus(items[0]);
+      this._focus(items[0], root);
       index = 0;
       if (action !== 'activate') return true;
     }
 
     if (action === 'activate') {
-      items[index].click();
+      this._activate(items[index], root);
       this._updateHint();
       return true;
     }
@@ -91,14 +124,14 @@ export class MenuNavigator {
         const selected = Math.max(0, tabs.findIndex(el => el.classList.contains('shop-mobile-tab-active')));
         tabs[(selected + (action === 'nextTab' ? 1 : tabs.length - 1)) % tabs.length].click();
         this.current = null;
-        this._focus(this._items(root)[0]);
+        this._focus(this._items(root)[0], root);
         return true;
       }
       action = action === 'nextTab' ? 'right' : 'left';
     }
 
     const next = directionalCandidate(items.map(el => el.getBoundingClientRect()), index, action);
-    if (next >= 0) this._focus(items[next]);
+    if (next >= 0) this._focus(items[next], root);
     this._updateHint();
     return next >= 0;
   }
@@ -118,8 +151,45 @@ export class MenuNavigator {
     return rect.width > 1 && rect.height > 1;
   }
 
-  _focus(el) {
+  _activate(el, root) {
+    const identity = controlIdentity(el);
+    const rect = el.getBoundingClientRect();
+    const position = center(rect);
+    const screenId = root.id;
+    el.click();
+    const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
+    if (!nextRoot || nextRoot.id !== screenId) return;
+    const items = this._items(nextRoot);
+    const exact = identity && items.find(item => controlIdentity(item) === identity);
+    const fallback = exact || this._nearest(items, position);
+    if (fallback) this._focus(fallback, nextRoot);
+  }
+
+  _recover(items) {
+    const exact = this.lastIdentity && items.find(item => controlIdentity(item) === this.lastIdentity);
+    return exact || this._nearest(items, this.lastCenter);
+  }
+
+  _nearest(items, position) {
+    if (!position || !items.length) return null;
+    let nearest = null;
+    let nearestDistance = Infinity;
+    for (const item of items) {
+      const point = center(item.getBoundingClientRect());
+      const distance = Math.hypot(point.x - position.x, point.y - position.y);
+      if (distance < nearestDistance) {
+        nearest = item;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
+  }
+
+  _focus(el, root = this.doc.querySelector('.screen:not(.hidden)')) {
     this.current = el;
+    this.lastIdentity = controlIdentity(el);
+    this.lastCenter = center(el.getBoundingClientRect());
+    this.lastScreen = root?.id || null;
     el.focus({ preventScroll: true });
     el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
   }
@@ -132,9 +202,9 @@ export class MenuNavigator {
     hint.classList.toggle('hidden', !show);
     const adjusting = this.doc.activeElement?.matches?.('input[type="range"]');
     hint.textContent = this.doc.body.classList.contains('controller-carrying')
-      ? 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB CHANGE MARKET TAB'
+      ? 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB JUMP COLUMN'
       : adjusting
         ? 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  B BACK'
-      : 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB CHANGE TAB';
+      : 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
   }
 }
