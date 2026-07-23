@@ -48,6 +48,19 @@ export function directionalCandidate(rects, currentIndex, direction) {
   return best;
 }
 
+export function controllerHint(screenId, { carrying = false, adjusting = false } = {}) {
+  if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB JUMP COLUMN';
+  if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  B BACK';
+  if (screenId === 'screen-shop') {
+    return 'X END TURN / NEXT FIGHT  ·  Y PATCH  ·  LB / RB SQUAD  ·  A SELECT  ·  STICK / D-PAD MOVE';
+  }
+  if (screenId === 'screen-intro') {
+    return 'X START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  STICK / D-PAD MOVE';
+  }
+  if (screenId === 'screen-menu') return 'STICK / D-PAD MOVE  ·  A SELECT';
+  return 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
+}
+
 export class MenuNavigator {
   constructor(doc = document) {
     this.doc = doc;
@@ -81,6 +94,28 @@ export class MenuNavigator {
       return true;
     }
 
+    const carrying = this.doc.body.classList.contains('controller-carrying');
+    if (!carrying && action === 'back') {
+      const handled = this._back(root);
+      this._updateHint();
+      return handled;
+    }
+    if (!carrying && action === 'advance') {
+      const handled = this._advance(root);
+      this._updateHint();
+      return handled;
+    }
+    if (!carrying && action === 'patch') {
+      const handled = this._patch(root);
+      this._updateHint();
+      return handled;
+    }
+    if (!carrying && root.id === 'screen-shop' && (action === 'previousTab' || action === 'nextTab')) {
+      const handled = this._cycleSquad(root, action === 'nextTab' ? 1 : -1);
+      this._updateHint();
+      return handled;
+    }
+
     const items = this._items(root);
     if (!items.length) return false;
     let index = items.indexOf(this.current);
@@ -110,14 +145,6 @@ export class MenuNavigator {
       this._updateHint();
       return true;
     }
-    if (action === 'back') {
-      const back = root.querySelector('#btn-intro-back, #btn-resume');
-      if (back && !back.disabled) {
-        back.click();
-        return true;
-      }
-      return false;
-    }
     if (action === 'previousTab' || action === 'nextTab') {
       const tabs = [...root.querySelectorAll('[data-shop-view]')].filter(el => this._visible(el));
       if (tabs.length) {
@@ -134,6 +161,49 @@ export class MenuNavigator {
     if (next >= 0) this._focus(items[next], root);
     this._updateHint();
     return next >= 0;
+  }
+
+  _back(root) {
+    const target = root.querySelector('#btn-intro-back, #btn-resume');
+    if (!target || !this._visible(target)) return false;
+    this._activate(target, root);
+    return true;
+  }
+
+  _advance(root) {
+    const selector = root.id === 'screen-shop'
+      ? '#btn-end-turn, #btn-next-fight'
+      : root.id === 'screen-intro' ? '#btn-fight' : null;
+    if (!selector) return false;
+    const target = [...root.querySelectorAll(selector)].find(el => this._visible(el));
+    if (!target) return false;
+    this._activate(target, root);
+    return true;
+  }
+
+  _patch(root) {
+    if (root.id !== 'screen-shop') return false;
+    const target = [...root.querySelectorAll('[data-patch]')].find(el => this._visible(el));
+    if (!target) return false;
+    this._activate(target, root);
+    return true;
+  }
+
+  _cycleSquad(root, direction) {
+    const tabs = [...root.querySelectorAll('[data-char]')].filter(el => this._visible(el));
+    if (!tabs.length) return false;
+    const selected = tabs.findIndex(el => el.classList.contains('char-tab-sel'));
+    const current = selected >= 0 ? selected : 0;
+    const target = tabs[(current + direction + tabs.length) % tabs.length];
+    const identity = controlIdentity(target);
+    target.click();
+    const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
+    if (!nextRoot || nextRoot.id !== root.id) return true;
+    const replacement = [...nextRoot.querySelectorAll('[data-char]')]
+      .filter(el => this._visible(el))
+      .find(el => controlIdentity(el) === identity);
+    if (replacement) this._focus(replacement, nextRoot);
+    return true;
   }
 
   _items(root) {
@@ -200,11 +270,11 @@ export class MenuNavigator {
     const activeScreen = this.doc.querySelector('.screen:not(.hidden)');
     const show = this.doc.body.classList.contains('controller-mode') && !!activeScreen;
     hint.classList.toggle('hidden', !show);
+    hint.dataset.screen = activeScreen?.id || '';
     const adjusting = this.doc.activeElement?.matches?.('input[type="range"]');
-    hint.textContent = this.doc.body.classList.contains('controller-carrying')
-      ? 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB JUMP COLUMN'
-      : adjusting
-        ? 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  B BACK'
-      : 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
+    hint.textContent = controllerHint(activeScreen?.id, {
+      carrying: this.doc.body.classList.contains('controller-carrying'),
+      adjusting,
+    });
   }
 }

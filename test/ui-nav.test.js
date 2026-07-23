@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { controlIdentity, directionalCandidate, MenuNavigator } from '../src/ui-nav.js';
+import { controlIdentity, controllerHint, directionalCandidate, MenuNavigator } from '../src/ui-nav.js';
 
 const rect = (left, top, width = 80, height = 40) => ({ left, top, width, height });
 
@@ -23,6 +23,90 @@ test('directional UI navigation reports no candidate beyond an edge', () => {
   assert.equal(directionalCandidate(controls, 0, 'left'), -1);
   assert.equal(directionalCandidate(controls, 1, 'right'), -1);
   assert.equal(directionalCandidate([], -1, 'down'), -1);
+});
+
+test('controller hints advertise context-sensitive market shortcuts', () => {
+  const shop = controllerHint('screen-shop');
+  assert.match(shop, /X END TURN \/ NEXT FIGHT/);
+  assert.match(shop, /Y PATCH/);
+  assert.match(shop, /LB \/ RB SQUAD/);
+  assert.match(controllerHint('screen-intro'), /X START FIGHT/);
+  assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);
+  assert.match(controllerHint('screen-shop', { carrying: true }), /B CANCEL/);
+  assert.doesNotMatch(controllerHint('screen-menu'), /B BACK/);
+});
+
+test('market shortcuts advance, patch, and cycle the selected squad member', () => {
+  const calls = [];
+  const control = (id, attributes = {}, selected = false) => ({
+    id,
+    classList: { contains: (name) => name === 'char-tab-sel' && selected },
+    getAttribute: (name) => attributes[name] ?? null,
+    hasAttribute: (name) => Object.hasOwn(attributes, name),
+    click: () => calls.push(id || attributes['data-char'] || `patch:${attributes['data-patch']}`),
+  });
+  const endTurn = control('btn-end-turn');
+  const nextFight = control('btn-next-fight');
+  const patch = control('', { 'data-patch': 'player' });
+  const playerTab = control('', { 'data-char': 'player' }, true);
+  const crewTab = control('', { 'data-char': '0' });
+  let advance = [endTurn, nextFight];
+  const root = {
+    id: 'screen-shop',
+    querySelectorAll(selector) {
+      if (selector === '#btn-end-turn, #btn-next-fight') return advance;
+      if (selector === '[data-patch]') return [patch];
+      if (selector === '[data-char]') return [playerTab, crewTab];
+      return [];
+    },
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = { querySelector: () => root };
+  navigator._visible = (el) => el !== nextFight || advance.length === 1;
+  navigator._activate = (el) => el.click();
+  navigator._focus = (el) => calls.push(`focus:${el.getAttribute('data-char')}`);
+
+  assert.equal(navigator._advance(root), true);
+  advance = [nextFight];
+  assert.equal(navigator._advance(root), true);
+  assert.equal(navigator._patch(root), true);
+  assert.equal(navigator._cycleSquad(root, 1), true);
+  assert.deepEqual(calls, [
+    'btn-end-turn', 'btn-next-fight', 'patch:player', '0', 'focus:0',
+  ]);
+});
+
+test('back shortcut immediately returns from the fight intro without requiring focus first', () => {
+  let clicks = 0;
+  const back = {
+    id: 'btn-intro-back',
+    disabled: false,
+    closest: () => null,
+    getBoundingClientRect: () => rect(100, 100),
+    click: () => { clicks++; },
+  };
+  const root = {
+    id: 'screen-intro',
+    querySelector: () => back,
+    querySelectorAll: () => [],
+  };
+  const classes = new Set();
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    body: {
+      classList: {
+        add: (...names) => names.forEach(name => classes.add(name)),
+        contains: (name) => classes.has(name),
+      },
+    },
+    querySelector: () => root,
+    getElementById: () => null,
+  };
+  navigator._visible = () => true;
+  navigator._activate = (el) => el.click();
+
+  assert.equal(navigator.handle('back'), true);
+  assert.equal(clicks, 1);
 });
 
 test('dynamic shop controls retain stable semantic focus identities', () => {

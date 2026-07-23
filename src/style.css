@@ -220,6 +220,9 @@ html, body {
   font-size: 10px; font-weight: 900; letter-spacing: 1.2px; text-align: center;
   pointer-events: none;
 }
+#controller-hint[data-screen="screen-shop"] {
+  bottom: max(58px, calc(env(safe-area-inset-bottom) + 58px));
+}
 .controller-held-item {
   border-color: var(--acid) !important;
   box-shadow: inset 0 0 0 2px var(--acid), 0 0 18px rgba(134,255,60,0.5) !important;
