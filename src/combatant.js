@@ -43,6 +43,10 @@ export class Combatant {
     this.armorParts = opts.armorParts || { head: 0, body: opts.armor || 0, limbs: 0 };
     this.boss = !!opts.boss;
     this.archetype = opts.archetype || null; // 'medic' | 'shield' | 'rusher' | 'marksman'
+    this.damageMult = opts.damageMult || 1;
+    this.damageTakenMult = opts.damageTakenMult || 1;
+    this.healingMult = opts.healingMult || 1;
+    this.medicCooldownMult = opts.medicCooldownMult || 1;
     this.scale = opts.scale || (0.95 + Math.random() * 0.09); // natural height variety
     this.mendCd = 4;
     this.mendT = 0;
@@ -269,8 +273,11 @@ export class Combatant {
     if (part === 'torso') dmg *= (1 - this.armorParts.body);
     else if (part === 'head') dmg *= (1 - this.armorParts.head);
     else dmg *= (1 - this.armorParts.limbs);
+    dmg *= this.damageTakenMult;
     if (this.boss && part === 'head') dmg *= 0.55; // gold mask
+    const hpBefore = this.hp;
     this.hp -= dmg;
+    world.onDamage?.(shooter, this, Math.min(hpBefore, Math.max(0, dmg)));
 
     if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + 0.4);
     if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + 0.4);
@@ -359,9 +366,11 @@ export class Combatant {
         this.mendT -= dt;
         if (this.mendT <= 0 && this.mendTarget?.alive) {
           const t = this.mendTarget;
-          t.hp = Math.min(t.maxHp, t.hp + t.maxHp * 0.4);
+          const hpBefore = t.hp;
+          t.hp = Math.min(t.maxHp, t.hp + t.maxHp * 0.4 * this.healingMult);
           t.armDmg = 0; t.legDmg = 0;
-          this.mendCd = 9;
+          world.onSupport?.(this, Math.max(0, t.hp - hpBefore));
+          this.mendCd = 9 * this.medicCooldownMult;
           this.mendTarget = null;
         }
       } else if (this.mendCd <= 0 && this.sinceHit > 1.5 && (!this.mendTarget || !this.mendTarget.alive)) {
@@ -632,7 +641,7 @@ export class Combatant {
 
       if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && dist < w.meleeRange) {
         // slash
-        const mdmg = w.dmg * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
+        const mdmg = w.dmg * this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
         if (this.target.isPlayer) world.onPlayerDamaged(mdmg, Math.random() < 0.2 ? 'armL' : 'torso', this.pos);
         else this.target.applyDamage(world, 'torso', mdmg, this, this.target.aimPoint());
         audio.slash(1.2 / (1 + eye.distanceTo(world.cameraPos) * 0.09));
@@ -648,7 +657,8 @@ export class Combatant {
         const pellets = w.pellets;
         for (let i = 0; i < pellets; i++) {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
-          const res = fireRay(world, this, fireEye, sdir, w, this.team === 'enemy' ? world.enemyDmgScale : 1);
+          const res = fireRay(world, this, fireEye, sdir, w,
+            this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
           world.fx.tracer(fireEye.clone().addScaledVector(sdir, 0.6), res.point);
           if (res.type === 'wall') { world.fx.sparks(res.point); if (Math.random() < 0.3) audio.ricochet(); }
         }

@@ -3,6 +3,9 @@ import { audio } from './audio.js';
 import {
   ITEM_TYPES, AMMO_TYPES, countInPack, characterWeight, weightSpeedMult, gridRows,
 } from './items.js';
+import {
+  PLAYER_TYPE, HIRE_TYPES, trainingTrees, trainingCost, combatProfile,
+} from './progression.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,21 +22,6 @@ function iconStyle(icon) {
   return `background-image:url(/assets/icons/items_sheet.png);background-size:600% 400%;` +
     `background-position:${(col / 5) * 100}% ${(row / 3) * 100}%;`;
 }
-
-// Recruits are PERMANENT: they come with nothing but a pistol and their base stats.
-// You arm and armor them from the stash; when they go down mid-match they're back
-// (bruised, free of charge) for the next bout with everything you gave them.
-export const CREW_TIERS = {
-  rookie: { name: 'Rookie', price: 400, hp: 85, spreadMult: 1.7, reaction: 0.75, speedMult: 1, desc: 'Some kid with a pistol and a dream. Cheap to sign, slow to aim.' },
-  veteran: { name: 'Veteran', price: 1000, hp: 110, spreadMult: 1.15, reaction: 0.5, speedMult: 1.05, desc: 'Ex-military. Steady hands, moderate trauma. Bring your own gun.' },
-  elite: { name: 'Elite', price: 2000, hp: 140, spreadMult: 0.85, reaction: 0.35, speedMult: 1.1, desc: 'Cartel-trained killer. Give this one the good rifle.' },
-};
-
-export const TRAINING = {
-  aim: { name: 'MARKSMANSHIP', max: 2, prices: [700, 1500], desc: 'Tighter spread, tamer recoil.' },
-  cardio: { name: 'CARDIO', max: 2, prices: [600, 1300], desc: 'Move faster, snap to sights quicker.' },
-  tough: { name: 'PAIN TOLERANCE', max: 2, prices: [800, 1700], desc: '+25 max HP per level.' },
-};
 
 const MUT_NAMES = {
   blood_money: 'RICH CROWD', dim: 'BROWNOUT', pricey_docs: 'MEDICAL RACKET',
@@ -55,6 +43,7 @@ export class UI {
       damageFlash: $('damage-flash'), lowhp: $('lowhp-overlay'),
       eventBanner: $('event-banner'), eventTitle: $('event-title'), eventSub: $('event-sub'),
       objective: $('objective-line'), interact: $('interact-hint'),
+      spectator: $('spectator-banner'), spectatorName: $('spectator-name'), spectatorCount: $('spectator-count'),
       consRow: $('consumables'), channelWrap: $('channel-wrap'), channelFill: $('channel-fill'), channelLabel: $('channel-label'),
       bp: { head: $('bp-head'), torso: $('bp-torso'), armL: $('bp-armL'), armR: $('bp-armR'), legL: $('bp-legL'), legR: $('bp-legR') },
     };
@@ -71,8 +60,19 @@ export class UI {
   showScreen(name) {
     for (const [k, s] of Object.entries(this.screens)) s.classList.toggle('hidden', k !== name);
     this.el.hud.classList.toggle('hidden', !(name === null));
+    if (name !== null) this.hideSpectator();
   }
   showHUDOnly() { this.showScreen(null); }
+  showSpectator(name, index, total) {
+    this.el.hud.classList.add('spectating');
+    this.el.spectator.classList.remove('hidden');
+    this.el.spectatorName.textContent = name;
+    this.el.spectatorCount.textContent = `${index + 1}/${total}`;
+  }
+  hideSpectator() {
+    this.el.hud.classList.remove('spectating');
+    this.el.spectator.classList.add('hidden');
+  }
 
   // ---------- HUD ----------
   updateHUD(player, career, match) {
@@ -237,6 +237,7 @@ export class UI {
         `<span>🏆 win purse → <b>$${earnings.winBonus}</b></span>` +
         (earnings.frenzyMoney ? `<span>💰 frenzy → <b>$${earnings.frenzyMoney}</b></span>` : '') +
         (earnings.betWinnings ? `<span>🎲 bet → <b>$${earnings.betWinnings}</b></span>` : '') +
+        (earnings.xpAwards?.length ? `<span>★ XP → <b>${earnings.xpAwards.map(a => `${a.name} +${a.xp}`).join(' · ')}</b></span>` : '') +
         `<span>TOTAL: <b>$${earnings.total}</b></span>`;
     } else eb.classList.add('hidden');
 
@@ -277,18 +278,6 @@ export class UI {
         </div>`;
       }).join('')).join('');
 
-    // ---- training ----
-    $('shop-training').innerHTML = Object.entries(TRAINING).map(([id, t]) => {
-      const lvl = career.skills[id];
-      const maxed = lvl >= t.max;
-      const price = maxed ? 0 : Math.round(t.prices[lvl] * pm);
-      return `<div class="shop-item ${maxed ? 'owned' : ''}">
-        <div class="si-info"><div class="si-name">${t.name} ${'★'.repeat(lvl)}${'☆'.repeat(t.max - lvl)}</div><div class="si-desc">${t.desc}</div></div>
-        ${maxed ? '<span class="si-owned">MAXED</span>'
-          : `<button class="btn" data-train="${id}" ${career.money >= price ? '' : 'disabled'}>$${price}</button>`}
-      </div>`;
-    }).join('');
-
     // ---- next bout ----
     if (liquidation) {
       const rival = career.liquidation.enemy;
@@ -312,13 +301,14 @@ export class UI {
         if (entry.kind === 'event') {
           return `<div class="tape-event">${entry.text}</div>`;
         }
-        const item = ITEM_TYPES[entry.type]?.name || entry.type;
+        const item = entry.label || ITEM_TYPES[entry.type]?.name || entry.type;
         const playerSide = entry.side === 'player';
-        const sold = entry.action === 'sell';
+        const credit = entry.action === 'sell' || entry.action === 'release';
+        const verb = { buy: 'BOUGHT', sell: 'SOLD', hire: 'HIRED', release: 'RELEASED' }[entry.action] || entry.action.toUpperCase();
         return `<div class="tape-row ${playerSide ? 'tape-player' : 'tape-rival'}">` +
           `<span class="tape-side">${playerSide ? 'YOU' : 'RIVAL'}</span>` +
-          `<span class="tape-action">${sold ? 'SOLD' : 'BOUGHT'} ${item}</span>` +
-          `<b class="${sold ? 'tape-credit' : 'tape-debit'}">${sold ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
+          `<span class="tape-action">${verb} ${item}</span>` +
+          `<b class="${credit ? 'tape-credit' : 'tape-debit'}">${credit ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
       }).join('');
       tape.scrollTop = tape.scrollHeight;
     }
@@ -352,9 +342,13 @@ export class UI {
     const tabs = [['player', 'YOU'], ...career.crew.map((m, i) => [i, m.name])];
     $('char-tabs').innerHTML = tabs.map(([who, label]) => {
       const benched = who !== 'player' && career.crew[who].benched;
+      const member = who === 'player' ? null : career.crew[who];
+      const profile = who === 'player'
+        ? combatProfile(PLAYER_TYPE, career.playerProgress, true)
+        : combatProfile(member.type, member.progress);
       const hp = who === 'player'
-        ? (career.playerHp == null ? 1 : career.playerHp / (100 + career.skills.tough * 25))
-        : (career.crew[who].hp == null ? 1 : career.crew[who].hp / CREW_TIERS[career.crew[who].tier].hp);
+        ? (career.playerHp == null ? 1 : career.playerHp / profile.maxHp)
+        : (member.hp == null ? 1 : member.hp / profile.maxHp);
       return `<button class="btn char-tab ${String(this.selChar) === String(who) ? 'char-tab-sel' : ''} ${benched ? 'char-tab-benched' : ''}" data-char="${who}">
         ${label}${benched ? ' 🪑' : ''}<i class="tab-hp" style="width:${Math.max(2, hp * 100)}%;background:${healthColor(hp)}"></i></button>`;
     }).join('') + (career.crew.length < 8
@@ -365,7 +359,10 @@ export class UI {
     const isPlayer = who === 'player';
     const m = isPlayer ? null : career.crew[who];
     const ch = isPlayer ? career.playerCh : m.ch;
-    const maxHp = isPlayer ? 100 + career.skills.tough * 25 : CREW_TIERS[m.tier].hp;
+    const type = isPlayer ? PLAYER_TYPE : m.type;
+    const progress = isPlayer ? career.playerProgress : m.progress;
+    const typeDef = isPlayer ? { name: 'CHALLENGER' } : HIRE_TYPES[type];
+    const maxHp = combatProfile(type, progress, isPlayer).maxHp;
     const hp = isPlayer ? (career.playerHp == null ? maxHp : career.playerHp) : (m.hp == null ? maxHp : m.hp);
     const limbs = isPlayer ? career.playerLimbs : (m.limbs || { arm: 0, leg: 0 });
     const patchCost = isPlayer ? actions.playerPatchCost() : actions.crewPatchCost(m);
@@ -385,14 +382,26 @@ export class UI {
     };
 
     const limbFlag = (l) => (l.arm > 0.05 ? ' <span class="limb-flag">ARM</span>' : '') + (l.leg > 0.05 ? ' <span class="limb-flag">LEG</span>' : '');
-    const next = !isPlayer && (m.tier === 'rookie' ? 'veteran' : m.tier === 'veteran' ? 'elite' : null);
-    const upCost = next ? Math.round((CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200) * pm) : 0;
+    const trees = trainingTrees(type);
+    const releaseValue = !isPlayer ? actions.releaseValue(m.type) : 0;
+    const trainingRows = (label, nodes) => `<div class="training-tree"><div class="training-tree-title">${label}</div>` +
+      nodes.map(node => {
+        const level = progress.skills[node.id] || 0;
+        const cost = trainingCost(progress, type, node.id);
+        const maxed = level >= 3;
+        const effect = node.desc[Math.min(level, 2)];
+        return `<div class="training-node ${maxed ? 'owned' : ''}">
+          <div class="si-info"><div class="si-name">${node.name} ${'★'.repeat(level)}${'☆'.repeat(3 - level)}</div><div class="si-desc">${effect}</div></div>
+          ${maxed ? '<span class="si-owned">MAXED</span>' :
+            `<button class="btn" data-train="${node.id}" ${progress.xp >= cost ? '' : 'disabled'}>${cost} XP</button>`}
+        </div>`;
+      }).join('') + '</div>';
 
     $('char-panel').innerHTML = `
       <div class="char-head">
         <div>
           <b>${isPlayer ? 'YOU' : m.name}</b>
-          <span class="dim">${isPlayer ? 'the challenger' : CREW_TIERS[m.tier].name + ' · ' + (m.kills || 0) + ' kills'}</span>
+          <span class="dim">${typeDef.name} · ${isPlayer ? career.totals.kills : (m.kills || 0)} kills · ${progress.xp} XP</span>
           ${limbFlag(limbs)}${hp <= 0 ? ' <span class="limb-flag">OUT — NEEDS MEDICAL</span>' : ''}
         </div>
         <div class="char-hp"><span class="mini-hp"><i style="width:${(hp / maxHp) * 100}%;background:${healthColor(hp / maxHp)}"></i></span>${Math.round(hp)}/${maxHp}</div>
@@ -411,14 +420,19 @@ export class UI {
       </div>
       <div class="char-actions">
         ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}>🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
-        ${next ? `<button class="btn" data-upgrade="${who}" ${career.money >= upCost ? '' : 'disabled'}>⬆ ${next.toUpperCase()} $${upCost}</button>` : ''}
         ${!isPlayer ? `<button class="btn" data-bench="${who}">${m.benched ? '▶ DEPLOY' : '🪑 BENCH'}</button>` : ''}
-        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">SELL $${Math.round(CREW_TIERS[m.tier].price * 0.5)}</button>` : ''}
+        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">RELEASE +$${releaseValue}</button>` : ''}
       </div>
-      ${this.hireOpen ? `<div class="hire-menu">${Object.entries(CREW_TIERS).map(([id, t]) => {
-        const cost = Math.round(t.price * pm);
-        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
-        <button class="btn" data-hire="${id}" ${career.money >= cost && career.crew.length < 5 ? '' : 'disabled'}>$${cost}</button></div>`;
+      <div class="training-head"><b>CHARACTER TRAINING</b><span>${progress.xp} XP AVAILABLE</span></div>
+      ${trainingRows('COMMON TREE', trees.common)}
+      ${trainingRows(`${typeDef.name} TREE`, trees.role)}
+      ${this.hireOpen ? `<div class="hire-menu">${Object.entries(HIRE_TYPES).map(([id, t]) => {
+        const cost = actions.recruitPrice(id);
+        const soldOut = !Number.isFinite(cost);
+        const mi = actions.recruitMarketInfo(id);
+        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
+        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}${marketFlag}</div></div>
+        <button class="btn" data-hire="${id}" ${!soldOut && career.money >= cost && career.crew.length < 8 ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button></div>`;
       }).join('')}</div>` : ''}`;
 
     // ---- wire buttons ----
@@ -428,9 +442,8 @@ export class UI {
     wire('[data-buy-item]', 'data-buy-item', actions.buyItem);
     wire('[data-buy-to]', 'data-buy-to', (t) => actions.buyItemTo(t, this.selChar));
     wire('[data-bench]', 'data-bench', (i) => actions.toggleBench(parseInt(i)));
-    wire('[data-train]', 'data-train', actions.train);
+    wire('[data-train]', 'data-train', (id) => actions.train(this.selChar, id));
     wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
-    wire('[data-upgrade]', 'data-upgrade', (i) => actions.upgradeCrew(parseInt(i)));
     wire('[data-sell-crew]', 'data-sell-crew', (i) => { actions.sellCrew(parseInt(i)); this.selChar = 'player'; });
     wire('[data-hire]', 'data-hire', (id) => { this.hireOpen = false; actions.hire(id); });
     wire('[data-char]', 'data-char', (whoSel) => {
@@ -509,7 +522,7 @@ export class UI {
     $('intro-flavor').textContent = squad.blurb;
 
     // don't let anyone stumble into the pit broke, bleeding, and surprised
-    const maxHp = 100 + career.skills.tough * 25;
+    const maxHp = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
     const hp = career.playerHp == null ? maxHp : career.playerHp;
     const hurt = hp < maxHp * 0.6 || career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05;
     const benchedOut = career.crew.filter(c => c.hp != null && c.hp <= 0 && !c.benched).length;

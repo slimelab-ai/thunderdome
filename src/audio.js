@@ -65,7 +65,7 @@ class AudioEngine {
   // ---- gunshots (vol scaled by distance for AI shots) ----
   shot(kind, vol = 1) {
     if (!this.ctx) return;
-    const v = Math.max(0.02, Math.min(1, vol));
+    const v = Number.isFinite(vol) ? Math.max(0.02, Math.min(1, vol)) : 0.02;
     switch (kind) {
       case 'pistol':
         this._noise(0.25, { freq: 2800, freqEnd: 400, gain: 0.55 * v, decay: 0.09 });

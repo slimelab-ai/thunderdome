@@ -4,7 +4,7 @@ import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
-import { UI, CREW_TIERS, TRAINING, nextCrewName } from './ui.js';
+import { UI, nextCrewName } from './ui.js';
 import { WEAPONS } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
@@ -21,6 +21,10 @@ import {
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade,
 } from './liquidation.js';
+import {
+  PLAYER_TYPE, HIRE_TYPES, createProgression, normalizeProgression, buyTraining,
+  combatProfile, emptyXpStats, calculateXp, grantXp,
+} from './progression.js';
 
 // ============================================================ setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -63,6 +67,8 @@ const world = {
   playerShooter: { isPlayer: true, team: 'player', name: 'YOU' },
   onPlayerDamaged: (dmg, part, fromPos) => handlePlayerDamaged(dmg, part, fromPos),
   onKill: (killer, victim, part) => handleKill(killer, victim, part),
+  onDamage: (shooter, victim, amount) => handleXpDamage(shooter, victim, amount),
+  onSupport: (supporter, amount) => handleXpSupport(supporter, amount),
   onHitmarker: (kill, headshot) => ui.hitmarker(kill, headshot),
 };
 
@@ -98,8 +104,8 @@ function newCareer(mode = 'circuits') {
     playerCh,
     playerHp: null,                    // null = full; persists between matches
     playerLimbs: { arm: 0, leg: 0 },
-    skills: { aim: 0, cardio: 0, tough: 0 },
-    crew: [],                          // {name, tier, kills, hp, limbs, ch}
+    playerProgress: createProgression(),
+    crew: [],                          // {name, type, progress, kills, hp, limbs, ch}
     stash: { cols: STASH_COLS, rows: 0, items: [] },
     bet: 0,
     totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0, circuitsCleared: 0 },
@@ -128,7 +134,19 @@ function load() {
           localStorage.removeItem(SAVE_KEY);
           return null;
         }
-        for (const m of c.crew || []) if (m.benched === undefined) m.benched = false;
+        c.playerProgress = normalizeProgression(c.playerProgress, c.skills);
+        delete c.skills;
+        for (const m of c.crew || []) {
+          if (m.benched === undefined) m.benched = false;
+          if (!m.type) {
+            const legacyXp = m.tier === 'elite' ? 900 : m.tier === 'veteran' ? 350 : 0;
+            m.type = 'enforcer';
+            m.progress = normalizeProgression(m.progress || createProgression({}, legacyXp, legacyXp));
+          } else {
+            m.progress = normalizeProgression(m.progress);
+          }
+          delete m.tier;
+        }
         c.mode ||= c.liquidation ? 'liquidation' : 'circuits'; c.liquidation ||= null;
         if (c.liquidation?.draft && c.liquidation.draft.version !== 2) {
           const old = c.liquidation.draft;
@@ -219,6 +237,8 @@ function makeMatch() {
     eventTimer: 12 + Math.random() * 10, eventsFired: 0,
     lightsOut: 0, airdrop: null,
     enemiesAlive: 0,
+    playerXp: emptyXpStats(),
+    spectating: false, spectatorTarget: null,
     time: 0,
     campAnchor: { x: 0, z: 0 }, campT: 0, campWarned: false,
   };
@@ -254,15 +274,24 @@ function startMatch() {
 
   // spawn crew — deployed, breathing, and carrying exactly what you stocked them with
   career.crew.filter(cm => !cm.benched && (cm.hp == null || cm.hp > 0)).slice(0, 5).forEach((cm, i) => {
-    const t = CREW_TIERS[cm.tier];
+    const stats = combatProfile(cm.type, cm.progress);
     const mits = armorMits(cm.ch);
     const c = new Combatant({
       name: cm.name, team: 'player', weaponId: bestUsableGun(cm.ch),
-      skill: { spreadMult: t.spreadMult, reaction: t.reaction, speedMult: t.speedMult * weightSpeedMult(cm.ch) },
-      hp: t.hp, shirt: 0x2e5d33,
+      skill: {
+        spreadMult: stats.spreadMult, reaction: stats.reaction,
+        speedMult: stats.speedMult * weightSpeedMult(cm.ch),
+      },
+      hp: stats.maxHp, shirt: 0x2e5d33,
       armorParts: mits,
+      archetype: stats.archetype,
+      damageMult: stats.damageMult,
+      damageTakenMult: stats.damageTakenMult,
+      healingMult: stats.healingMult,
+      medicCooldownMult: stats.medicCooldownMult,
     });
     c.careerRef = cm;
+    c.matchXp = emptyXpStats();
     c.character = cm.ch;
     c.healKits = countInPack(cm.ch, 'medkit');
     c.splints = countInPack(cm.ch, 'splint');
@@ -325,11 +354,17 @@ function startMatch() {
   const guns = ['gun1', 'gun2'].map(s => pch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
   player.slots = guns;
   player.slotIdx = 0;
-  player.skills = career.skills;
+  const playerStats = combatProfile(PLAYER_TYPE, career.playerProgress, true);
+  player.skills = career.playerProgress.skills;
+  player.progressStats = playerStats;
+  player.damageTakenMult = playerStats.damageTakenMult;
   player.armor = armorMits(pch);
   player.character = pch;
   player.weightMult = weightSpeedMult(pch);
-  player.resetForMatch(arena.spawns.player);
+  // Start angled toward the right-hand gap in the protective gate screen
+  // instead of staring squarely into it from three metres away.
+  player.resetForMatch(arena.spawns.player, -0.72);
+  player.vmRoot.visible = true;
   player._mountViewmodel();
   player.loadMagsFromPack();
   // player wounds carry over too
@@ -360,6 +395,7 @@ function startMatch() {
   audio.klaxon();
 
   phase = 'match';
+  ui.hideSpectator();
   ui.showHUDOnly();
   enterCombatMode();
 }
@@ -379,6 +415,59 @@ function payout(base) {
   return amt;
 }
 
+function handleXpDamage(shooter, victim, amount) {
+  if (!match || victim.team !== 'enemy' || shooter?.team !== 'player' || amount <= 0) return;
+  const stats = shooter.isPlayer ? match.playerXp : shooter.matchXp;
+  if (stats) stats.damage += amount;
+}
+
+function handleXpSupport(supporter, amount) {
+  if (!match || supporter?.team !== 'player' || amount <= 0) return;
+  if (supporter.matchXp) supporter.matchXp.support += amount;
+}
+
+function livingCrew() {
+  return match?.crew.filter(c => c.alive) || [];
+}
+
+function endPlayerTeamLoss() {
+  if (match.ended) return;
+  match.ended = true;
+  match.won = false;
+  match.endTimer = 2.2;
+  announcer.say('lose', {}, { force: true });
+  audio.crowdRoar(1);
+}
+
+function cycleSpectator(direction = 1) {
+  const alive = livingCrew();
+  if (!alive.length) {
+    match.spectatorTarget = null;
+    ui.hideSpectator();
+    endPlayerTeamLoss();
+    return;
+  }
+  const current = alive.indexOf(match.spectatorTarget);
+  const next = current < 0 ? 0 : (current + direction + alive.length) % alive.length;
+  match.spectatorTarget = alive[next];
+  ui.showSpectator(match.spectatorTarget.name, next, alive.length);
+}
+
+function handlePlayerDeath() {
+  if (match.playerDeathHandled) return;
+  match.playerDeathHandled = true;
+  career.totals.deaths++;
+  player.clearInput();
+  player.vmRoot.visible = false;
+  if (livingCrew().length) {
+    match.spectating = true;
+    cycleSpectator(1);
+    ui.eventBanner('YOU ARE DOWN', 'Your squad is still fighting', 'var(--gold)');
+  } else {
+    endPlayerTeamLoss();
+  }
+}
+
 function handleKill(killer, victim, part) {
   const headshot = part === 'head';
   const killerName = killer.isPlayer ? 'YOU' : killer.name;
@@ -394,6 +483,11 @@ function handleKill(killer, victim, part) {
     match.enemiesAlive--;
     match.kills++;
     if (headshot) match.headshots++;
+    const xpStats = killer.isPlayer ? match.playerXp : killer.matchXp;
+    if (killer.team === 'player' && xpStats) {
+      xpStats.kills++;
+      if (headshot) xpStats.headshots++;
+    }
 
     let base = 140 + (15 - career.rank) * 20;
     if (victim.bountyT > 0) {
@@ -408,7 +502,7 @@ function handleKill(killer, victim, part) {
       match.killMoney += base;
       if (headshot) match.hsMoney += 100;
       if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); } // liquidation kills pay in position, not cash
-      player.hp = Math.min(player.maxHp, player.hp + 12); // adrenaline
+      player.hp = Math.min(player.maxHp, player.hp + (player.progressStats.killHeal || 8)); // adrenaline
       if (headshot) announcer.say('playerHeadshot', { victim: victim.name });
       else announcer.say('playerKill', { victim: victim.name });
     } else {
@@ -430,6 +524,7 @@ function handleKill(killer, victim, part) {
     if (victim.careerRef) career.totals.crewLost++;
     if (killer && killer.isPlayer) announcer.say('teamkill', { victim: victim.name }, { force: true });
     else announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
+    if (!player.alive) cycleSpectator(1);
   }
 }
 
@@ -445,12 +540,7 @@ function handlePlayerDamaged(dmg, part, fromPos) {
     else if (part === 'legL' || part === 'legR') announcer.say('playerLegHit', {}, { minGap: 8 });
     else if (player.hp < 30) announcer.say('playerLow', {}, { minGap: 10 });
     else announcer.say('playerHurt', {}, { minGap: 9 });
-  } else if (!match.ended) {
-    match.ended = true; match.won = false; match.endTimer = 2.2;
-    announcer.say('lose', {}, { force: true });
-    career.totals.deaths++;
-    audio.crowdRoar(1);
-  }
+  } else handlePlayerDeath();
 }
 
 // ============================================================ grenades
@@ -714,11 +804,7 @@ function updateEvents(dt) {
       if (z._flash <= 0) { z._flash = 0.7; ui.damageFlash(); audio.hurt(); }
       if (player.hp <= 0) {
         player.hp = 0; player.alive = false; player.deathT = 0;
-        if (!match.ended) {
-          match.ended = true; match.won = false; match.endTimer = 2.2;
-          announcer.say('lose', {}, { force: true });
-          career.totals.deaths++;
-        }
+        handlePlayerDeath();
       }
     }
     // damage AI
@@ -761,8 +847,26 @@ function updateEvents(dt) {
 }
 
 // ============================================================ match end
+function awardMatchExperience() {
+  const awards = [];
+  const award = (name, progress, stats, survived) => {
+    const result = calculateXp(stats, { won: match.won, survived });
+    const xp = grantXp(progress, result.total);
+    awards.push({ name, xp, ...result });
+  };
+  award('YOU', career.playerProgress, match.playerXp, player.alive);
+  for (const c of match.crew) {
+    if (!c.careerRef || !c.matchXp) continue;
+    award(c.name, c.careerRef.progress, c.matchXp, c.alive);
+  }
+  match.xpAwards = awards;
+  return awards;
+}
+
 function finishMatch() {
   document.exitPointerLock();
+  ui.hideSpectator();
+  const xpAwards = awardMatchExperience();
   // crew burn real supplies: rounds actually fired (per pool), kits and frags used
   for (const c of match.crew) {
     const ch = c.character;
@@ -858,6 +962,7 @@ function finishMatch() {
     save();
     openShop({ kills: match.kills, headshots: match.headshots, killMoney: 0, hsMoney: 0,
       frenzyMoney: 0, winBonus: 0, betWinnings: match.betWinnings || 0,
+      xpAwards,
       total: match.won ? match.betWinnings || 0 : 0 });
     return;
   }
@@ -871,6 +976,7 @@ function finishMatch() {
       killMoney: match.killMoney, hsMoney: match.hsMoney,
       frenzyMoney: match.frenzyMoney, winBonus,
       betWinnings: match.betWinnings || 0,
+      xpAwards,
       total: match.killMoney + match.hsMoney + match.frenzyMoney + winBonus + (match.betWinnings || 0),
     };
     audio.cashRegister();
@@ -919,7 +1025,8 @@ function finishMatch() {
       DEATH_LINES[(Math.random() * DEATH_LINES.length) | 0],
       `The house took its cut: <b style="color:var(--blood)">−$${cut}</b><br>` +
       `Bankroll: $${career.money} — go into debt and the house collects YOU.<br>` +
-      `Kills this bout: ${match.kills} · Career deaths: ${career.totals.deaths}`
+      `Kills this bout: ${match.kills} · Career deaths: ${career.totals.deaths}<br>` +
+      `Experience: ${xpAwards.map(a => `${a.name} +${a.xp} XP`).join(' · ')}`
     );
     ui.showScreen('death');
   }
@@ -927,14 +1034,14 @@ function finishMatch() {
 
 // medical pricing: this is the drain that makes dying expensive (circuits inflate it)
 function playerPatchCost() {
-  const max = 100 + career.skills.tough * 25;
+  const max = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
   const missing = career.playerHp == null ? 0 : Math.max(0, max - career.playerHp);
   const limbs = (career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05) ? 80 : 0;
   return Math.round((missing * 2.2 + limbs) * medMult());
 }
 function crewPatchCost(m) {
   if (!m) return 0;
-  const max = CREW_TIERS[m.tier].hp;
+  const max = combatProfile(m.type, m.progress).maxHp;
   const missing = m.hp == null ? 0 : Math.max(0, max - m.hp);
   const limbs = (m.limbs && (m.limbs.arm > 0.05 || m.limbs.leg > 0.05)) ? 60 : 0;
   return Math.round((missing * 1.6 + limbs) * medMult());
@@ -1096,6 +1203,9 @@ function renderShop(earnings) {
     priceMult,
     priceOf: (type) => market.quoteBuy(type, 1, priceMult()),
     marketInfo: (type) => market.info(type),
+    recruitPrice: (type) => market.quoteRecruit(type),
+    recruitMarketInfo: (type) => market.recruitInfo(type),
+    releaseValue: (type) => market.quoteReleaseRecruit(type),
     buyItem: (type) => {
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
@@ -1122,7 +1232,7 @@ function renderShop(earnings) {
         career.playerLimbs = { arm: 0, leg: 0 };
       } else {
         // broke? the doc does what the money covers
-        const max = 100 + career.skills.tough * 25;
+        const max = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
         const cur = career.playerHp == null ? max : career.playerHp;
         career.playerHp = Math.min(max, Math.round(cur + (max - cur) * f));
         career.playerLimbs.arm = +(career.playerLimbs.arm * (1 - f)).toFixed(2);
@@ -1141,7 +1251,7 @@ function renderShop(earnings) {
         m.hp = null;
         m.limbs = { arm: 0, leg: 0 };
       } else {
-        const max = CREW_TIERS[m.tier].hp;
+        const max = combatProfile(m.type, m.progress).maxHp;
         const cur = m.hp == null ? max : m.hp;
         m.hp = Math.min(max, Math.round(cur + (max - cur) * f));
         m.limbs.arm = +((m.limbs.arm || 0) * (1 - f)).toFixed(2);
@@ -1152,36 +1262,38 @@ function renderShop(earnings) {
     sellCrew: (idx) => {
       const m = career.crew[idx];
       if (!m) return;
-      // everything they carry goes back to the stash, 50% of signing fee back
+      // Everything they carry goes back to the stash. In Liquidation their
+      // contract returns to that archetype's public AMM pool.
       for (const slot of ['head', 'body', 'limbs', 'gun1', 'gun2']) {
         const it = m.ch.gear[slot];
         if (it && !(it.type === 'pistol' && slot === 'gun1')) autoPlace(career.stash, it);
       }
       for (const e of [...m.ch.pack.items]) autoPlace(career.stash, e.it);
-      career.money += Math.round(CREW_TIERS[m.tier].price * 0.5);
+      const refund = market.releaseRecruit(m.type);
+      career.money += refund;
+      if (career.mode === 'liquidation') {
+        recordMarketTrade(career.liquidation, 'player', 'release', null, refund, `${HIRE_TYPES[m.type].name} CONTRACT`);
+      }
       career.crew.splice(idx, 1);
       audio.cashRegister(); save(); renderShop(earnings);
     },
-    upgradeCrew: (idx) => {
-      const m = career.crew[idx];
-      const next = m?.tier === 'rookie' ? 'veteran' : m?.tier === 'veteran' ? 'elite' : null;
-      if (!next) return;
-      const cost = Math.round((CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200) * priceMult());
-      if (career.money >= cost) {
-        career.money -= cost;
-        m.tier = next;
-        audio.cashRegister(); save(); renderShop(earnings);
-      }
-    },
-    hire: (tierId) => {
-      const t = CREW_TIERS[tierId];
-      const cost = Math.round(t.price * priceMult());
-      if (career.money >= cost && career.crew.length < 8) {
+    hire: (typeId) => {
+      const t = HIRE_TYPES[typeId];
+      const quoted = market.quoteRecruit(typeId);
+      if (t && Number.isFinite(quoted) && career.money >= quoted && career.crew.length < 8) {
+        const cost = market.buyRecruit(typeId);
         career.money -= cost;
         const ch = makeCharacter();
         autoPlace(ch.pack, makeItem('ammo_9mm')); // signs on stocked, like you did
         autoPlace(ch.pack, makeItem('medkit'));
-        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch });
+        const name = nextCrewName();
+        career.crew.push({
+          name, type: typeId, progress: createProgression(), kills: 0,
+          hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch,
+        });
+        if (career.mode === 'liquidation') {
+          recordMarketTrade(career.liquidation, 'player', 'hire', null, cost, `${t.name} · ${name}`);
+        }
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -1216,12 +1328,12 @@ function renderShop(earnings) {
       }
       audio.cashRegister(); save(); renderShop(earnings);
     },
-    train: (skillId) => {
-      const t = TRAINING[skillId];
-      const lvl = career.skills[skillId];
-      if (lvl < t.max && career.money >= t.prices[lvl]) {
-        career.money -= t.prices[lvl];
-        career.skills[skillId]++;
+    train: (who, skillId) => {
+      const isPlayer = who === 'player';
+      const member = isPlayer ? null : career.crew[Number(who)];
+      const progress = isPlayer ? career.playerProgress : member?.progress;
+      const type = isPlayer ? PLAYER_TYPE : member?.type;
+      if (progress && buyTraining(progress, type, skillId)) {
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -1266,6 +1378,10 @@ const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyR', 'KeyQ
 document.addEventListener('keydown', (e) => {
   if (phase === 'match') {
     if (GAME_KEYS.has(e.code) || e.ctrlKey) e.preventDefault();
+    if (match?.spectating && !e.repeat && (e.code === 'KeyA' || e.code === 'KeyD')) {
+      cycleSpectator(e.code === 'KeyD' ? 1 : -1);
+      return;
+    }
     player.onKey(e.code, true);
   }
 });
@@ -1388,6 +1504,26 @@ camera.lookAt(0, 1, 0);
 const clock = new THREE.Clock();
 
 const _aimTmp = new THREE.Vector3();
+const _spectatorPos = new THREE.Vector3();
+const _spectatorLook = new THREE.Vector3();
+
+function updateSpectatorCamera(dt) {
+  if (!match.spectatorTarget?.alive) cycleSpectator(1);
+  const target = match.spectatorTarget;
+  if (!target) return;
+  const forwardX = Math.sin(target.yaw);
+  const forwardZ = Math.cos(target.yaw);
+  _spectatorPos.set(
+    target.pos.x - forwardX * 3.8,
+    target.pos.y + 2.5,
+    target.pos.z - forwardZ * 3.8,
+  );
+  camera.position.lerp(_spectatorPos, 1 - Math.exp(-dt * 7));
+  _spectatorLook.set(target.pos.x + forwardX * 2, target.pos.y + 1.25, target.pos.z + forwardZ * 2);
+  camera.lookAt(_spectatorLook);
+  const alive = livingCrew();
+  ui.showSpectator(target.name, Math.max(0, alive.indexOf(target)), alive.length);
+}
 
 function stepMatch(dt) {
   match.time += dt;
@@ -1423,6 +1559,7 @@ function stepMatch(dt) {
     }
   }
   for (const c of world.combatants) c.update(world, dt);
+  if (match.spectating) updateSpectatorCamera(dt);
   updateEvents(dt);
   updateGrenades(dt);
   announcer.update(dt);

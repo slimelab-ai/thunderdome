@@ -94,6 +94,22 @@ html, body {
 #event-sub { font-size: 14px; color: #ccc; letter-spacing: 2px; text-transform: uppercase; }
 @keyframes bannerin { 0% { transform: translateX(-50%) scale(1.6); opacity: 0; } 100% { transform: translateX(-50%) scale(1); opacity: 1; } }
 
+#spectator-banner {
+  position: absolute; top: 92px; left: 50%; transform: translateX(-50%);
+  min-width: 310px; padding: 9px 18px; text-align: center;
+  background: rgba(5,5,8,0.86); border: 1px solid rgba(255,185,46,0.55); border-top: 3px solid var(--gold);
+  box-shadow: 0 0 25px rgba(0,0,0,0.65);
+}
+#spectator-banner b { color: var(--gold); letter-spacing: 2px; font-size: 13px; }
+#spectator-count { margin-left: 10px; color: #888; font-size: 11px; }
+#spectator-banner small { display: block; color: #777; font-size: 9px; letter-spacing: 1px; margin-top: 3px; }
+#hud.spectating #crosshair,
+#hud.spectating #hud-bottomleft,
+#hud.spectating #hud-bottomright,
+#hud.spectating #interact-hint,
+#hud.spectating #channel-wrap,
+#hud.spectating #lowhp-overlay { display: none; }
+
 /* killfeed */
 #killfeed { position: absolute; top: 20px; right: 20px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .kf-entry {
@@ -240,6 +256,21 @@ html, body {
 .si-price { color: var(--gold); font-weight: 800; white-space: nowrap; }
 .si-owned { color: #3fda5f; font-weight: 800; font-size: 12px; letter-spacing: 1px; }
 .shop-item .btn { padding: 6px 14px; font-size: 12px; }
+.training-head {
+  display: flex; justify-content: space-between; margin-top: 12px; padding: 7px 0;
+  border-top: 1px solid var(--line); color: #bbb; font-size: 10px; letter-spacing: 1px;
+}
+.training-head span { color: var(--gold); font-weight: 800; }
+.training-tree { margin: 4px 0 9px; }
+.training-tree-title { color: #6f6f7a; font-size: 9px; font-weight: 900; letter-spacing: 1.5px; margin-bottom: 4px; }
+.training-node {
+  display: flex; align-items: center; gap: 6px; padding: 6px 7px; margin-bottom: 3px;
+  border: 1px solid var(--line); border-radius: 3px; background: rgba(14,14,19,0.76);
+}
+.training-node.owned { border-color: rgba(134,255,60,0.22); }
+.training-node .si-name { font-size: 10px; }
+.training-node .si-desc { font-size: 9px; }
+.training-node .btn { padding: 4px 7px; font-size: 9px; white-space: nowrap; }
 .roster-card { border-left: 3px solid var(--acid); flex-wrap: wrap; }
 .roster-dead { border-left-color: #333; opacity: 0.5; }
 .roster-btns { display: flex; gap: 4px; }
