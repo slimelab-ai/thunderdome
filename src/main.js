@@ -136,6 +136,12 @@ function load() {
           delete m.tier;
         }
         c.mode ||= c.liquidation ? 'liquidation' : 'circuits'; c.liquidation ||= null;
+        if (c.liquidation) {
+          c.liquidation.enemy ||= { strategy: 'balanced', inventory: {} };
+          if (!Array.isArray(c.liquidation.enemy.recruits) || !c.liquidation.enemy.recruits.length) {
+            c.liquidation.enemy.recruits = ['enforcer'];
+          }
+        }
         if (c.liquidation?.draft && c.liquidation.draft.version !== 2) {
           const old = c.liquidation.draft;
           c.liquidation.draft = {
@@ -322,11 +328,13 @@ function startMatch() {
     c.splints = liquidation
       ? allocateRivalSupply(career.liquidation.enemy.inventory, 'splint', i, roster.length)
       : 0;
-    if (r.arch === 'medic') c.healKits = 3;
-    if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; c.splints = 0; }
-    if (r.boss) { c.nades = 2; c.healKits = 2; }
-    // the house stocks its fighters (fresh every match, no economy to grind):
-    // 5 mags' worth, then they go to the knife like everyone else
+    // Circuit personalities get house-issued supplies; Liquidation archetypes
+    // must use only the persistent stock their team actually purchased.
+    if (!liquidation && r.arch === 'medic') c.healKits = 3;
+    if (!liquidation && r.arch === 'rusher') { c.nades = 0; c.healKits = 0; c.splints = 0; }
+    if (!liquidation && r.boss) { c.nades = 2; c.healKits = 2; }
+    // Circuit fighters get five magazines from the house. Liquidation divides
+    // the rival's persistent ammo inventory across its paid roster.
     const et = ITEM_TYPES[r.w]?.ammo;
     if (et) c.ammoPools[et] = liquidation ? (r.ammo || 0) : WEAPONS[r.w].mag * 5;
     c._initialPools = { ...c.ammoPools }; // for honest end-of-match settlement

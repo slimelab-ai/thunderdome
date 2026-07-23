@@ -281,9 +281,10 @@ export class UI {
     // ---- next bout ----
     if (liquidation) {
       const rival = career.liquidation.enemy;
+      const rivalTeam = (rival.recruits || ['enforcer']).map(type => HIRE_TYPES[type]?.name || type.toUpperCase());
       $('next-bout').innerHTML =
         `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${rival.strategy.toUpperCase()}<br>` +
-        `<span class="dim">Their inventory is private. Their trades and bankroll are not.</span>`;
+        `<span class="dim">TEAM ${rivalTeam.length}/5 · ${rivalTeam.join(' / ')}<br>Their inventory is private. Their team, trades, and bankroll are not.</span>`;
     } else {
       $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
