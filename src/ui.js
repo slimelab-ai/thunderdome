@@ -55,12 +55,24 @@ export class UI {
     this._eventTimer = null;
     this.selChar = 'player';
     this.hireOpen = false;
+    this.shopView = 'market';
+    this.controllerCarry = null;
+    document.addEventListener('controllercancel', () => this._cancelControllerCarry());
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      if (!$('screen-shop').classList.contains('hidden') && this._shopArgs) {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => this.renderShop(...this._shopArgs), 120);
+      }
+    });
   }
 
   showScreen(name) {
     for (const [k, s] of Object.entries(this.screens)) s.classList.toggle('hidden', k !== name);
     this.el.hud.classList.toggle('hidden', !(name === null));
     if (name !== null) this.hideSpectator();
+    if (name !== 'shop') this._cancelControllerCarry();
+    document.dispatchEvent(new CustomEvent('screenchange', { detail: name }));
   }
   showHUDOnly() { this.showScreen(null); }
   showSpectator(name, index, total) {
@@ -228,6 +240,28 @@ export class UI {
       ? (actions.draftShopState?.() || { mustEndTurn: false, locked: false })
       : { mustEndTurn: false, locked: false };
     $('screen-shop').classList.toggle('turn-locked', draftTurn.locked);
+    const applyShopView = () => {
+      document.querySelectorAll('[data-shop-panel]').forEach(panel => {
+        panel.classList.toggle('shop-panel-active', panel.getAttribute('data-shop-panel') === this.shopView);
+      });
+      document.querySelectorAll('[data-shop-view]').forEach(tab => {
+        const active = tab.getAttribute('data-shop-view') === this.shopView;
+        tab.classList.toggle('shop-mobile-tab-active', active);
+        tab.setAttribute('aria-selected', String(active));
+      });
+    };
+    document.querySelectorAll('[data-shop-view]').forEach(tab => {
+      tab.onclick = () => {
+        audio.uiClick();
+        this.shopView = tab.getAttribute('data-shop-view');
+        applyShopView();
+        const tabs = $('shop-mobile-tabs');
+        if (getComputedStyle(tabs).display !== 'none') {
+          $('screen-shop').querySelector('.shop-inner').scrollTo({ top: tabs.offsetTop, behavior: 'auto' });
+        }
+      };
+    });
+    applyShopView();
     $('shop-sub').textContent = liquidation
       ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
       : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
@@ -337,15 +371,17 @@ export class UI {
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
-    const CELL = 42;
+    const CELL = window.innerWidth <= 820
+      ? Math.max(28, Math.min(38, Math.floor((window.innerWidth - 32) / 10)))
+      : window.innerWidth < 1450 ? 38 : 42;
     const stashRows = gridRows(career.stash);
     const gridHtml = (grid, dropName, who) => {
       const rows = grid.rows > 0 ? grid.rows : stashRows;
-      let html = `<div class="inv-grid" data-drop="${dropName}" ${who !== undefined ? `data-who="${who}"` : ''}
-        style="width:${grid.cols * CELL}px;height:${rows * CELL}px;">`;
+      let html = `<div class="inv-grid" data-drop="${dropName}" data-controller-target="${dropName}" tabindex="-1" ${who !== undefined ? `data-who="${who}"` : ''}
+        style="--cell:${CELL}px;width:${grid.cols * CELL}px;height:${rows * CELL}px;">`;
       for (const e of grid.items) {
         const def = ITEM_TYPES[e.it.type];
-        html += `<div class="inv-item" data-item="${e.it.uid}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
+        html += `<div class="inv-item" data-item="${e.it.uid}" data-controller-item tabindex="0" role="button" aria-label="Move ${def.name}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
           style="left:${e.x * CELL}px;top:${e.y * CELL}px;width:${def.w * CELL}px;height:${def.h * CELL}px;">
           <span class="inv-ico" style="${iconStyle(def.icon)}"></span>
           ${e.it.rounds != null ? `<span class="inv-count">${e.it.rounds}</span>` : ''}
@@ -395,8 +431,8 @@ export class UI {
       const chip = def?.kind === 'gun' && def.ammo
         ? `<span class="ammo-chip slot-chip">${AMMO_TYPES[def.ammo].name} ×${ch.pack.items.reduce((n, e) => n + (ITEM_TYPES[e.it.type].ammoType === def.ammo ? e.it.rounds : 0), 0)}</span>`
         : '';
-      return `<div class="doll-slot ${slot.startsWith('gun') ? 'doll-slot-gun' : ''}" data-slot="${slot}" data-who="${who}" title="${label}${def ? ' — ' + def.name : ''}">
-        ${it ? `<div class="inv-item doll-it" data-item="${it.uid}" style="width:100%;height:100%;">
+      return `<div class="doll-slot ${slot.startsWith('gun') ? 'doll-slot-gun' : ''}" data-slot="${slot}" data-who="${who}" data-controller-target="slot" tabindex="-1" title="${label}${def ? ' — ' + def.name : ''}">
+        ${it ? `<div class="inv-item doll-it" data-item="${it.uid}" data-controller-item tabindex="0" role="button" aria-label="Move ${def.name}" style="width:100%;height:100%;">
           <span class="inv-ico" style="${iconStyle(def.icon)}"></span>${chip}</div>` : `<span class="doll-lbl">${label}</span>`}
       </div>`;
     };
@@ -476,13 +512,54 @@ export class UI {
       this.renderShop(...this._shopArgs);
     });
 
+    $('sell-bin').setAttribute('data-controller-target', 'sell');
+    $('sell-bin').setAttribute('tabindex', '-1');
     if (draftTurn.locked) {
+      this._cancelControllerCarry();
       document.querySelectorAll('#screen-shop .shop-cols button').forEach(button => {
         button.disabled = true;
       });
     } else {
+      this._bindControllerTransfers(actions);
       this._bindDrag(actions, CELL);
     }
+  }
+
+  _bindControllerTransfers(actions) {
+    document.querySelectorAll('[data-controller-item]').forEach(el => {
+      el.onclick = (event) => {
+        event.stopPropagation();
+        if (event.detail !== 0 || !document.body.classList.contains('controller-mode')) return;
+        this.controllerCarry = el.getAttribute('data-item');
+        document.body.classList.add('controller-carrying');
+        document.querySelectorAll('[data-controller-item]').forEach(item => {
+          item.classList.toggle('controller-held-item', item.getAttribute('data-item') === this.controllerCarry);
+        });
+        document.dispatchEvent(new CustomEvent('controllercarrychange'));
+      };
+    });
+    document.querySelectorAll('[data-controller-target]').forEach(el => {
+      el.onclick = (event) => {
+        if (event.detail !== 0 || !this.controllerCarry || !document.body.classList.contains('controller-mode')) return;
+        const uid = this.controllerCarry;
+        const target = el.getAttribute('data-controller-target');
+        let destination;
+        if (target === 'sell') destination = { kind: 'sell' };
+        else if (target === 'slot') {
+          destination = { kind: 'slot', who: this._whoAttr(el), slot: el.getAttribute('data-slot') };
+        } else if (target === 'stash') destination = { kind: 'stash' };
+        else destination = { kind: 'pack', who: this._whoAttr(el) };
+        this._cancelControllerCarry();
+        actions.moveItem(uid, destination);
+      };
+    });
+  }
+
+  _cancelControllerCarry() {
+    this.controllerCarry = null;
+    document.body.classList.remove('controller-carrying');
+    document.querySelectorAll('.controller-held-item').forEach(el => el.classList.remove('controller-held-item'));
+    document.dispatchEvent(new CustomEvent('controllercarrychange'));
   }
 
   // pointer-based drag & drop between stash / packs / doll slots / the SELL bin

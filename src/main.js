@@ -16,6 +16,7 @@ import {
 import { createMarket } from './market.js';
 import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
 import { TouchControls, isTouchDevice } from './touch.js';
+import { MenuNavigator } from './ui-nav.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
@@ -50,6 +51,7 @@ window.addEventListener('resize', () => {
 const arena = buildArena(scene);
 const fx = new FX(scene);
 const ui = new UI();
+const menuNavigator = new MenuNavigator();
 const announcer = new Announcer();
 
 // ============================================================ world
@@ -86,6 +88,7 @@ const input = new InputHub(player, world, camera, {
   onPause: () => pauseMatch(),
   onResume: () => resumeFromPause(),
   onCycleSpectator,
+  onMenuInput: (action) => menuNavigator.handle(action),
 });
 
 // ============================================================ career / save

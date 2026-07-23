@@ -1,0 +1,130 @@
+const FOCUSABLE = 'button:not(:disabled), [data-controller-item]';
+const CARRY_TARGETS = '[data-controller-target]';
+
+function center(rect) {
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+export function directionalCandidate(rects, currentIndex, direction) {
+  if (currentIndex < 0 || currentIndex >= rects.length) return rects.length ? 0 : -1;
+  const from = center(rects[currentIndex]);
+  const vertical = direction === 'up' || direction === 'down';
+  const sign = direction === 'up' || direction === 'left' ? -1 : 1;
+  let best = -1;
+  let bestScore = Infinity;
+
+  rects.forEach((rect, index) => {
+    if (index === currentIndex) return;
+    const to = center(rect);
+    const primary = vertical ? (to.y - from.y) * sign : (to.x - from.x) * sign;
+    if (primary <= 2) return;
+    const cross = Math.abs(vertical ? to.x - from.x : to.y - from.y);
+    const score = primary + cross * 2.35;
+    if (score < bestScore) {
+      bestScore = score;
+      best = index;
+    }
+  });
+  return best;
+}
+
+export class MenuNavigator {
+  constructor(doc = document) {
+    this.doc = doc;
+    this.current = null;
+    const leaveControllerMode = () => {
+      doc.body.classList.remove('controller-mode');
+      this._updateHint();
+    };
+    doc.addEventListener('pointerdown', leaveControllerMode, { passive: true });
+    doc.addEventListener('screenchange', () => {
+      this.current = null;
+      this._updateHint();
+    });
+    doc.addEventListener('controllercarrychange', () => this._updateHint());
+  }
+
+  handle(action) {
+    const root = this.doc.querySelector('.screen:not(.hidden)');
+    if (!root) return false;
+    this.doc.body.classList.add('controller-mode');
+
+    if (action === 'back' && this.doc.body.classList.contains('controller-carrying')) {
+      this.doc.dispatchEvent(new CustomEvent('controllercancel'));
+      this._updateHint();
+      return true;
+    }
+
+    const items = this._items(root);
+    if (!items.length) return false;
+    let index = items.indexOf(this.current);
+    if (index < 0) index = items.indexOf(this.doc.activeElement);
+    if (index < 0) {
+      this._focus(items[0]);
+      index = 0;
+      if (action !== 'activate') return true;
+    }
+
+    if (action === 'activate') {
+      items[index].click();
+      this._updateHint();
+      return true;
+    }
+    if (action === 'back') {
+      const back = root.querySelector('#btn-intro-back, #btn-resume');
+      if (back && !back.disabled) {
+        back.click();
+        return true;
+      }
+      return false;
+    }
+    if (action === 'previousTab' || action === 'nextTab') {
+      const tabs = [...root.querySelectorAll('[data-shop-view]')].filter(el => this._visible(el));
+      if (tabs.length) {
+        const selected = Math.max(0, tabs.findIndex(el => el.classList.contains('shop-mobile-tab-active')));
+        tabs[(selected + (action === 'nextTab' ? 1 : tabs.length - 1)) % tabs.length].click();
+        this.current = null;
+        this._focus(this._items(root)[0]);
+        return true;
+      }
+      action = action === 'nextTab' ? 'right' : 'left';
+    }
+
+    const next = directionalCandidate(items.map(el => el.getBoundingClientRect()), index, action);
+    if (next >= 0) this._focus(items[next]);
+    this._updateHint();
+    return next >= 0;
+  }
+
+  _items(root) {
+    const selector = this.doc.body.classList.contains('controller-carrying')
+      ? `${FOCUSABLE}, ${CARRY_TARGETS}`
+      : FOCUSABLE;
+    return [...root.querySelectorAll(selector)].filter(el => this._visible(el));
+  }
+
+  _visible(el) {
+    if (el.disabled || el.closest('.hidden')) return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 1 && rect.height > 1;
+  }
+
+  _focus(el) {
+    this.current = el;
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+  }
+
+  _updateHint() {
+    const hint = this.doc.getElementById('controller-hint');
+    if (!hint) return;
+    const activeScreen = this.doc.querySelector('.screen:not(.hidden)');
+    const show = this.doc.body.classList.contains('controller-mode') && !!activeScreen;
+    hint.classList.toggle('hidden', !show);
+    hint.textContent = this.doc.body.classList.contains('controller-carrying')
+      ? 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB CHANGE MARKET TAB'
+      : 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB CHANGE TAB';
+  }
+}

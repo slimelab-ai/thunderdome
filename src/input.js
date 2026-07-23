@@ -48,7 +48,7 @@ const BTN = {
 // Gamepad + touch → player, with aim assist applied to both. Mouse/keyboard
 // bypass this entirely (and get no assist).
 export class InputHub {
-  constructor(player, world, camera, { touch = null, onPause, onResume, onCycleSpectator } = {}) {
+  constructor(player, world, camera, { touch = null, onPause, onResume, onCycleSpectator, onMenuInput } = {}) {
     this.player = player;
     this.world = world;
     this.camera = camera;
@@ -56,7 +56,10 @@ export class InputHub {
     this.onPause = onPause;
     this.onResume = onResume;
     this.onCycleSpectator = onCycleSpectator;
+    this.onMenuInput = onMenuInput;
     this.prevButtons = [];
+    this.navHeld = null;
+    this.navRepeat = 0;
     this.gamepadActiveAt = -10;
     this.sprintLatch = false;   // L3 arms it; easing off the stick clears it
     this.rtHeld = false;
@@ -94,6 +97,33 @@ export class InputHub {
       if (edge(BTN.START)) {
         if (inMatch) this.onPause?.();
         else if (phase === 'paused') this.onResume?.();
+      }
+
+      if (!inMatch) {
+        const ax = pad.axes[0] || 0;
+        const ay = pad.axes[1] || 0;
+        let nav = null;
+        if (pressed(BTN.DUP) || ay < -0.55) nav = 'up';
+        else if (pressed(BTN.DDOWN) || ay > 0.55) nav = 'down';
+        else if (pressed(BTN.DLEFT) || ax < -0.55) nav = 'left';
+        else if (pressed(BTN.DRIGHT) || ax > 0.55) nav = 'right';
+        if (nav !== this.navHeld) {
+          this.navHeld = nav;
+          this.navRepeat = 0.34;
+          if (nav) this.onMenuInput?.(nav);
+        } else if (nav) {
+          this.navRepeat -= dt;
+          if (this.navRepeat <= 0) {
+            this.navRepeat = 0.11;
+            this.onMenuInput?.(nav);
+          }
+        }
+        if (edge(BTN.A)) this.onMenuInput?.('activate');
+        if (edge(BTN.B)) this.onMenuInput?.('back');
+        if (edge(BTN.LB)) this.onMenuInput?.('previousTab');
+        if (edge(BTN.RB)) this.onMenuInput?.('nextTab');
+      } else {
+        this.navHeld = null;
       }
 
       if (inMatch && p.alive) {

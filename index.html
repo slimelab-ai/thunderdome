@@ -8,6 +8,7 @@
 </head>
 <body>
   <div id="app"></div>
+  <div id="controller-hint" class="hidden"></div>
 
   <!-- ===================== HUD ===================== -->
   <div id="hud" class="hidden">
@@ -133,12 +134,17 @@
         <div class="shop-money">$<span id="shop-money">0</span></div>
       </div>
       <div id="earnings-box" class="hidden"></div>
+      <div id="shop-mobile-tabs" role="tablist" aria-label="Black market sections">
+        <button class="btn shop-mobile-tab" data-shop-view="market">MARKET</button>
+        <button class="btn shop-mobile-tab" data-shop-view="stash">STASH &amp; TAPE</button>
+        <button class="btn shop-mobile-tab" data-shop-view="squad">SQUAD</button>
+      </div>
       <div class="shop-cols">
-        <div class="shop-col">
+        <div class="shop-col" data-shop-panel="market">
           <div class="shop-col-title">🛒 THE MARKET <span class="dim">(purchases land in your stash)</span></div>
           <div id="market-list"></div>
         </div>
-        <div class="shop-col">
+        <div class="shop-col" data-shop-panel="stash">
           <div class="shop-col-title">📦 STASH <span class="dim">(drag anywhere — gear, packs, or the bin)</span></div>
           <div id="stash-scroll"><div id="stash-wrap"></div></div>
           <div id="sell-bin">💰 SELL — drop anything here to liquidate (55%)</div>
@@ -149,7 +155,7 @@
             <div id="market-tape" aria-label="Liquidation market transaction log"></div>
           </div>
         </div>
-        <div class="shop-col">
+        <div class="shop-col" data-shop-panel="squad">
           <div class="shop-col-title">👥 THE SQUAD <span class="dim">(wounds carry over — pay up or fight hurt)</span></div>
           <div id="char-tabs"></div>
           <div id="char-panel"></div>

@@ -190,3 +190,31 @@ test('while dead, d-pad and bumpers cycle spectator targets instead of gameplay 
     cycles.length = 0;
   }
 });
+
+test('outside combat, controller inputs drive UI navigation with held-stick repeat', () => {
+  const { hub } = makeHub();
+  const actions = [];
+  hub.onMenuInput = (action) => actions.push(action);
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  const pad = { connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons };
+  hub._pad = () => pad;
+
+  pad.axes[1] = 0.8;
+  hub.update(1 / 60, 'menu');
+  hub.update(1 / 60, 'menu');
+  assert.deepEqual(actions, ['down'], 'initial stick deflection moves once');
+  hub.update(0.35, 'menu');
+  assert.deepEqual(actions, ['down', 'down'], 'held stick repeats after the navigation delay');
+
+  pad.axes[1] = 0;
+  hub.update(1 / 60, 'menu');
+  for (const [index, action] of [[0, 'activate'], [1, 'back'], [4, 'previousTab'], [5, 'nextTab']]) {
+    buttons[index].pressed = true;
+    buttons[index].value = 1;
+    hub.update(1 / 60, 'shop');
+    buttons[index].pressed = false;
+    buttons[index].value = 0;
+    hub.update(1 / 60, 'shop');
+    assert.equal(actions.at(-1), action);
+  }
+});
