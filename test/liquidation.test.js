@@ -18,6 +18,20 @@ test('shared AMM raises price under demand and returns sold stock', () => {
   assert.equal(market.info('ammo_9mm').units, market.info('ammo_9mm').initial);
 });
 
+test('each recruit archetype has an independent Liquidation AMM pool', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const medicBefore = market.quoteRecruit('medic');
+  const marksmanBefore = market.quoteRecruit('marksman');
+  const paid = market.buyRecruit('medic');
+  assert.equal(paid, medicBefore);
+  assert.ok(market.quoteRecruit('medic') > medicBefore);
+  assert.equal(market.quoteRecruit('marksman'), marksmanBefore);
+  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial - 1);
+  const refund = market.releaseRecruit('medic');
+  assert.ok(Math.abs(refund - paid) <= 1);
+  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial);
+});
+
 test('circuits retains its 55% sale adapter', () => {
   const market = new CircuitMarket();
   assert.equal(market.quoteSell(makeItem('rifle')), 825);

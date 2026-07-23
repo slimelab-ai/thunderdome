@@ -1189,6 +1189,9 @@ function renderShop(earnings) {
     priceMult,
     priceOf: (type) => market.quoteBuy(type, 1, priceMult()),
     marketInfo: (type) => market.info(type),
+    recruitPrice: (type) => market.quoteRecruit(type),
+    recruitMarketInfo: (type) => market.recruitInfo(type),
+    releaseValue: (type) => market.quoteReleaseRecruit(type),
     buyItem: (type) => {
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
@@ -1245,13 +1248,14 @@ function renderShop(earnings) {
     sellCrew: (idx) => {
       const m = career.crew[idx];
       if (!m) return;
-      // everything they carry goes back to the stash, 50% of signing fee back
+      // Everything they carry goes back to the stash. In Liquidation their
+      // contract returns to that archetype's public AMM pool.
       for (const slot of ['head', 'body', 'limbs', 'gun1', 'gun2']) {
         const it = m.ch.gear[slot];
         if (it && !(it.type === 'pistol' && slot === 'gun1')) autoPlace(career.stash, it);
       }
       for (const e of [...m.ch.pack.items]) autoPlace(career.stash, e.it);
-      const refund = Math.round(HIRE_TYPES[m.type].price * 0.5);
+      const refund = market.releaseRecruit(m.type);
       career.money += refund;
       if (career.mode === 'liquidation') {
         recordMarketTrade(career.liquidation, 'player', 'release', null, refund, `${HIRE_TYPES[m.type].name} CONTRACT`);
@@ -1261,8 +1265,9 @@ function renderShop(earnings) {
     },
     hire: (typeId) => {
       const t = HIRE_TYPES[typeId];
-      const cost = t?.price;
-      if (career.money >= cost && career.crew.length < 8) {
+      const quoted = market.quoteRecruit(typeId);
+      if (t && Number.isFinite(quoted) && career.money >= quoted && career.crew.length < 8) {
+        const cost = market.buyRecruit(typeId);
         career.money -= cost;
         const ch = makeCharacter();
         autoPlace(ch.pack, makeItem('ammo_9mm')); // signs on stocked, like you did

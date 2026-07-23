@@ -383,6 +383,7 @@ export class UI {
 
     const limbFlag = (l) => (l.arm > 0.05 ? ' <span class="limb-flag">ARM</span>' : '') + (l.leg > 0.05 ? ' <span class="limb-flag">LEG</span>' : '');
     const trees = trainingTrees(type);
+    const releaseValue = !isPlayer ? actions.releaseValue(m.type) : 0;
     const trainingRows = (label, nodes) => `<div class="training-tree"><div class="training-tree-title">${label}</div>` +
       nodes.map(node => {
         const level = progress.skills[node.id] || 0;
@@ -420,15 +421,18 @@ export class UI {
       <div class="char-actions">
         ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}>🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
         ${!isPlayer ? `<button class="btn" data-bench="${who}">${m.benched ? '▶ DEPLOY' : '🪑 BENCH'}</button>` : ''}
-        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">RELEASE +$${Math.round(HIRE_TYPES[m.type].price * 0.5)}</button>` : ''}
+        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">RELEASE +$${releaseValue}</button>` : ''}
       </div>
       <div class="training-head"><b>CHARACTER TRAINING</b><span>${progress.xp} XP AVAILABLE</span></div>
       ${trainingRows('COMMON TREE', trees.common)}
       ${trainingRows(`${typeDef.name} TREE`, trees.role)}
       ${this.hireOpen ? `<div class="hire-menu">${Object.entries(HIRE_TYPES).map(([id, t]) => {
-        const cost = t.price;
-        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
-        <button class="btn" data-hire="${id}" ${career.money >= cost && career.crew.length < 8 ? '' : 'disabled'}>$${cost}</button></div>`;
+        const cost = actions.recruitPrice(id);
+        const soldOut = !Number.isFinite(cost);
+        const mi = actions.recruitMarketInfo(id);
+        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
+        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}${marketFlag}</div></div>
+        <button class="btn" data-hire="${id}" ${!soldOut && career.money >= cost && career.crew.length < 8 ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button></div>`;
       }).join('')}</div>` : ''}`;
 
     // ---- wire buttons ----
