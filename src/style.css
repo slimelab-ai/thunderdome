@@ -258,6 +258,10 @@ html, body {
   background: rgba(30,10,10,0.55); border: 1px solid rgba(227,36,43,0.35); border-radius: 5px; padding: 12px 14px; font-size: 13px; line-height: 1.7;
 }
 #next-bout b { color: var(--blood); font-size: 16px; }
+.rival-stock {
+  margin: 7px 0 5px; padding: 5px 8px; color: var(--gold); font-size: 10px; font-weight: 800;
+  letter-spacing: 1px; border-left: 2px solid var(--gold); background: rgba(255,185,46,0.07);
+}
 .shop-footer { margin-top: 18px; text-align: center; }
 
 /* death */

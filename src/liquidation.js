@@ -79,6 +79,14 @@ export function draftCanCoverDebt(state, money) {
   return money < 0 && !state.draft.complete && money + draftShare(state) >= 0;
 }
 
+export function allocateRivalSupply(inventory, type, fighterIndex, rosterSize, cap = 2) {
+  if (rosterSize <= 0 || fighterIndex < 0 || fighterIndex >= rosterSize) return 0;
+  const available = Math.max(0, Math.floor(inventory[type] || 0));
+  const evenShare = Math.floor(available / rosterSize);
+  const remainder = available % rosterSize;
+  return Math.min(cap, evenShare + (fighterIndex < remainder ? 1 : 0));
+}
+
 const STRATEGIES = {
   swarm: { guns: ['smg', 'pistol'], ammo: ['ammo_9mm'], armor: ['vest1', 'pads1'] },
   rifle: { guns: ['rifle'], ammo: ['ammo_762'], armor: ['vest2', 'helm1'] },
@@ -98,9 +106,19 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   else if (state.enemyMoney > state.bankroll * 0.45) state.enemy.strategy = 'heavy';
   const plan = STRATEGIES[state.enemy.strategy];
   const owned = t => inv[t] || 0;
-  let target = plan.ammo.find(t => owned(t) < 4 && affordable(t));
+  // Establish a working weapon first, then deliberately stock combat supplies.
+  // Without explicit goals these items never entered the old candidate list.
+  const plannedAmmo = plan.ammo.reduce((total, type) => total + owned(type), 0);
+  const plannedGuns = plan.guns.reduce((total, type) => total + owned(type), 0);
+  const supplies = { medkit: 2, grenade: 2, splint: 1 };
+  let target = plannedAmmo < 2
+    ? [...plan.ammo].sort((a, b) => pressure(a) - pressure(b)).find(affordable)
+    : null;
+  if (!target && plannedGuns < 1) target = plan.guns.find(affordable);
+  if (!target) target = Object.keys(supplies).find(t => owned(t) < supplies[t] && affordable(t));
   if (!target) target = plan.armor.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.guns.find(t => owned(t) < 3 && affordable(t));
+  if (!target) target = plan.ammo.find(t => owned(t) < 4 && affordable(t));
   if (!target) target = alternatives.find(t => affordable(t));
   if (!target) return null;
   const cost = market.buy(target);

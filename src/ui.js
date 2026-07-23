@@ -290,11 +290,18 @@ export class UI {
     }).join('');
 
     // ---- next bout ----
-    $('next-bout').innerHTML = liquidation
-      ? `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${career.liquidation.enemy.strategy.toUpperCase()}<br><span class="dim">${career.liquidation.enemy.log[0] || 'Watching your opening purchases.'}</span>`
-      : `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
+    if (liquidation) {
+      const rival = career.liquidation.enemy;
+      const trades = rival.log.slice(0, 3);
+      $('next-bout').innerHTML =
+        `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${rival.strategy.toUpperCase()}` +
+        `<div class="rival-stock">FIELD STOCK · ${rival.inventory.medkit || 0} MEDKIT · ${rival.inventory.splint || 0} SPLINT · ${rival.inventory.grenade || 0} FRAG</div>` +
+        `<span class="dim">${trades.length ? trades.join('<br>') : 'Watching your opening purchases.'}</span>`;
+    } else {
+      $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
+    }
 
     $('btn-next-fight').disabled = false;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';

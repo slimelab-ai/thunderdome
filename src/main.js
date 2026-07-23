@@ -16,7 +16,7 @@ import {
 import { createMarket } from './market.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
-  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt,
+  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
 } from './liquidation.js';
 
 // ============================================================ setup
@@ -248,6 +248,7 @@ function startMatch() {
     c.careerRef = cm;
     c.character = cm.ch;
     c.healKits = countInPack(cm.ch, 'medkit');
+    c.splints = countInPack(cm.ch, 'splint');
     c.nades = countInPack(cm.ch, 'grenade');
     c.shotsFired = 0;
     c.gunOptions = ['gun1', 'gun2'].map(s => cm.ch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
@@ -278,16 +279,24 @@ function startMatch() {
       archetype: r.arch,
     });
     // higher-league fighters carry supplies
-    c.nades = liquidation ? Math.min(2, career.liquidation.enemy.inventory.grenade || 0) : career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
-    c.healKits = liquidation ? Math.min(2, career.liquidation.enemy.inventory.medkit || 0) : career.rank <= 9 ? 1 : 0;
+    c.nades = liquidation
+      ? allocateRivalSupply(career.liquidation.enemy.inventory, 'grenade', i, roster.length)
+      : career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
+    c.healKits = liquidation
+      ? allocateRivalSupply(career.liquidation.enemy.inventory, 'medkit', i, roster.length)
+      : career.rank <= 9 ? 1 : 0;
+    c.splints = liquidation
+      ? allocateRivalSupply(career.liquidation.enemy.inventory, 'splint', i, roster.length)
+      : 0;
     if (r.arch === 'medic') c.healKits = 3;
-    if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; }
+    if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; c.splints = 0; }
     if (r.boss) { c.nades = 2; c.healKits = 2; }
     // the house stocks its fighters (fresh every match, no economy to grind):
     // 5 mags' worth, then they go to the knife like everyone else
     const et = ITEM_TYPES[r.w]?.ammo;
     if (et) c.ammoPools[et] = liquidation ? (r.ammo || 0) : WEAPONS[r.w].mag * 5;
     c._initialPools = { ...c.ammoPools }; // for honest end-of-match settlement
+    c._initialSupplies = { grenade: c.nades, medkit: c.healKits, splint: c.splints };
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
@@ -746,6 +755,7 @@ function finishMatch() {
         if (used > 0) consumeAmmo(ch, type, used);
       }
       while (countInPack(ch, 'medkit') > c.healKits) useFromPack(ch, 'medkit');
+      while (countInPack(ch, 'splint') > c.splints) useFromPack(ch, 'splint');
       while (countInPack(ch, 'grenade') > c.nades) useFromPack(ch, 'grenade');
     }
     // health persists; the downed stay at zero until someone pays the doctor
@@ -794,9 +804,14 @@ function finishMatch() {
     // Settle by rounds ACTUALLY fired per ammo type, not by whatever strategy
     // the shopkeeper AI happens to hold now.
     const usedByType = {};
+    const usedSupplies = { grenade: 0, medkit: 0, splint: 0 };
     for (const c of match.enemies) {
       for (const [t, initial] of Object.entries(c._initialPools || {})) {
         usedByType[t] = (usedByType[t] || 0) + Math.max(0, initial - (c.ammoPools[t] || 0));
+      }
+      for (const [type, initial] of Object.entries(c._initialSupplies || {})) {
+        const remaining = type === 'grenade' ? c.nades : type === 'medkit' ? c.healKits : c.splints;
+        usedSupplies[type] += Math.max(0, initial - remaining);
       }
     }
     for (const [t, used] of Object.entries(usedByType)) {
@@ -804,7 +819,9 @@ function finishMatch() {
       const itemType = `ammo_${t}`;
       a.enemy.inventory[itemType] = Math.max(0, (a.enemy.inventory[itemType] || 0) - Math.ceil(used / AMMO_TYPES[t].box));
     }
-    if (!match.won) a.enemy.inventory.medkit = Math.max(0, (a.enemy.inventory.medkit || 0) - 1);
+    for (const [type, used] of Object.entries(usedSupplies)) {
+      a.enemy.inventory[type] = Math.max(0, (a.enemy.inventory[type] || 0) - used);
+    }
     for (let i = 0; i < 3; i++) runLiquidationAI(a, market, {
       hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     });

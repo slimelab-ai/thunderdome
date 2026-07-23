@@ -4,7 +4,7 @@ import { LiquidationMarket, CircuitMarket } from '../src/market.js';
 import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
-  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt,
+  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -62,6 +62,25 @@ test('rival AI pivots away from a squeezed 9mm pool and explains the buy', () =>
   assert.equal(state.enemy.strategy, 'rifle');
   assert.ok(action.action.includes('RIFLE'));
   assert.ok(state.enemy.log[0].includes('bought'));
+});
+
+test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 20000;
+  for (let i = 0; i < 8; i++) runLiquidationAI(state, market);
+  assert.equal(state.enemy.inventory.medkit, 2);
+  assert.equal(state.enemy.inventory.grenade, 2);
+  assert.equal(state.enemy.inventory.splint, 1);
+  assert.ok(state.enemy.log.some(line => line.includes('bought FRAG')));
+  assert.ok(state.enemy.log.some(line => line.includes('SPLINT KIT')));
+});
+
+test('rival supplies are divided across fighters without duplication', () => {
+  const inventory = { grenade: 5 };
+  const shares = Array.from({ length: 3 }, (_, i) => allocateRivalSupply(inventory, 'grenade', i, 3));
+  assert.deepEqual(shares, [2, 2, 1]);
+  assert.equal(shares.reduce((total, n) => total + n, 0), inventory.grenade);
 });
 
 test('underdog sees comeback odds and can raise the stake', () => {

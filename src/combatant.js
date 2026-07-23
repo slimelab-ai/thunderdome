@@ -82,7 +82,9 @@ export class Combatant {
     this.nades = 0;
     this.nadeCd = 6 + Math.random() * 8;
     this.healKits = 0;
+    this.splints = 0;
     this.healingT = 0;
+    this.healingKind = null;
     this.sinceHit = 99;
     // stance: crouch cycling + cosmetic lean so heads aren't all at one height
     this.crouchK = 1;
@@ -340,9 +342,13 @@ export class Combatant {
     if (this.healingT > 0) {
       this.healingT -= dt;
       if (this.healingT <= 0) {
-        this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.45);
-        this.armDmg = 0;
-        this.legDmg = 0;
+        if (this.healingKind === 'splint') {
+          this.armDmg = 0;
+          this.legDmg = 0;
+        } else {
+          this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.45);
+        }
+        this.healingKind = null;
       }
     }
 
@@ -460,10 +466,17 @@ export class Combatant {
       if (this.healKits > 0 && this.hp < this.maxHp * 0.38 && this.sinceHit > 2.2 && (!sight || dist > engage * 1.6)) {
         this.healKits--;
         this.healingT = 2.1;
+        this.healingKind = 'medkit';
+      } else if (this.splints > 0 && Math.max(this.armDmg, this.legDmg) >= 0.4 &&
+        this.sinceHit > 2.2 && (!sight || dist > engage * 1.6)) {
+        this.splints--;
+        this.healingT = 1.8;
+        this.healingKind = 'splint';
       }
       // frag the target's hiding spot when we can't get an angle —
       // but never with a friendly (or, for crew, the boss) inside the blast radius
-      if (this.nades > 0 && this.nadeCd <= 0 && !sight && dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
+      if (this.healingT <= 0 && this.nades > 0 && this.nadeCd <= 0 && !sight &&
+        dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
         let friendlyInBlast = false;
         for (const c of world.combatants) {
           if (c === this || !c.alive || c.team !== this.team) continue;
