@@ -7,6 +7,14 @@ Based on the pitch: underground UFC with guns. You start with nothing but a pist
 climb ten ranks of increasingly dangerous squads, and everything is ultra-lethal —
 2–3 body shots kill, a hit to your arm ruins your aim, a hit to your leg makes you limp.
 
+Two modes share the same arena, inventory, combatants, and black-market catalog:
+
+- **Circuits** is the ranked ladder career.
+- **Liquidation** is a two-squad economic war. Equal bankrolls arrive through ten
+  alternating draft rounds, both squads trade against the same scarce AMM item pools,
+  and repeated self-bet bouts continue until one bankroll falls below zero. Liquidation
+  sales receive the full live pool quote; Circuits keeps its 55% liquidation rate.
+
 ## Run it
 
 ```

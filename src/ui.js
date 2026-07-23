@@ -222,8 +222,12 @@ export class UI {
   renderShop(career, player, nextSquad, earnings, actions) {
     this._shopArgs = [career, player, nextSquad, earnings, actions];
     $('shop-money').textContent = career.money.toLocaleString();
-    $('shop-sub').textContent = `Circuit ${career.circuit} · Rank ${career.rank} contender` +
-      (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
+    const liquidation = career.mode === 'liquidation';
+    const draftBout = liquidation && career.liquidation.round <= 10;
+    $('shop-sub').textContent = liquidation
+      ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
+      : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
+        (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
 
     const eb = $('earnings-box');
     if (earnings) {
@@ -237,7 +241,7 @@ export class UI {
     } else eb.classList.add('hidden');
 
     const pm = actions.priceMult();
-    const priceOf = (type) => Math.round(ITEM_TYPES[type].price * pm);
+    const priceOf = (type) => actions.priceOf ? actions.priceOf(type) : Math.round(ITEM_TYPES[type].price * pm);
 
     // ---- market ----
     const MARKET = [
@@ -261,11 +265,15 @@ export class UI {
       types.map(t => {
         const def = ITEM_TYPES[t];
         const cost = priceOf(t);
+        const soldOut = !Number.isFinite(cost);
+        const mi = actions.marketInfo?.(t);
+        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
+        const canBuy = !soldOut && career.money >= cost;
         return `<div class="market-row">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
-          <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span></span>
-          <button class="btn" data-buy-item="${t}" ${career.money >= cost ? '' : 'disabled'}>$${cost}</button>
-          <button class="btn" data-buy-to="${t}" ${career.money >= cost ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
+          <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
+          <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button>
+          <button class="btn" data-buy-to="${t}" ${canBuy ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
         </div>`;
       }).join('')).join('');
 
@@ -282,9 +290,14 @@ export class UI {
     }).join('');
 
     // ---- next bout ----
-    $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
+    $('next-bout').innerHTML = liquidation
+      ? `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${career.liquidation.enemy.strategy.toUpperCase()}<br><span class="dim">${career.liquidation.enemy.log[0] || 'Watching your opening purchases.'}</span>`
+      : `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
+
+    $('btn-next-fight').disabled = false;
+    $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
     const CELL = 42;
@@ -460,8 +473,11 @@ export class UI {
   }
 
 
-  renderIntro(career, squad, odds, onBet) {
-    $('intro-rank').textContent = career.rank;
+  renderIntro(career, squad, odds, onBet, liquidationBets = []) {
+    const liquidation = career.mode === 'liquidation';
+    $('intro-rank').parentElement.innerHTML = liquidation
+      ? `LIQUIDATION ROUND <span id="intro-rank">${career.liquidation.round}</span>`
+      : `RANK <span id="intro-rank">${career.rank}</span> BOUT`;
     $('intro-squad').textContent = squad.name;
     $('intro-flavor').textContent = squad.blurb;
 
@@ -475,8 +491,11 @@ export class UI {
       `<span class="intro-hp" style="color:${healthColor(hp / maxHp)}">${Math.round(hp)}/${maxHp} HP</span>` +
       (hurt ? '<span class="limb-flag">⚠ PATCH UP AT THE MARKET</span>' : '') +
       (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
-    const bets = [0, 200, 500, 1000];
-    $('bet-row').innerHTML = `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
+    const bets = liquidation ? liquidationBets : [0, 200, 500, 1000];
+    $('bet-row').innerHTML = liquidation
+      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.liquidation.enemyMoney.toLocaleString()}</span> ` +
+        bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}</button>`).join('')
+      : `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
         ${b <= career.money ? '' : 'disabled'}>${b === 0 ? 'NO BET' : '$' + b}</button>`).join('');
     if (onBet) {
@@ -490,11 +509,29 @@ export class UI {
     $('death-stats').innerHTML = stats;
   }
 
-  renderChampion(statsHtml) {
+  renderChampion(statsHtml, liquidationComplete = false) {
+    const screen = this.screens.champion;
+    screen.classList.toggle('liquidation-win', liquidationComplete);
+    $('champ-pre').textContent = liquidationComplete ? 'RIVAL INSOLVENT · HOUSE LIQUIDATED' : 'THE HOUSE DECLARES';
+    $('champ-title').textContent = 'VICTORY';
+    $('champ-sub').textContent = liquidationComplete ? 'YOU BROKE THE SYNDICATE' : 'YOU OWN THE PIT';
     $('champ-stats').innerHTML = statsHtml;
+    $('btn-newgame').textContent = liquidationComplete ? 'RETURN TO MAIN MENU' : 'NEXT CIRCUIT ➤';
+    const confetti = $('champ-confetti');
+    confetti.replaceChildren(...Array.from({ length: 64 }, (_, i) => {
+      const piece = document.createElement('i');
+      piece.style.setProperty('--x', (i * 37) % 101);
+      piece.style.setProperty('--drift', ((i * 29) % 31) - 15);
+      piece.style.setProperty('--fall', `${3.8 + (i % 9) * 0.31}s`);
+      piece.style.setProperty('--delay', `${-((i * 17) % 50) / 10}s`);
+      piece.style.setProperty('--spin', `${i % 2 ? 720 : -720}deg`);
+      return piece;
+    }));
+    audio.victoryFanfare();
   }
 
-  renderExecuted(statsHtml) {
+  renderExecuted(statsHtml, liquidationComplete = false) {
     $('executed-stats').innerHTML = statsHtml;
+    $('btn-executed-new').textContent = liquidationComplete ? 'RETURN TO MAIN MENU' : 'NEXT CONTESTANT — NEW CAREER';
   }
 }

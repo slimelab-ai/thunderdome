@@ -1,0 +1,30 @@
+services:
+  app-dev:
+    build:
+      context: .
+    image: thunderdome:dev
+    container_name: thunderdome_dev_app
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  tunnel-dev:
+    image: cloudflare/cloudflared:latest
+    user: "0:0"
+    container_name: thunderdome_dev_tunnel
+    restart: always
+    volumes:
+      - ./cloudflared-dev-config.yml:/etc/cloudflared/config.yml:ro
+      - /home/patrick/.cloudflared/f45b8768-8e30-4a2e-9eb0-825d9a3d4b18.json:/etc/cloudflared/credentials.json:ro
+    command: tunnel --config /etc/cloudflared/config.yml run
+    depends_on:
+      app-dev:
+        condition: service_healthy
+
+networks:
+  default:
+    name: thunderdome_dev_net

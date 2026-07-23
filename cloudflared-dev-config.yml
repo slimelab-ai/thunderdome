@@ -1,0 +1,7 @@
+tunnel: f45b8768-8e30-4a2e-9eb0-825d9a3d4b18
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: dev-thunderdome.slimelab.ai
+    service: http://app-dev:80
+  - service: http_status:404

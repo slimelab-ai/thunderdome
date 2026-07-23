@@ -134,6 +134,24 @@ class AudioEngine {
     setTimeout(() => this._tone(1760, 0.12, { type: 'square', gain: 0.08 }), 70);
   }
 
+  victoryFanfare() {
+    if (!this.ctx) return;
+    this.resume();
+    this.crowdRoar(2.5);
+    // Brass-like ascending call, a cymbal wash, then a full major chord.
+    const call = [196, 261.63, 329.63, 392];
+    call.forEach((note, i) => setTimeout(() => {
+      this._tone(note, 0.55, { type: 'sawtooth', gain: 0.11, freqEnd: note * 1.01, attack: 0.015, decay: 0.5 });
+      this._tone(note * 2, 0.45, { type: 'square', gain: 0.045, attack: 0.01, decay: 0.4 });
+    }, i * 190));
+    setTimeout(() => {
+      this._noise(1.9, { filterType: 'highpass', freq: 4200, gain: 0.2, attack: 0.01, decay: 1.7 });
+      this._tone(130.81, 1.7, { type: 'sine', gain: 0.24, attack: 0.025, decay: 1.55 });
+      [261.63, 329.63, 392, 523.25].forEach(note =>
+        this._tone(note, 1.65, { type: 'sawtooth', gain: 0.07, attack: 0.025, decay: 1.5 }));
+    }, 820);
+  }
+
   uiClick() { this._tone(900, 0.05, { type: 'square', gain: 0.05, freqEnd: 600 }); }
 
   explosion(vol = 1) {

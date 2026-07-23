@@ -557,6 +557,7 @@ export function buildArena(scene) {
       new THREE.Vector3(3, 0, -D / 2 + 2),
       new THREE.Vector3(-6, 0, -D / 2 + 3),
       new THREE.Vector3(6, 0, -D / 2 + 3),
+      new THREE.Vector3(0, 0, -D / 2 + 4), // liquidation swarm strategies field six
     ],
   };
 
