@@ -5,7 +5,7 @@ import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
-  recordMarketRound, recordMarketTrade, enemyRoster,
+  recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -57,6 +57,35 @@ test('each funded round records one envelope', () => {
   // Main gates funding by round; the primitive tracks each funded bout explicitly.
   assert.equal(state.draft.fundedRounds, 1);
   assert.equal(state.draft.lastEnvelope, 2500);
+});
+
+test('player-first draft waits for an explicit commit and runs the rival shop once', () => {
+  const state = newLiquidationState(20000, () => 0);
+  let rivalTurns = 0;
+  fundDraftRound(state, 0, () => rivalTurns++);
+  assert.equal(state.draft.playerFirst, true);
+  assert.equal(state.draft.playerTurnEnded, false);
+  assert.equal(state.draft.pendingEnemyShop, true);
+  assert.equal(rivalTurns, 0);
+
+  assert.equal(commitPlayerDraftTurn(state, () => rivalTurns++), true);
+  assert.equal(state.draft.playerTurnEnded, true);
+  assert.equal(state.draft.pendingEnemyShop, false);
+  assert.equal(rivalTurns, 1);
+  assert.equal(commitPlayerDraftTurn(state, () => rivalTurns++), false);
+  assert.equal(rivalTurns, 1);
+});
+
+test('enemy-first draft shops immediately and does not require a player commit', () => {
+  const state = newLiquidationState(20000, () => 0.9);
+  let rivalTurns = 0;
+  fundDraftRound(state, 0, () => rivalTurns++);
+  assert.equal(state.draft.playerFirst, false);
+  assert.equal(state.draft.playerTurnEnded, false);
+  assert.equal(state.draft.pendingEnemyShop, false);
+  assert.equal(rivalTurns, 1);
+  assert.equal(commitPlayerDraftTurn(state, () => rivalTurns++), false);
+  assert.equal(rivalTurns, 1);
 });
 
 test('rival begins with one fighter and buys every additional contract from the AMM', () => {

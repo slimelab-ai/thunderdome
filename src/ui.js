@@ -224,6 +224,10 @@ export class UI {
     $('shop-money').textContent = career.money.toLocaleString();
     const liquidation = career.mode === 'liquidation';
     const draftBout = liquidation && career.liquidation.round <= 10;
+    const draftTurn = draftBout
+      ? (actions.draftShopState?.() || { mustEndTurn: false, locked: false })
+      : { mustEndTurn: false, locked: false };
+    $('screen-shop').classList.toggle('turn-locked', draftTurn.locked);
     $('shop-sub').textContent = liquidation
       ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
       : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
@@ -269,7 +273,7 @@ export class UI {
         const soldOut = !Number.isFinite(cost);
         const mi = actions.marketInfo?.(t);
         const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
-        const canBuy = !soldOut && career.money >= cost;
+        const canBuy = !draftTurn.locked && !soldOut && career.money >= cost;
         return `<div class="market-row">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
           <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
@@ -314,7 +318,22 @@ export class UI {
       tape.scrollTop = tape.scrollHeight;
     }
 
-    $('btn-next-fight').disabled = false;
+    const turnStatus = $('shop-turn-status');
+    const endTurn = $('btn-end-turn');
+    turnStatus.classList.toggle('hidden', !draftBout);
+    turnStatus.className = !draftBout ? 'hidden' :
+      `shop-turn-status ${draftTurn.locked ? 'turn-committed' : draftTurn.mustEndTurn ? 'turn-open' : 'turn-second'}`;
+    turnStatus.textContent = draftTurn.locked
+      ? 'TURN COMMITTED · RIVAL TRANSACTIONS COMPLETE'
+      : draftTurn.mustEndTurn
+        ? 'YOUR DRAFT TURN · COMMIT WHEN YOUR TRANSACTIONS ARE COMPLETE'
+        : draftBout ? 'RIVAL MOVED FIRST · YOUR TURN' : '';
+    endTurn.classList.toggle('hidden', !draftTurn.mustEndTurn);
+    endTurn.disabled = !draftTurn.mustEndTurn;
+    endTurn.onclick = draftTurn.mustEndTurn
+      ? () => { audio.uiClick(); actions.endDraftTurn(); }
+      : null;
+    $('btn-next-fight').disabled = draftTurn.mustEndTurn;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
@@ -457,7 +476,13 @@ export class UI {
       this.renderShop(...this._shopArgs);
     });
 
-    this._bindDrag(actions, CELL);
+    if (draftTurn.locked) {
+      document.querySelectorAll('#screen-shop .shop-cols button').forEach(button => {
+        button.disabled = true;
+      });
+    } else {
+      this._bindDrag(actions, CELL);
+    }
   }
 
   // pointer-based drag & drop between stash / packs / doll slots / the SELL bin

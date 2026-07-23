@@ -17,7 +17,7 @@ import { createMarket } from './market.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
-  recordMarketRound, recordMarketTrade,
+  recordMarketRound, recordMarketTrade, commitPlayerDraftTurn,
 } from './liquidation.js';
 import {
   PLAYER_TYPE, HIRE_TYPES, createProgression, normalizeProgression, buyTraining,
@@ -142,14 +142,22 @@ function load() {
             c.liquidation.enemy.recruits = ['enforcer'];
           }
         }
-        if (c.liquidation?.draft && c.liquidation.draft.version !== 2) {
+        if (c.liquidation?.draft && c.liquidation.draft.version !== 3) {
           const old = c.liquidation.draft;
-          c.liquidation.draft = {
-            version: 2,
-            fundedRounds: old.complete ? 10 : Math.min(10, Math.floor((old.turn || 0) / 2)),
-            starter: old.starter || 'player', complete: !!old.complete,
-            pendingEnemyShop: false, lastEnvelope: 0,
-          };
+          if (old.version === 2) {
+            c.liquidation.draft = {
+              ...old, version: 3,
+              playerFirst: !!old.pendingEnemyShop,
+              playerTurnEnded: false,
+            };
+          } else {
+            c.liquidation.draft = {
+              version: 3,
+              fundedRounds: old.complete ? 10 : Math.min(10, Math.floor((old.turn || 0) / 2)),
+              starter: old.starter || 'player', complete: !!old.complete,
+              pendingEnemyShop: false, playerFirst: false, playerTurnEnded: false, lastEnvelope: 0,
+            };
+          }
         }
         return c;
       }
@@ -253,11 +261,8 @@ function clearCombatants() {
 
 function startMatch() {
   if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
-    for (let i = 0; i < 8; i++) runLiquidationAI(career.liquidation, market, {
-      hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
-    });
-    career.liquidation.draft.pendingEnemyShop = false;
-    save();
+    openShop();
+    return;
   }
   clearCombatants();
   match = makeMatch();
@@ -1192,6 +1197,24 @@ function ensureLiquidationRoundFunding() {
   save();
 }
 
+function draftShopState() {
+  if (career.mode !== 'liquidation' || career.liquidation.round > 10) {
+    return { mustEndTurn: false, locked: false };
+  }
+  const draft = career.liquidation.draft;
+  return {
+    mustEndTurn: !!draft.playerFirst && !draft.playerTurnEnded,
+    locked: !!draft.playerFirst && !!draft.playerTurnEnded,
+  };
+}
+
+function runRivalDraftShop() {
+  const a = career.liquidation;
+  for (let i = 0; i < 8; i++) runLiquidationAI(a, market, {
+    hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
+  });
+}
+
 function renderShop(earnings) {
   ui.renderShop(career, player, career.mode === 'liquidation' ? { name: 'THE RIVAL SYNDICATE', blurb: '', roster: [] } : SQUADS[career.rank], earnings, {
     playerPatchCost,
@@ -1202,7 +1225,16 @@ function renderShop(earnings) {
     recruitPrice: (type) => market.quoteRecruit(type),
     recruitMarketInfo: (type) => market.recruitInfo(type),
     releaseValue: (type) => market.quoteReleaseRecruit(type),
+    draftShopState,
+    endDraftTurn: () => {
+      if (commitPlayerDraftTurn(career.liquidation, runRivalDraftShop)) {
+        audio.klaxon();
+        save();
+        renderShop(earnings);
+      }
+    },
     buyItem: (type) => {
+      if (draftShopState().locked) return;
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
       if (def && career.money >= cost) {
@@ -1214,10 +1246,12 @@ function renderShop(earnings) {
       }
     },
     moveItem: (uid, to) => {
+      if (draftShopState().locked) return;
       if (moveItem(uid, to)) { audio.uiClick(); save(); }
       renderShop(earnings);
     },
     patchPlayer: () => {
+      if (draftShopState().locked) return;
       const cost = playerPatchCost();
       const pay = Math.min(cost, career.money);
       if (cost <= 0 || pay <= 0) return;
@@ -1237,6 +1271,7 @@ function renderShop(earnings) {
       audio.cashRegister(); save(); renderShop(earnings);
     },
     patchCrew: (idx) => {
+      if (draftShopState().locked) return;
       const m = career.crew[idx];
       const cost = crewPatchCost(m);
       const pay = Math.min(cost, career.money);
@@ -1256,6 +1291,7 @@ function renderShop(earnings) {
       audio.cashRegister(); save(); renderShop(earnings);
     },
     sellCrew: (idx) => {
+      if (draftShopState().locked) return;
       const m = career.crew[idx];
       if (!m) return;
       // Everything they carry goes back to the stash. In Liquidation their
@@ -1274,6 +1310,7 @@ function renderShop(earnings) {
       audio.cashRegister(); save(); renderShop(earnings);
     },
     hire: (typeId) => {
+      if (draftShopState().locked) return;
       const t = HIRE_TYPES[typeId];
       const quoted = market.quoteRecruit(typeId);
       if (t && Number.isFinite(quoted) && career.money >= quoted && career.crew.length < 8) {
@@ -1294,6 +1331,7 @@ function renderShop(earnings) {
       }
     },
     toggleBench: (idx) => {
+      if (draftShopState().locked) return;
       const m = career.crew[idx];
       if (!m) return;
       // deploy cap: 5 in the pit at once
@@ -1303,6 +1341,7 @@ function renderShop(earnings) {
       audio.uiClick(); save(); renderShop(earnings);
     },
     buyItemTo: (type, who) => {
+      if (draftShopState().locked) return;
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
       if (!def || career.money < cost) return;
@@ -1325,6 +1364,7 @@ function renderShop(earnings) {
       audio.cashRegister(); save(); renderShop(earnings);
     },
     train: (who, skillId) => {
+      if (draftShopState().locked) return;
       const isPlayer = who === 'player';
       const member = isPlayer ? null : career.crew[Number(who)];
       const progress = isPlayer ? career.playerProgress : member?.progress;
@@ -1337,6 +1377,10 @@ function renderShop(earnings) {
 }
 
 function showIntro() {
+  if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
+    openShop();
+    return;
+  }
   phase = 'intro';
   const liquidation = career.mode === 'liquidation';
   const liquidationBets = liquidation ? liquidationBetOptions(career.liquidation, career.money) : [];
@@ -1429,7 +1473,9 @@ on('btn-new', () => { career = newCareer('circuits'); market = createMarket('cir
 on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });
 on('btn-continue', () => { showIntro(); });
 on('btn-fight', () => startMatch());
-on('btn-next-fight', () => showIntro());
+on('btn-next-fight', () => {
+  if (!draftShopState().mustEndTurn) showIntro();
+});
 on('btn-retry', () => openShop());
 on('btn-intro-back', () => { career.bet = 0; openShop(); });
 function returnToMainMenu() {

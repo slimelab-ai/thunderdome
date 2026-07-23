@@ -14,7 +14,10 @@ export function suggestedLiquidationBankroll() {
 export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), random = Math.random) {
   const starter = random() < 0.5 ? 'player' : 'enemy';
   return {
-    bankroll, draft: { version: 2, fundedRounds: 0, starter, complete: false, pendingEnemyShop: false, lastEnvelope: 0 },
+    bankroll, draft: {
+      version: 3, fundedRounds: 0, starter, complete: false,
+      pendingEnemyShop: false, playerFirst: false, playerTurnEnded: false, lastEnvelope: 0,
+    },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
     complete: false, // the war is over: someone's bankroll died with no envelope left to save it
     enemy: { strategy: 'balanced', inventory: {}, recruits: ['enforcer'] },
@@ -94,10 +97,21 @@ export function fundDraftRound(state, playerMoney, onEnemyFirst) {
   const enemyFirst = (state.draft.fundedRounds % 2 === 0) === (state.draft.starter === 'enemy');
   state.draft.fundedRounds++;
   state.draft.lastEnvelope = amount;
+  state.draft.playerFirst = !enemyFirst;
+  state.draft.playerTurnEnded = false;
   state.draft.pendingEnemyShop = !enemyFirst;
   if (enemyFirst) onEnemyFirst?.(amount);
   if (state.draft.fundedRounds >= LIQUIDATION_DRAFT_TURNS) state.draft.complete = true;
   return playerMoney;
+}
+
+export function commitPlayerDraftTurn(state, onEnemyShop) {
+  const draft = state?.draft;
+  if (!draft?.playerFirst || draft.playerTurnEnded || !draft.pendingEnemyShop) return false;
+  draft.playerTurnEnded = true;
+  onEnemyShop?.();
+  draft.pendingEnemyShop = false;
+  return true;
 }
 
 export function draftCanCoverDebt(state, money) {

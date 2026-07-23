@@ -313,7 +313,25 @@ html, body {
   padding: 4px 2px; color: #8f8f99; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
   text-align: center; font-style: italic;
 }
-.shop-footer { margin-top: 18px; text-align: center; }
+.shop-footer {
+  margin-top: 18px; text-align: center;
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px;
+}
+.shop-turn-status {
+  flex-basis: 100%; font-size: 10px; font-weight: 900; letter-spacing: 1.8px;
+}
+.shop-turn-status.turn-open { color: var(--gold); }
+.shop-turn-status.turn-second { color: var(--acid); }
+.shop-turn-status.turn-committed { color: #ff777c; }
+#screen-shop.turn-locked .shop-cols button,
+#screen-shop.turn-locked .shop-cols .inv-item,
+#screen-shop.turn-locked #sell-bin {
+  pointer-events: none; opacity: 0.42;
+}
+#screen-shop.turn-locked #market-tape-wrap,
+#screen-shop.turn-locked #next-bout {
+  opacity: 1;
+}
 
 /* death */
 .death-inner { text-align: center; }
