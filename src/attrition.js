@@ -15,6 +15,7 @@ export function newAttritionState(bankroll = suggestedAttritionBankroll(), rando
   return {
     bankroll, draft: { version: 2, fundedRounds: 0, starter, complete: false, pendingEnemyShop: false, lastEnvelope: 0 },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
+    complete: false, // the war is over: someone's bankroll died with no envelope left to save it
     enemy: { strategy: 'balanced', inventory: {}, log: [] }, market: null,
   };
 }

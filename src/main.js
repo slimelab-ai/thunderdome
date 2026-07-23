@@ -9,7 +9,7 @@ import { WEAPONS } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import {
-  ITEM_TYPES, AMMO_TYPES, makeItem, sellValue, autoPlace, removeFromGrid, canPlace,
+  ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
   ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
@@ -283,6 +283,7 @@ function startMatch() {
     // 5 mags' worth, then they go to the knife like everyone else
     const et = ITEM_TYPES[r.w]?.ammo;
     if (et) c.ammoPools[et] = attrition ? (r.ammo || 0) : WEAPONS[r.w].mag * 5;
+    c._initialPools = { ...c.ammoPools }; // for honest end-of-match settlement
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
@@ -376,15 +377,14 @@ function handleKill(killer, victim, part) {
       const amt = payout(base + (headshot ? 100 : 0));
       match.killMoney += base;
       if (headshot) match.hsMoney += 100;
-      ui.moneyPop(amt);
-      audio.cashRegister();
+      if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); } // attrition kills pay in position, not cash
       player.hp = Math.min(player.maxHp, player.hp + 12); // adrenaline
       if (headshot) announcer.say('playerHeadshot', { victim: victim.name });
       else announcer.say('playerKill', { victim: victim.name });
     } else {
       const amt = payout(Math.round(base * 0.5));
       match.killMoney += Math.round(base * 0.5);
-      ui.moneyPop(amt);
+      if (amt > 0) ui.moneyPop(amt);
       if (killer.careerRef) killer.careerRef.kills = (killer.careerRef.kills || 0) + 1;
       announcer.say('allyKill', { killer: killer.name, victim: victim.name });
     }
@@ -559,8 +559,11 @@ function randomFloorSpot(margin = 5) {
 }
 
 const EVENTS = ['lightsout', 'gas', 'frenzy', 'airdrop', 'molotov', 'bounty', 'bloodrules'];
+// attrition has no kill payouts, so the money-themed spectacles would announce cash that never arrives
+const ATTRITION_EVENTS = ['lightsout', 'gas', 'airdrop', 'molotov', 'bloodrules'];
 function fireEvent() {
-  let ev = EVENTS[(Math.random() * EVENTS.length) | 0];
+  const pool = match.mode === 'attrition' ? ATTRITION_EVENTS : EVENTS;
+  let ev = pool[(Math.random() * pool.length) | 0];
   if (ev === 'bounty' && !match.enemies.some(c => c.alive && !c.boss)) ev = 'frenzy';
   audio.klaxon();
   if (ev === 'bounty') {
@@ -717,8 +720,7 @@ function updateEvents(dt) {
         player.healLimbs();
         player.mag = player.weapon.mag;
         const amt = payout(250);
-        ui.moneyPop(amt);
-        audio.cashRegister();
+        if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); }
         ui.eventBanner('PACKAGE CLAIMED', 'Full patch-up. Back to work.', '#86ff3c');
         scene.remove(ad.mesh);
         match.airdrop = null;
@@ -751,10 +753,16 @@ function finishMatch() {
   // settle the bet
   if (career.bet > 0) {
     if (match.mode === 'attrition') {
-      const payout = Math.round(career.bet * match.betOdds);
-      if (match.won) { career.money += payout; career.attrition.playerWins++; }
-      else { career.attrition.enemyMoney += career.bet + match.enemyBet; career.attrition.enemyWins++; }
-      match.betWinnings = match.won ? payout : 0;
+      const winnings = Math.round(career.bet * match.betOdds);
+      if (match.won) {
+        career.money += winnings;
+        career.totals.earned += winnings;
+        career.attrition.playerWins++;
+      } else {
+        career.attrition.enemyMoney += career.bet + match.enemyBet;
+        career.attrition.enemyWins++;
+      }
+      match.betWinnings = match.won ? winnings : 0;
     } else if (match.won) {
       const winnings = Math.round(career.bet * betOdds());
       career.money += winnings;
@@ -779,10 +787,19 @@ function finishMatch() {
     a.round++;
     resupplyAttrition(a, market);
     // The rival burns stock too; combat is the principal resource sink.
-    const fired = match.enemies.reduce((n, c) => n + (c.shotsFired || 0), 0);
-    const ammoType = a.enemy.strategy === 'swarm' ? 'ammo_9mm' : 'ammo_762';
-    const box = AMMO_TYPES[ITEM_TYPES[ammoType].ammoType].box;
-    a.enemy.inventory[ammoType] = Math.max(0, (a.enemy.inventory[ammoType] || 0) - Math.ceil(fired / box));
+    // Settle by rounds ACTUALLY fired per ammo type, not by whatever strategy
+    // the shopkeeper AI happens to hold now.
+    const usedByType = {};
+    for (const c of match.enemies) {
+      for (const [t, initial] of Object.entries(c._initialPools || {})) {
+        usedByType[t] = (usedByType[t] || 0) + Math.max(0, initial - (c.ammoPools[t] || 0));
+      }
+    }
+    for (const [t, used] of Object.entries(usedByType)) {
+      if (used <= 0) continue;
+      const itemType = `ammo_${t}`;
+      a.enemy.inventory[itemType] = Math.max(0, (a.enemy.inventory[itemType] || 0) - Math.ceil(used / AMMO_TYPES[t].box));
+    }
     if (!match.won) a.enemy.inventory.medkit = Math.max(0, (a.enemy.inventory.medkit || 0) - 1);
     for (let i = 0; i < 3; i++) runAttritionAI(a, market, {
       hoarded9mm: market.info('ammo_9mm').pressure > 1.4,

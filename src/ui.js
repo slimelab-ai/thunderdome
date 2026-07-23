@@ -265,13 +265,15 @@ export class UI {
       types.map(t => {
         const def = ITEM_TYPES[t];
         const cost = priceOf(t);
+        const soldOut = !Number.isFinite(cost);
         const mi = actions.marketInfo?.(t);
-        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
+        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
+        const canBuy = !soldOut && career.money >= cost;
         return `<div class="market-row">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
           <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
-          <button class="btn" data-buy-item="${t}" ${career.money >= cost ? '' : 'disabled'}>$${cost}</button>
-          <button class="btn" data-buy-to="${t}" ${career.money >= cost ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
+          <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button>
+          <button class="btn" data-buy-to="${t}" ${canBuy ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
         </div>`;
       }).join('')).join('');
 
