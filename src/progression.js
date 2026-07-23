@@ -102,7 +102,9 @@ const ROLE_TREES = {
 };
 
 export function createProgression(skills = {}, xp = 0, totalXp = xp) {
-  const cleanSkills = {};
+  // Keep the common stats explicit. Player movement/recoil code reads these on
+  // the first live frame, before the character has necessarily earned a tier.
+  const cleanSkills = { aim: 0, cardio: 0, tough: 0 };
   for (const [id, level] of Object.entries(skills || {})) {
     if (TRAINING_NODES[id]) cleanSkills[id] = Math.max(0, Math.min(3, Math.floor(level || 0)));
   }

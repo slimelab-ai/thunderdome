@@ -122,10 +122,10 @@ export class Player {
     this.vmRoot.add(this.currentVM.group);
   }
 
-  resetForMatch(spawn) {
+  resetForMatch(spawn, yaw = 0) {
     this.pos.copy(spawn);
     this.vel.set(0, 0, 0);
-    this.yaw = 0; this.pitch = 0;
+    this.yaw = yaw; this.pitch = 0;
     this.hp = this.maxHp = this.progressStats.maxHp || 100;
     this.alive = true;
     this.armDmg = 0; this.legDmg = 0;
@@ -446,7 +446,7 @@ export class Player {
 
     // ---- ADS ----
     const adsTarget = this.adsHeld && this.reloading <= 0 && !this.healing ? 1 : 0;
-    this.ads += (adsTarget - this.ads) * Math.min(1, dt * (9 + this.skills.cardio * 2));
+    this.ads += (adsTarget - this.ads) * Math.min(1, dt * (9 + (this.skills.cardio || 0) * 2));
     const targetFov = THREE.MathUtils.lerp(BASE_FOV, w.adsFov, this.ads);
     if (Math.abs(this.camera.fov - targetFov) > 0.1) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 12);
@@ -664,7 +664,7 @@ export class Player {
     this.world.fx.muzzleFlash(muzzle);
 
     // recoil
-    const r = w.recoil * (1 - this.ads * 0.35) * (1 - this.skills.aim * 0.14) * (1 + this.armDmg * 0.8);
+    const r = w.recoil * (1 - this.ads * 0.35) * (1 - (this.skills.aim || 0) * 0.14) * (1 + this.armDmg * 0.8);
     this.recoilPitch += 0.011 * r;
     this.recoilYaw += (Math.random() - 0.5) * 0.008 * r;
     this.bloom += w.recoil * 0.45;

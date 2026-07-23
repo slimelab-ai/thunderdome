@@ -349,7 +349,9 @@ function startMatch() {
   player.armor = armorMits(pch);
   player.character = pch;
   player.weightMult = weightSpeedMult(pch);
-  player.resetForMatch(arena.spawns.player);
+  // Start angled toward the right-hand gap in the protective gate screen
+  // instead of staring squarely into it from three metres away.
+  player.resetForMatch(arena.spawns.player, -0.72);
   player.vmRoot.visible = true;
   player._mountViewmodel();
   player.loadMagsFromPack();
