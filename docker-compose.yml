@@ -1,10 +1,27 @@
 services:
+  analytics:
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    image: thunderdome-analytics:latest
+    container_name: thunderdome_analytics
+    restart: always
+    environment:
+      ANALYTICS_DATA_DIR: /data
+      ANALYTICS_IP_SALT: ${ANALYTICS_IP_SALT:-thunderdome-local}
+    volumes:
+      - analytics-data:/data
+
   app:
     build:
       context: .
+      args:
+        VITE_BUILD_SHA: ${VITE_BUILD_SHA:-unknown}
     image: thunderdome:latest
     container_name: thunderdome_app
     restart: always
+    depends_on:
+      - analytics
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 30s
@@ -28,3 +45,6 @@ services:
 networks:
   default:
     name: thunderdome_net
+
+volumes:
+  analytics-data:

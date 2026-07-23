@@ -102,3 +102,18 @@ Regenerate the arena prop pack with
 
 Debug: `window.__game` exposes `{world, match, player, phase, career, step(dt, n), setLocked(v)}`
 for headless simulation of match frames.
+
+## Gameplay analytics
+
+The Docker stack includes an append-only collector behind `POST /api/analytics`.
+The browser batches schema-versioned, client-unverified events; the collector adds
+receipt time and a salted source hash, then writes one NDJSON file per UTC day to
+the `analytics-data` volume. Core events cover Liquidation AI decisions and market
+actions, draft funding, match entry/exit squad states, and kills.
+
+Set a private `ANALYTICS_IP_SALT` in the deployment environment. To inspect a day
+without copying it out of the volume:
+
+```sh
+docker exec thunderdome_analytics sh -c 'tail -n 20 /data/events-$(date -u +%F).ndjson'
+```
