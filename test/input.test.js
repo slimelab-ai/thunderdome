@@ -166,3 +166,27 @@ test('looking with the right stick turns the view and aim assist slows it near a
   assert.ok(Math.abs(assisted.player.yaw) < Math.abs(clean.player.yaw),
     `friction should slow the turn: ${assisted.player.yaw} vs ${clean.player.yaw}`);
 });
+
+test('while dead, d-pad and bumpers cycle spectator targets instead of gameplay actions', () => {
+  const { hub, player } = makeHub();
+  player.alive = false;
+  const cycles = [];
+  hub.onCycleSpectator = (dir) => cycles.push(dir);
+  player.throwGrenade = () => { throw new Error('gameplay action fired while dead'); };
+  player.drawKnife = () => { throw new Error('gameplay action fired while dead'); };
+
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  const pad = { connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons };
+  hub._pad = () => pad;
+  const dt = 1 / 60;
+
+  for (const [idx, dir] of [[15, 1], [14, -1], [5, 1], [4, -1]]) { // DRIGHT, DLEFT, RB, LB
+    buttons[idx].pressed = true; buttons[idx].value = 1;
+    hub.update(dt, 'match');
+    hub.update(dt, 'match'); // held — no repeat
+    buttons[idx].pressed = false; buttons[idx].value = 0;
+    hub.update(dt, 'match');
+    assert.deepEqual(cycles, [dir], `button ${idx}`);
+    cycles.length = 0;
+  }
+});

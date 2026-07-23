@@ -12,10 +12,12 @@ export function isTouchDevice() {
 }
 
 export class TouchControls {
-  constructor(player, { onPause } = {}) {
+  constructor(player, { onPause, onCycleSpectator } = {}) {
     this.player = player;
     this.onPause = onPause || (() => {});
+    this.onCycleSpectator = onCycleSpectator || (() => {});
     this.enabled = false;
+    this.spectating = false;
     this.moveX = 0;             // raw virtual-stick deflection, -1..1
     this.moveY = 0;
     this.sprint = false;        // slam the stick forward to sprint
@@ -40,6 +42,14 @@ export class TouchControls {
     this.enabled = v;
     this.root.classList.toggle('hidden', !v);
     if (!v) this._resetAll();
+  }
+
+  // dead-but-spectating: collapse to just the pause button; taps switch fighters
+  setSpectating(v) {
+    if (v === this.spectating) return;
+    this.spectating = v;
+    this.root.classList.toggle('spectating', v);
+    if (v) this._resetAll();
   }
 
   // toggle-button highlights follow the player's real state
@@ -95,6 +105,11 @@ export class TouchControls {
 
   _start(t) {
     const btn = t.target.closest?.('.t-btn');
+    if (this.spectating) {
+      if (btn?.id === 't-pause') this.onPause();
+      else this.onCycleSpectator(t.clientX < window.innerWidth / 2 ? -1 : 1);
+      return;
+    }
     if (btn) {
       const act = this._actions[btn.id];
       act?.down?.();

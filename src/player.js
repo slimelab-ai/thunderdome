@@ -317,6 +317,9 @@ export class Player {
     const w = this.weapon;
 
     if (!this.alive) {
+      // release the world proxy — a corpse must not soak bullets or draw AI fire
+      // while the spectator phase keeps the match running
+      this.world.playerProxy.alive = false;
       // death cam: slump to floor
       this.deathT += dt;
       const t = Math.min(1, this.deathT / 0.8);

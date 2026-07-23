@@ -48,13 +48,14 @@ const BTN = {
 // Gamepad + touch → player, with aim assist applied to both. Mouse/keyboard
 // bypass this entirely (and get no assist).
 export class InputHub {
-  constructor(player, world, camera, { touch = null, onPause, onResume } = {}) {
+  constructor(player, world, camera, { touch = null, onPause, onResume, onCycleSpectator } = {}) {
     this.player = player;
     this.world = world;
     this.camera = camera;
     this.touch = touch;
     this.onPause = onPause;
     this.onResume = onResume;
+    this.onCycleSpectator = onCycleSpectator;
     this.prevButtons = [];
     this.gamepadActiveAt = -10;
     this.sprintLatch = false;   // L3 arms it; easing off the stick clears it
@@ -121,6 +122,11 @@ export class InputHub {
       } else {
         if (this.rtHeld) { p.onMouseUp(0); this.rtHeld = false; }
         if (this.ltHeld) { p.onMouseUp(2); this.ltHeld = false; }
+        if (inMatch && !p.alive) {
+          // dead and spectating: d-pad / bumpers switch fighters
+          if (edge(BTN.DLEFT) || edge(BTN.LB)) this.onCycleSpectator?.(-1);
+          if (edge(BTN.DRIGHT) || edge(BTN.RB)) this.onCycleSpectator?.(1);
+        }
       }
 
       this.prevButtons = pad.buttons.map((_, i) => pressed(i));
@@ -136,10 +142,10 @@ export class InputHub {
       p.padMoveX += mv.x;
       p.padMoveZ += mv.y;
       touchMoveMag = mv.mag;
-      this.touch.sync();
     } else if (this.touch) {
       this.touch.consumeLook(); // don't bank aim deltas while paused
     }
+    if (touchOn) this.touch.sync(); // keep toggle highlights honest even while dead
 
     // sprint intent: L3 latches until the stick eases off forward or you ADS
     if (padMove.y > -0.4) this.sprintLatch = false;

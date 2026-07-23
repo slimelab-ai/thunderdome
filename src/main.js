@@ -79,11 +79,13 @@ const player = new Player(camera, world);
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
 const touchMode = isTouchDevice();
 if (touchMode) document.body.classList.add('touch-mode');
-const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch() }) : null;
+const onCycleSpectator = (dir) => { if (phase === 'match' && match?.spectating) cycleSpectator(dir); };
+const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch(), onCycleSpectator }) : null;
 const input = new InputHub(player, world, camera, {
   touch,
   onPause: () => pauseMatch(),
   onResume: () => resumeFromPause(),
+  onCycleSpectator,
 });
 
 // ============================================================ career / save
@@ -1422,7 +1424,7 @@ document.addEventListener('wheel', (e) => { if (locked && phase === 'match') pla
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   player.clearInput();
-  if (!locked && phase === 'match' && player.alive && !match.ended) {
+  if (!locked && phase === 'match' && (player.alive || match.spectating) && !match.ended) {
     // pointer-lock loss only pauses mouse players; a controller plays unlocked
     if (input.gamepadActive) return;
     ui.showScreen('pause');
@@ -1432,7 +1434,7 @@ document.addEventListener('pointerlockchange', () => {
 
 // pause/resume paths that don't depend on pointer lock (gamepad Start, touch button)
 function pauseMatch() {
-  if (phase !== 'match' || !player.alive || match?.ended) return;
+  if (phase !== 'match' || match?.ended || (!player.alive && !match?.spectating)) return;
   if (document.pointerLockElement) document.exitPointerLock();
   player.clearInput();
   ui.showScreen('pause');
@@ -1591,7 +1593,10 @@ function tick() {
   fx.update(dt);
   audio.update(dt);
   input.update(dt, phase); // gamepad + touch → player (runs in pause too, for Start-resume)
-  if (touch) touch.setVisible(phase === 'match');
+  if (touch) {
+    touch.setVisible(phase === 'match');
+    touch.setSpectating(phase === 'match' && !!match?.spectating);
+  }
 
   if (phase === 'match') {
     stepMatch(dt);
