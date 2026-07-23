@@ -1,4 +1,5 @@
 import { ITEM_TYPES, AMMO_TYPES } from './items.js';
+import { HIRE_TYPES } from './progression.js';
 
 export const LIQUIDATION_DRAFT_TURNS = 10;
 
@@ -13,10 +14,13 @@ export function suggestedLiquidationBankroll() {
 export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), random = Math.random) {
   const starter = random() < 0.5 ? 'player' : 'enemy';
   return {
-    bankroll, draft: { version: 2, fundedRounds: 0, starter, complete: false, pendingEnemyShop: false, lastEnvelope: 0 },
+    bankroll, draft: {
+      version: 3, fundedRounds: 0, starter, complete: false,
+      pendingEnemyShop: false, playerFirst: false, playerTurnEnded: false, lastEnvelope: 0,
+    },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
     complete: false, // the war is over: someone's bankroll died with no envelope left to save it
-    enemy: { strategy: 'balanced', inventory: {} },
+    enemy: { strategy: 'balanced', inventory: {}, recruits: ['enforcer'] },
     marketLog: [{ kind: 'round', round: 1 }],
     market: null,
   };
@@ -93,10 +97,21 @@ export function fundDraftRound(state, playerMoney, onEnemyFirst) {
   const enemyFirst = (state.draft.fundedRounds % 2 === 0) === (state.draft.starter === 'enemy');
   state.draft.fundedRounds++;
   state.draft.lastEnvelope = amount;
+  state.draft.playerFirst = !enemyFirst;
+  state.draft.playerTurnEnded = false;
   state.draft.pendingEnemyShop = !enemyFirst;
   if (enemyFirst) onEnemyFirst?.(amount);
   if (state.draft.fundedRounds >= LIQUIDATION_DRAFT_TURNS) state.draft.complete = true;
   return playerMoney;
+}
+
+export function commitPlayerDraftTurn(state, onEnemyShop) {
+  const draft = state?.draft;
+  if (!draft?.playerFirst || draft.playerTurnEnded || !draft.pendingEnemyShop) return false;
+  draft.playerTurnEnded = true;
+  onEnemyShop?.();
+  draft.pendingEnemyShop = false;
+  return true;
 }
 
 export function draftCanCoverDebt(state, money) {
@@ -112,10 +127,22 @@ export function allocateRivalSupply(inventory, type, fighterIndex, rosterSize, c
 }
 
 const STRATEGIES = {
-  swarm: { guns: ['smg', 'pistol'], ammo: ['ammo_9mm'], armor: ['vest1', 'pads1'] },
-  rifle: { guns: ['rifle'], ammo: ['ammo_762'], armor: ['vest2', 'helm1'] },
-  heavy: { guns: ['rifle', 'shotgun'], ammo: ['ammo_762', 'ammo_buck'], armor: ['helm2', 'vest2', 'pads2'] },
-  balanced: { guns: ['rifle', 'smg'], ammo: ['ammo_762', 'ammo_9mm'], armor: ['helm1', 'vest1', 'pads1'] },
+  swarm: {
+    guns: ['smg', 'pistol'], ammo: ['ammo_9mm'], armor: ['vest1', 'pads1'],
+    recruits: ['rusher', 'rusher', 'medic', 'enforcer'], desiredRoster: 5,
+  },
+  rifle: {
+    guns: ['rifle'], ammo: ['ammo_762'], armor: ['vest2', 'helm1'],
+    recruits: ['marksman', 'enforcer', 'medic', 'shield'], desiredRoster: 3,
+  },
+  heavy: {
+    guns: ['rifle', 'shotgun'], ammo: ['ammo_762', 'ammo_buck'], armor: ['helm2', 'vest2', 'pads2'],
+    recruits: ['shield', 'medic', 'enforcer', 'marksman'], desiredRoster: 2,
+  },
+  balanced: {
+    guns: ['rifle', 'smg'], ammo: ['ammo_762', 'ammo_9mm'], armor: ['helm1', 'vest1', 'pads1'],
+    recruits: ['medic', 'rusher', 'marksman', 'shield'], desiredRoster: 3,
+  },
 };
 
 export function runLiquidationAI(state, market, playerSignals = {}) {
@@ -130,6 +157,27 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   else if (state.enemyMoney > state.bankroll * 0.45) state.enemy.strategy = 'heavy';
   const plan = STRATEGIES[state.enemy.strategy];
   const owned = t => inv[t] || 0;
+  const recruits = state.enemy.recruits ||= ['enforcer'];
+  const fundedRounds = state.draft?.fundedRounds || 0;
+  const desiredRoster = fundedRounds <= 0 ? 1 : Math.min(5, Math.max(
+    plan.desiredRoster,
+    1 + Math.floor(fundedRounds / 2),
+  ));
+  if (recruits.length < desiredRoster) {
+    const candidates = plan.recruits
+      .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
+      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= state.enemyMoney)
+      .sort((a, b) => a.order - b.order || a.cost - b.cost);
+    const recruit = candidates[recruits.length - 1] || candidates[0];
+    if (recruit) {
+      const cost = market.buyRecruit(recruit.type);
+      state.enemyMoney -= cost;
+      recruits.push(recruit.type);
+      const label = `${HIRE_TYPES[recruit.type].name} CONTRACT`;
+      recordMarketTrade(state, 'rival', 'hire', null, cost, label);
+      return { kind: 'hire', type: recruit.type, cost, action: `${state.enemy.strategy.toUpperCase()}: hired ${label} for $${cost}` };
+    }
+  }
   // Establish a working weapon first, then deliberately stock combat supplies.
   // Without explicit goals these items never entered the old candidate list.
   const plannedAmmo = plan.ammo.reduce((total, type) => total + owned(type), 0);
@@ -160,10 +208,18 @@ export function enemyRoster(state) {
   const ammoType = ITEM_TYPES[gun].ammo;
   const ammoItem = `ammo_${ammoType}`;
   const totalRounds = (inv[ammoItem] || 0) * AMMO_TYPES[ammoType].box;
-  const count = strategy === 'swarm' ? 6 : 3;
-  return Array.from({ length: count }, (_, i) => ({
-    w: gun, hp: strategy === 'heavy' ? 130 : 105, sp: strategy === 'swarm' ? 1.25 : 0.9,
-    re: strategy === 'swarm' ? 0.48 : 0.4, ar: strategy === 'heavy' ? 0.5 : (inv.vest1 ? 0.25 : 0),
-    ammo: Math.floor(totalRounds / count), name: `RIVAL ${i + 1}`,
-  }));
+  let recruits = (state.enemy.recruits || ['enforcer'])
+    .filter(type => HIRE_TYPES[type])
+    .slice(0, 5);
+  if (!recruits.length) recruits = ['enforcer'];
+  const count = Math.max(1, recruits.length);
+  return recruits.map((type, i) => {
+    const fighter = HIRE_TYPES[type];
+    return {
+      w: gun, hp: fighter.hp, sp: fighter.spreadMult, re: fighter.reaction,
+      ar: strategy === 'heavy' ? 0.5 : (inv.vest1 ? 0.25 : 0),
+      arch: fighter.archetype, ammo: Math.floor(totalRounds / count),
+      name: `RIVAL ${i + 1}`,
+    };
+  });
 }

@@ -5,7 +5,7 @@ import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
-  recordMarketRound, recordMarketTrade,
+  recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -57,6 +57,51 @@ test('each funded round records one envelope', () => {
   // Main gates funding by round; the primitive tracks each funded bout explicitly.
   assert.equal(state.draft.fundedRounds, 1);
   assert.equal(state.draft.lastEnvelope, 2500);
+});
+
+test('player-first draft waits for an explicit commit and runs the rival shop once', () => {
+  const state = newLiquidationState(20000, () => 0);
+  let rivalTurns = 0;
+  fundDraftRound(state, 0, () => rivalTurns++);
+  assert.equal(state.draft.playerFirst, true);
+  assert.equal(state.draft.playerTurnEnded, false);
+  assert.equal(state.draft.pendingEnemyShop, true);
+  assert.equal(rivalTurns, 0);
+
+  assert.equal(commitPlayerDraftTurn(state, () => rivalTurns++), true);
+  assert.equal(state.draft.playerTurnEnded, true);
+  assert.equal(state.draft.pendingEnemyShop, false);
+  assert.equal(rivalTurns, 1);
+  assert.equal(commitPlayerDraftTurn(state, () => rivalTurns++), false);
+  assert.equal(rivalTurns, 1);
+});
+
+test('enemy-first draft shops immediately and does not require a player commit', () => {
+  const state = newLiquidationState(20000, () => 0.9);
+  let rivalTurns = 0;
+  fundDraftRound(state, 0, () => rivalTurns++);
+  assert.equal(state.draft.playerFirst, false);
+  assert.equal(state.draft.playerTurnEnded, false);
+  assert.equal(state.draft.pendingEnemyShop, false);
+  assert.equal(rivalTurns, 1);
+  assert.equal(commitPlayerDraftTurn(state, () => rivalTurns++), false);
+  assert.equal(rivalTurns, 1);
+});
+
+test('rival begins with one fighter and buys every additional contract from the AMM', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  assert.deepEqual(state.enemy.recruits, ['enforcer']);
+  assert.equal(enemyRoster(state).length, 1);
+  fundDraftRound(state, 0);
+  for (let i = 0; i < 8; i++) runLiquidationAI(state, market);
+  assert.equal(state.enemy.recruits.length, 3);
+  assert.equal(enemyRoster(state).length, 3);
+  const hires = state.marketLog.filter(entry => entry.kind === 'trade' && entry.side === 'rival' && entry.action === 'hire');
+  assert.equal(hires.length, 2);
+  assert.deepEqual(hires.map(entry => entry.label), ['MEDIC CONTRACT', 'RUSHER CONTRACT']);
+  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial - 1);
+  assert.equal(market.recruitInfo('rusher').units, market.recruitInfo('rusher').initial - 1);
 });
 
 test('the next draft envelope protects only a recoverable deficit', () => {
