@@ -16,8 +16,32 @@ export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), r
     bankroll, draft: { version: 2, fundedRounds: 0, starter, complete: false, pendingEnemyShop: false, lastEnvelope: 0 },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
     complete: false, // the war is over: someone's bankroll died with no envelope left to save it
-    enemy: { strategy: 'balanced', inventory: {}, log: [] }, market: null,
+    enemy: { strategy: 'balanced', inventory: {} },
+    marketLog: [{ kind: 'round', round: 1 }],
+    market: null,
   };
+}
+
+export function recordMarketRound(state, round = state.round) {
+  state.marketLog ||= [];
+  if (!state.marketLog.some(entry => entry.kind === 'round' && entry.round === round)) {
+    state.marketLog.push({ kind: 'round', round });
+  }
+  return state.marketLog;
+}
+
+export function recordMarketTrade(state, side, action, type, amount) {
+  recordMarketRound(state);
+  const entry = { kind: 'trade', round: state.round, side, action, type, amount: Math.round(amount) };
+  state.marketLog.push(entry);
+  return entry;
+}
+
+export function recordMarketEvent(state, text) {
+  recordMarketRound(state);
+  const entry = { kind: 'event', round: state.round, text };
+  state.marketLog.push(entry);
+  return entry;
 }
 
 export function liquidationOdds(state, playerMoney) {
@@ -48,8 +72,7 @@ export function resupplyLiquidation(state, market, random = Math.random) {
     market.restock(type, quantity); delivered[type] = quantity;
   }
   state.lastResupply = { round: completedRound, delivered };
-  state.enemy.log.unshift(`HOUSE RESUPPLY: ammo and consumables hit the shared market after round ${completedRound}`);
-  state.enemy.log.length = Math.min(state.enemy.log.length, 8);
+  recordMarketEvent(state, `HOUSE RESTOCK · ammo and consumables added after round ${completedRound}`);
   return state.lastResupply;
 }
 
@@ -125,7 +148,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   state.enemyMoney -= cost;
   inv[target] = owned(target) + 1;
   const action = `${state.enemy.strategy.toUpperCase()}: bought ${ITEM_TYPES[target].name} for $${cost}`;
-  state.enemy.log.unshift(action); state.enemy.log.length = Math.min(state.enemy.log.length, 8);
+  recordMarketTrade(state, 'rival', 'buy', target, cost);
   return { type: target, cost, action };
 }
 

@@ -258,9 +258,29 @@ html, body {
   background: rgba(30,10,10,0.55); border: 1px solid rgba(227,36,43,0.35); border-radius: 5px; padding: 12px 14px; font-size: 13px; line-height: 1.7;
 }
 #next-bout b { color: var(--blood); font-size: 16px; }
-.rival-stock {
-  margin: 7px 0 5px; padding: 5px 8px; color: var(--gold); font-size: 10px; font-weight: 800;
-  letter-spacing: 1px; border-left: 2px solid var(--gold); background: rgba(255,185,46,0.07);
+#market-tape {
+  max-height: 210px; overflow-y: auto; padding: 5px 8px 8px;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; background: rgba(4,4,6,0.76);
+  scrollbar-color: #4b4b55 transparent; scrollbar-width: thin;
+}
+.tape-round {
+  display: flex; align-items: center; gap: 8px; margin: 8px 0 5px;
+  color: var(--gold); font-size: 9px; font-weight: 900; letter-spacing: 2px;
+}
+.tape-round::before, .tape-round::after { content: ""; height: 1px; flex: 1; background: rgba(255,185,46,0.35); }
+.tape-row {
+  display: grid; grid-template-columns: 42px 1fr auto; gap: 6px; align-items: baseline;
+  padding: 3px 2px; border-bottom: 1px solid rgba(255,255,255,0.045); font-size: 10px;
+}
+.tape-side { font-weight: 900; letter-spacing: 1px; }
+.tape-player .tape-side { color: var(--acid); }
+.tape-rival .tape-side { color: #ff777c; }
+.tape-action { color: #bbb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tape-credit { color: var(--acid); }
+.tape-debit { color: #d0a257; }
+.tape-event {
+  padding: 4px 2px; color: #8f8f99; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+  text-align: center; font-style: italic;
 }
 .shop-footer { margin-top: 18px; text-align: center; }
 

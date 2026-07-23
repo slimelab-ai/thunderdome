@@ -292,15 +292,35 @@ export class UI {
     // ---- next bout ----
     if (liquidation) {
       const rival = career.liquidation.enemy;
-      const trades = rival.log.slice(0, 3);
       $('next-bout').innerHTML =
-        `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${rival.strategy.toUpperCase()}` +
-        `<div class="rival-stock">FIELD STOCK · ${rival.inventory.medkit || 0} MEDKIT · ${rival.inventory.splint || 0} SPLINT · ${rival.inventory.grenade || 0} FRAG</div>` +
-        `<span class="dim">${trades.length ? trades.join('<br>') : 'Watching your opening purchases.'}</span>`;
+        `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${rival.strategy.toUpperCase()}<br>` +
+        `<span class="dim">Their inventory is private. Their trades and bankroll are not.</span>`;
     } else {
       $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
+    }
+
+    const tapeWrap = $('market-tape-wrap');
+    tapeWrap.classList.toggle('hidden', !liquidation);
+    if (liquidation) {
+      const tape = $('market-tape');
+      tape.innerHTML = (career.liquidation.marketLog || []).map(entry => {
+        if (entry.kind === 'round') {
+          return `<div class="tape-round"><span>ROUND ${entry.round}</span></div>`;
+        }
+        if (entry.kind === 'event') {
+          return `<div class="tape-event">${entry.text}</div>`;
+        }
+        const item = ITEM_TYPES[entry.type]?.name || entry.type;
+        const playerSide = entry.side === 'player';
+        const sold = entry.action === 'sell';
+        return `<div class="tape-row ${playerSide ? 'tape-player' : 'tape-rival'}">` +
+          `<span class="tape-side">${playerSide ? 'YOU' : 'RIVAL'}</span>` +
+          `<span class="tape-action">${sold ? 'SOLD' : 'BOUGHT'} ${item}</span>` +
+          `<b class="${sold ? 'tape-credit' : 'tape-debit'}">${sold ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
+      }).join('');
+      tape.scrollTop = tape.scrollHeight;
     }
 
     $('btn-next-fight').disabled = false;

@@ -5,6 +5,7 @@ import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  recordMarketRound, recordMarketTrade,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -61,7 +62,9 @@ test('rival AI pivots away from a squeezed 9mm pool and explains the buy', () =>
   const action = runLiquidationAI(state, market, { hoarded9mm: true });
   assert.equal(state.enemy.strategy, 'rifle');
   assert.ok(action.action.includes('RIFLE'));
-  assert.ok(state.enemy.log[0].includes('bought'));
+  assert.deepEqual(state.marketLog.at(-1), {
+    kind: 'trade', round: 1, side: 'rival', action: 'buy', type: action.type, amount: action.cost,
+  });
 });
 
 test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
@@ -72,8 +75,21 @@ test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
   assert.equal(state.enemy.inventory.medkit, 2);
   assert.equal(state.enemy.inventory.grenade, 2);
   assert.equal(state.enemy.inventory.splint, 1);
-  assert.ok(state.enemy.log.some(line => line.includes('bought FRAG')));
-  assert.ok(state.enemy.log.some(line => line.includes('SPLINT KIT')));
+  const rivalBuys = state.marketLog.filter(entry => entry.kind === 'trade' && entry.side === 'rival');
+  assert.ok(rivalBuys.some(entry => entry.type === 'grenade'));
+  assert.ok(rivalBuys.some(entry => entry.type === 'splint'));
+});
+
+test('public market tape records both sides and separates rounds', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  recordMarketTrade(state, 'player', 'buy', 'rifle', 1500);
+  state.round = 2;
+  recordMarketRound(state);
+  recordMarketTrade(state, 'player', 'sell', 'rifle', 1600);
+  assert.deepEqual(state.marketLog.map(entry => entry.kind), ['round', 'trade', 'round', 'trade']);
+  assert.deepEqual(state.marketLog[2], { kind: 'round', round: 2 });
+  assert.equal(state.marketLog[3].action, 'sell');
+  assert.equal(state.marketLog[3].amount, 1600);
 });
 
 test('rival supplies are divided across fighters without duplication', () => {
@@ -101,5 +117,5 @@ test('every third completed round resupplies only shared consumables and ammo', 
   assert.equal(drop.round, 3);
   assert.equal(market.info('ammo_762').units, ammoBefore + 2);
   assert.equal(market.info('rifle').units, rifleBefore);
-  assert.match(state.enemy.log[0], /HOUSE RESUPPLY/);
+  assert.match(state.marketLog.at(-1).text, /HOUSE RESTOCK/);
 });

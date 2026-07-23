@@ -17,6 +17,7 @@ import { createMarket } from './market.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  recordMarketRound, recordMarketTrade,
 } from './liquidation.js';
 
 // ============================================================ setup
@@ -107,6 +108,10 @@ function load() {
         if (c.attrition && !c.liquidation) c.liquidation = c.attrition;
         if (c.mode === 'attrition') c.mode = 'liquidation';
         delete c.attrition;
+        if (c.liquidation) {
+          c.liquidation.marketLog ||= [{ kind: 'round', round: c.liquidation.round || 1 }];
+          delete c.liquidation.enemy?.log;
+        }
         if ((c.mode === 'liquidation' || c.liquidation) && c.liquidation?.complete) {
           localStorage.removeItem(SAVE_KEY);
           return null;
@@ -799,6 +804,7 @@ function finishMatch() {
   if (match.mode === 'liquidation') {
     const a = career.liquidation;
     a.round++;
+    recordMarketRound(a);
     resupplyLiquidation(a, market);
     // The rival burns stock too; combat is the principal resource sink.
     // Settle by rounds ACTUALLY fired per ammo type, not by whatever strategy
@@ -961,7 +967,9 @@ function moveItem(uid, to) {
 
   if (to.kind === 'sell') {
     detachItem(found);
-    career.money += career.mode === 'liquidation' ? market.sell(it) : market.quoteSell(it, priceMult());
+    const value = career.mode === 'liquidation' ? market.sell(it) : market.quoteSell(it, priceMult());
+    career.money += value;
+    if (career.mode === 'liquidation') recordMarketTrade(career.liquidation, 'player', 'sell', it.type, value);
     audio.cashRegister();
     return true;
   }
@@ -1082,6 +1090,7 @@ function renderShop(earnings) {
       if (def && career.money >= cost) {
         market.buy(type);
         career.money -= cost;
+        if (career.mode === 'liquidation') recordMarketTrade(career.liquidation, 'player', 'buy', type, cost);
         autoPlace(career.stash, makeItem(type));
         audio.cashRegister(); save(); renderShop(earnings);
       }
@@ -1181,6 +1190,7 @@ function renderShop(earnings) {
       if (!ch) return;
       career.money -= cost;
       market.buy(type);
+      if (career.mode === 'liquidation') recordMarketTrade(career.liquidation, 'player', 'buy', type, cost);
       const it = makeItem(type);
       if (def.kind === 'gun') {
         if (!ch.gear.gun1) ch.gear.gun1 = it;
