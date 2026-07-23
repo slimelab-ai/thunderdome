@@ -38,6 +38,11 @@ export class Player {
     this.healing = null;               // {kind, label, t, dur}
     this.throwCd = 0;
     this.skills = { aim: 0, cardio: 0, tough: 0 };
+    this.progressStats = {
+      maxHp: 100, spreadMult: 1, speedMult: 1, reloadMult: 1,
+      damageTakenMult: 1, killHeal: 8,
+    };
+    this.damageTakenMult = 1;
 
     // weapons
     this.slots = ['pistol'];
@@ -87,7 +92,7 @@ export class Player {
   get eyeHeight() { return this.crouching ? EYE_CROUCH : EYE_STAND; }
   get heightScale() { return this.crouching ? 0.75 : 1; }
   get speedMult() {
-    return (1 - this.legDmg * 0.45) * (1 + this.skills.cardio * 0.1) * (this.weightMult || 1)
+    return (1 - this.legDmg * 0.45) * (this.progressStats.speedMult || 1) * (this.weightMult || 1)
       * (this.weapon.melee ? 1.14 : 1); // blade out, feet light
   }
 
@@ -121,7 +126,7 @@ export class Player {
     this.pos.copy(spawn);
     this.vel.set(0, 0, 0);
     this.yaw = 0; this.pitch = 0;
-    this.hp = this.maxHp = 100 + this.skills.tough * 25;
+    this.hp = this.maxHp = this.progressStats.maxHp || 100;
     this.alive = true;
     this.armDmg = 0; this.legDmg = 0;
     this.mag = this.weapon.mag;
@@ -257,9 +262,9 @@ export class Player {
   startReload() {
     if (this.weapon.melee || this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
     if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
-    this.reloading = this.weapon.reload;
+    this.reloading = this.weapon.reload * (this.progressStats.reloadMult || 1);
     audio.reload(0);
-    setTimeout(() => { if (this.reloading > 0) audio.reload(1); }, this.weapon.reload * 600);
+    setTimeout(() => { if (this.reloading > 0) audio.reload(1); }, this.reloading * 600);
   }
 
   currentSpread() {
@@ -268,9 +273,8 @@ export class Player {
     const base = THREE.MathUtils.lerp(w.spread, w.adsSpread, this.ads);
     const moveMult = 1 + moveSpeed * 0.14 + (this.onGround ? 0 : 0.9);
     const crouchMult = this.crouching ? 0.7 : 1;
-    const aimSkill = 1 - this.skills.aim * 0.16;
     const injured = 1 + this.armDmg * 1.6;
-    return (base * moveMult * crouchMult * injured + this.bloom) * aimSkill;
+    return (base * moveMult * crouchMult * injured + this.bloom) * (this.progressStats.spreadMult || 1);
   }
 
   // ---------- damage ----------
@@ -280,6 +284,7 @@ export class Player {
     else if (part === 'head') dmg *= (1 - this.armor.head);
     else dmg *= (1 - this.armor.limbs);
     dmg *= 0.8; // player grit
+    dmg *= this.damageTakenMult || 1;
     this.hp -= dmg;
     const accum = 0.34 * (1 - this.armor.limbAccum);
     if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + accum);

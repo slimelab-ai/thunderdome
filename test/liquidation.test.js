@@ -83,13 +83,16 @@ test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
 test('public market tape records both sides and separates rounds', () => {
   const state = newLiquidationState(20000, () => 0.5);
   recordMarketTrade(state, 'player', 'buy', 'rifle', 1500);
+  recordMarketTrade(state, 'player', 'hire', null, 400, 'MEDIC · WREN');
   state.round = 2;
   recordMarketRound(state);
   recordMarketTrade(state, 'player', 'sell', 'rifle', 1600);
-  assert.deepEqual(state.marketLog.map(entry => entry.kind), ['round', 'trade', 'round', 'trade']);
-  assert.deepEqual(state.marketLog[2], { kind: 'round', round: 2 });
-  assert.equal(state.marketLog[3].action, 'sell');
-  assert.equal(state.marketLog[3].amount, 1600);
+  assert.deepEqual(state.marketLog.map(entry => entry.kind), ['round', 'trade', 'trade', 'round', 'trade']);
+  assert.equal(state.marketLog[2].action, 'hire');
+  assert.equal(state.marketLog[2].label, 'MEDIC · WREN');
+  assert.deepEqual(state.marketLog[3], { kind: 'round', round: 2 });
+  assert.equal(state.marketLog[4].action, 'sell');
+  assert.equal(state.marketLog[4].amount, 1600);
 });
 
 test('rival supplies are divided across fighters without duplication', () => {

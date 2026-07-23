@@ -3,8 +3,8 @@ import { ITEM_TYPES, AMMO_TYPES } from './items.js';
 export const LIQUIDATION_DRAFT_TURNS = 10;
 
 export function suggestedLiquidationBankroll() {
-  const elite = 2200; // kept here to avoid coupling the mode to UI presentation data
-  const perElite = elite + ITEM_TYPES.helm2.price + ITEM_TYPES.vest2.price + ITEM_TYPES.pads2.price +
+  const recruit = 400; // archetypes are equal-cost sidegrades; growth comes from earned XP
+  const perElite = recruit + ITEM_TYPES.helm2.price + ITEM_TYPES.vest2.price + ITEM_TYPES.pads2.price +
     ITEM_TYPES.rifle.price + ITEM_TYPES.ammo_762.price * 3 + ITEM_TYPES.grenade.price * 3 +
     ITEM_TYPES.medkit.price * 3 + ITEM_TYPES.splint.price * 3;
   return Math.round(perElite * 3 / 500) * 500;
@@ -30,9 +30,10 @@ export function recordMarketRound(state, round = state.round) {
   return state.marketLog;
 }
 
-export function recordMarketTrade(state, side, action, type, amount) {
+export function recordMarketTrade(state, side, action, type, amount, label = null) {
   recordMarketRound(state);
   const entry = { kind: 'trade', round: state.round, side, action, type, amount: Math.round(amount) };
+  if (label) entry.label = label;
   state.marketLog.push(entry);
   return entry;
 }
