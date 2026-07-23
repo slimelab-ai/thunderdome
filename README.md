@@ -34,6 +34,18 @@ Open http://localhost:5173 in a real browser (pointer lock needs one).
   Lock API captures shortcuts like Ctrl+W outright. Firefox has no keyboard lock, so
   a live bout arms a leave-page confirmation instead — a reflexive Ctrl+W asks
   before killing your run. No binding uses Ctrl.
+- **Gamepad**: any standard-mapping pad (Xbox tested). Sticks move/aim with an
+  exponential response curve, RT fire, LT ADS, A jump/clamber, B crouch, X reload,
+  Y swap, LB/R3 knife, RB frag, L3 sprint, d-pad up/down medkit/splint, d-pad
+  left/right lean, Start pauses/resumes.
+- **Touch (mobile)**: standard mobile-FPS layout — floating left thumbstick moves
+  (slam it forward to sprint), drag anywhere on the right to aim (including while
+  holding FIRE), buttons for ADS (toggle), jump, reload, crouch, swap, knife,
+  grenade, medkit, splint, pause.
+- **Aim assist** (controller + touch only, never mouse): Apex-style — sensitivity
+  friction inside a slow cone around a visible enemy plus a small rotational pull
+  while you're actively steering or shooting. Tunables live in `src/input.js`
+  (`window.__game.tuning` at runtime for live tweaking on device).
 - **Locational damage** (both directions): headshots are lethal, arm hits multiply
   weapon spread and recoil, leg hits cut movement speed and add a limp. Applies to
   you *and* every AI fighter — shoot a rifleman in the arm and watch him spray.
@@ -76,6 +88,8 @@ Regenerate the arena prop pack with
 | --- | --- |
 | `src/main.js` | Game state machine, match lifecycle, squads/ranks, events, economy, save |
 | `src/player.js` | FPS controller: movement, ADS, recoil/bloom, limb-damage effects, viewmodel |
+| `src/input.js` | Gamepad polling, exponential stick curves, aim assist (friction + rotational pull) |
+| `src/touch.js` | Mobile touch UI: virtual thumbstick, drag-aim surface, action buttons |
 | `src/combatant.js` | Humanoid rigs with per-limb hitboxes + full squad AI (both teams) |
 | `src/combat.js` | Hitscan ballistics, spread, wall/capsule intersection, damage model |
 | `src/arena.js` | The pit: geometry, colliders, lighting rig, crowd, signage, flank gantries |

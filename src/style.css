@@ -509,3 +509,51 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
   pointer-events: none; z-index: 20; animation: moneyfloat 1.1s ease-out forwards;
 }
 @keyframes moneyfloat { 0% { opacity: 0; transform: translateY(6px); } 15% { opacity: 1; } 100% { opacity: 0; transform: translateY(-42px); } }
+
+/* ============ TOUCH CONTROLS ============ */
+#touch-ui {
+  position: fixed; inset: 0; z-index: 15;
+  touch-action: none; -webkit-user-select: none;
+}
+#app canvas { touch-action: none; }
+
+/* virtual movement stick (appears under the thumb) */
+#t-stick {
+  position: absolute; width: 128px; height: 128px; margin: -64px 0 0 -64px;
+  border-radius: 50%; border: 2px solid rgba(255,255,255,0.22);
+  background: rgba(0,0,0,0.28); display: none; pointer-events: none;
+}
+#t-stick-nub {
+  position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border-radius: 50%; background: rgba(255,255,255,0.35);
+  box-shadow: 0 0 12px rgba(0,0,0,0.55);
+}
+
+.t-btn {
+  position: absolute; border-radius: 50%;
+  background: rgba(0,0,0,0.42); border: 2px solid rgba(255,255,255,0.28);
+  color: rgba(255,255,255,0.9); font-weight: 800; font-size: 11px; letter-spacing: 1px;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.t-btn.press, .t-btn.on { background: rgba(227,36,43,0.45); border-color: var(--blood); }
+
+#t-fire {
+  width: 92px; height: 92px; right: 118px; bottom: 62px; font-size: 14px;
+  border-color: rgba(227,36,43,0.6); background: rgba(227,36,43,0.22);
+}
+#t-jump   { width: 68px; height: 68px; right: 28px;  bottom: 50px; }
+#t-ads    { width: 60px; height: 60px; right: 34px;  bottom: 150px; }
+#t-reload { width: 54px; height: 54px; right: 134px; bottom: 178px; }
+#t-nade   { width: 54px; height: 54px; right: 212px; bottom: 146px; font-size: 20px; }
+#t-crouch { width: 52px; height: 52px; right: 228px; bottom: 34px; }
+#t-swap   { width: 52px; height: 52px; right: 296px; bottom: 34px; }
+#t-knife  { width: 48px; height: 48px; right: 284px; bottom: 104px; font-size: 18px; }
+#t-med    { width: 46px; height: 46px; right: 16px;  bottom: 232px; color: var(--acid); }
+#t-splint { width: 46px; height: 46px; right: 16px;  bottom: 292px; font-size: 16px; }
+#t-pause  { width: 46px; height: 38px; right: 14px;  top: 12px; border-radius: 8px; }
+
+/* keep the existing HUD out from under thumbs on touch devices */
+body.touch-mode #killfeed { top: 62px; }
+body.touch-mode #hud-bottomright { bottom: 246px; right: 16px; transform: scale(0.85); transform-origin: bottom right; }
+body.touch-mode #hud-bottomleft { transform: scale(0.85); transform-origin: bottom left; }

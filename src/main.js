@@ -14,6 +14,8 @@ import {
   ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
+import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
+import { TouchControls, isTouchDevice } from './touch.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
@@ -67,6 +69,16 @@ const world = {
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
+
+// controller + touch input (mouse/keyboard bypass this and get no aim assist)
+const touchMode = isTouchDevice();
+if (touchMode) document.body.classList.add('touch-mode');
+const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch() }) : null;
+const input = new InputHub(player, world, camera, {
+  touch,
+  onPause: () => pauseMatch(),
+  onResume: () => resumeFromPause(),
+});
 
 // ============================================================ career / save
 // v2: unified grid inventory — old v1 saves are a different economy entirely, no migration
@@ -1282,10 +1294,12 @@ async function enterCombatMode() {
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
   } catch { /* user denied or unsupported — playable regardless */ }
+  if (touchMode) return; // no pointer to lock; the touch layer drives input
   try {
     if (navigator.keyboard?.lock) await navigator.keyboard.lock([...GAME_KEYS]);
   } catch { /* unsupported — fine */ }
-  renderer.domElement.requestPointerLock();
+  // may reject without user activation (gamepad Start resume) — pad play doesn't need the lock
+  try { renderer.domElement.requestPointerLock()?.catch?.(() => {}); } catch { /* fine */ }
 }
 document.addEventListener('wheel', (e) => { if (locked && phase === 'match') player.onWheel(e.deltaY); });
 
@@ -1293,10 +1307,27 @@ document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   player.clearInput();
   if (!locked && phase === 'match' && player.alive && !match.ended) {
+    // pointer-lock loss only pauses mouse players; a controller plays unlocked
+    if (input.gamepadActive) return;
     ui.showScreen('pause');
     phase = 'paused';
   }
 });
+
+// pause/resume paths that don't depend on pointer lock (gamepad Start, touch button)
+function pauseMatch() {
+  if (phase !== 'match' || !player.alive || match?.ended) return;
+  if (document.pointerLockElement) document.exitPointerLock();
+  player.clearInput();
+  ui.showScreen('pause');
+  phase = 'paused';
+}
+function resumeFromPause() {
+  if (phase !== 'paused') return;
+  phase = 'match';
+  ui.showHUDOnly();
+  enterCombatMode();
+}
 
 // ============================================================ buttons
 const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.init(); audio.resume(); audio.uiClick(); fn(); });
@@ -1325,11 +1356,7 @@ on('btn-executed-new', () => {
   if (career.mode === 'liquidation' && career.liquidation?.complete) returnToMainMenu();
   else { career = newCareer(); save(); showIntro(); }
 });
-on('btn-resume', () => {
-  phase = 'match';
-  ui.showHUDOnly();
-  enterCombatMode();
-});
+on('btn-resume', () => resumeFromPause());
 on('btn-abandon', () => {
   if (career.bet > 0) {
     career.money += career.bet;
@@ -1364,7 +1391,7 @@ const _aimTmp = new THREE.Vector3();
 
 function stepMatch(dt) {
   match.time += dt;
-  player.update(dt, locked);
+  player.update(dt, locked || touchMode || input.gamepadActive);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);
@@ -1411,6 +1438,8 @@ function stepMatch(dt) {
 window.__game = {
   get world() { return world; }, get match() { return match; }, get player() { return player; },
   get phase() { return phase; }, get career() { return career; },
+  get input() { return input; },
+  tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
   setLocked(v) { locked = v; },
 };
@@ -1424,6 +1453,8 @@ function tick() {
   updateArenaAmbience(arena, t);
   fx.update(dt);
   audio.update(dt);
+  input.update(dt, phase); // gamepad + touch → player (runs in pause too, for Start-resume)
+  if (touch) touch.setVisible(phase === 'match');
 
   if (phase === 'match') {
     stepMatch(dt);

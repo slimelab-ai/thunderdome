@@ -63,6 +63,9 @@ export class Player {
     this.mantleCooldown = 0;
 
     this.keys = {};
+    this.padMoveX = 0;        // analog move intent from gamepad / touch stick
+    this.padMoveZ = 0;
+    this.sprintHeld = false;  // sprint intent from controller L3 / touch stick slam
 
     // viewmodel rig
     this.vmRoot = new THREE.Group();
@@ -148,6 +151,13 @@ export class Player {
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
   }
 
+  // analog look from controller stick / touch drag — deltas already in radians
+  addLook(dYaw, dPitch) {
+    if (!this.alive) return;
+    this.yaw += dYaw;
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + dPitch));
+  }
+
   onMouseDown(btn) {
     if (btn === 0) { this.triggerHeld = true; this.triggerQueued = true; }
     if (btn === 2) this.adsHeld = true;
@@ -195,6 +205,9 @@ export class Player {
     this.triggerHeld = false;
     this.adsHeld = false;
     this.sprinting = false;
+    this.padMoveX = 0;
+    this.padMoveZ = 0;
+    this.sprintHeld = false;
   }
 
   startHeal(kind) {
@@ -314,14 +327,18 @@ export class Player {
       if (this.keys['KeyS']) iz += 1;
       if (this.keys['KeyA']) ix -= 1;
       if (this.keys['KeyD']) ix += 1;
+      ix += this.padMoveX;
+      iz += this.padMoveZ;
     }
+    const wantSprint = !!this.keys['ShiftLeft'] || this.sprintHeld;
     // toggle crouch (C); sprinting or jumping stands you back up
-    if (this.keys['ShiftLeft'] && iz < 0) this.crouchToggled = false;
+    if (wantSprint && iz < 0) this.crouchToggled = false;
     this.crouching = locked && !!this.crouchToggled;
-    this.sprinting = locked && !!this.keys['ShiftLeft'] && iz < 0 && !this.crouching && this.ads < 0.3;
+    this.sprinting = locked && wantSprint && iz < 0 && !this.crouching && this.ads < 0.3;
 
-    const len = Math.hypot(ix, iz) || 1;
-    ix /= len; iz /= len;
+    // clamp to unit intent; partial stick deflection walks at partial speed
+    const len = Math.hypot(ix, iz);
+    if (len > 1) { ix /= len; iz /= len; }
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const wx = ix * cos + iz * sin;
     const wz = -ix * sin + iz * cos;
