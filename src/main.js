@@ -17,6 +17,7 @@ import { createMarket } from './market.js';
 import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
 import { TouchControls, isTouchDevice } from './touch.js';
 import { MenuNavigator } from './ui-nav.js';
+import { ControllerSettingsPanel } from './controller-settings.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
@@ -90,6 +91,7 @@ const input = new InputHub(player, world, camera, {
   onCycleSpectator,
   onMenuInput: (action) => menuNavigator.handle(action),
 });
+const controllerSettingsPanel = new ControllerSettingsPanel(input);
 
 // ============================================================ career / save
 // v2: unified grid inventory — old v1 saves are a different economy entirely, no migration
@@ -1635,6 +1637,7 @@ window.__game = {
   get world() { return world; }, get match() { return match; }, get player() { return player; },
   get phase() { return phase; }, get career() { return career; },
   get input() { return input; },
+  get controllerSettings() { return input.controllerSettings; },
   tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
   setLocked(v) { locked = v; },

@@ -228,7 +228,7 @@ html, body {
 body.controller-carrying [data-controller-target] { cursor: crosshair; }
 
 /* menu */
-.menu-inner { text-align: center; max-width: 720px; padding: 20px; }
+.menu-inner { text-align: center; width: min(100%, 980px); padding: 20px; }
 .menu-pretitle { letter-spacing: 6px; font-size: 12px; color: #777; margin-bottom: 8px; }
 .game-title {
   font-family: Impact, "Arial Black", sans-serif; font-size: 96px; letter-spacing: 6px; line-height: 0.95;
@@ -236,10 +236,74 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 }
 .game-title span { color: var(--blood); text-shadow: 0 4px 0 #000, 0 0 40px rgba(227,36,43,0.8); }
 .menu-tagline { color: #b9b9c2; margin: 14px 0 30px; font-style: italic; }
-.menu-buttons { display: flex; gap: 14px; justify-content: center; margin-bottom: 36px; }
+.menu-buttons { display: flex; gap: 14px; justify-content: center; margin-bottom: 18px; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }
+
+#controller-settings {
+  margin: 0 auto 18px; padding: 12px 14px 14px; max-width: 820px;
+  text-align: left; border: 1px solid rgba(255,185,46,0.25); border-radius: 7px;
+  background: linear-gradient(135deg, rgba(24,22,22,0.94), rgba(12,12,18,0.94));
+  box-shadow: inset 0 1px rgba(255,255,255,0.04);
+}
+.controller-settings-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
+}
+.controller-settings-head b { display: block; color: var(--gold); font-size: 13px; letter-spacing: 2px; }
+.controller-settings-head span { display: block; margin-top: 2px; color: #858590; font-size: 11px; }
+.controller-settings-head .btn { padding: 6px 11px; font-size: 10px; }
+.controller-settings-body { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr); gap: 20px; align-items: center; }
+.controller-sliders { display: grid; gap: 8px; }
+.controller-sliders label { display: grid; grid-template-columns: 1fr; gap: 3px; }
+.controller-sliders label > span {
+  display: flex; justify-content: space-between; gap: 12px;
+  color: #c9c9d0; font-size: 10px; font-weight: 900; letter-spacing: 1.2px;
+}
+.controller-sliders output { color: var(--acid); }
+.controller-sliders small { color: #70707a; font-size: 9px; }
+.controller-sliders input[type="range"] {
+  width: 100%; height: 18px; margin: 0; accent-color: var(--acid); cursor: pointer;
+}
+.controller-curve-wrap {
+  position: relative; min-width: 0; padding: 2px 7px 6px;
+  border: 1px solid var(--line); border-radius: 5px; background: rgba(3,3,6,0.72);
+}
+#controller-curve { display: block; width: 100%; height: 126px; overflow: visible; }
+#controller-curve path { fill: none; }
+.curve-grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
+.curve-linear { stroke: rgba(255,255,255,0.22); stroke-width: 1; stroke-dasharray: 4 5; }
+.curve-deadzone { fill: rgba(227,36,43,0.08); stroke: rgba(227,36,43,0.2); stroke-width: 1; }
+#controller-curve-path {
+  stroke: var(--acid); stroke-width: 3; stroke-linecap: round;
+  filter: drop-shadow(0 0 4px rgba(134,255,60,0.5));
+}
+#controller-curve-dot {
+  fill: var(--gold); stroke: #fff4cd; stroke-width: 2;
+  transition: cx 0.04s linear, cy 0.04s linear;
+}
+#controller-curve-dot.curve-dot-live { fill: var(--blood); stroke: #fff; filter: drop-shadow(0 0 5px var(--blood)); }
+#controller-curve text { fill: #62626c; font-size: 8px; font-weight: 800; letter-spacing: 1px; }
+#controller-curve-sample {
+  position: absolute; right: 10px; top: 8px; color: var(--gold);
+  font-size: 9px; font-weight: 900; letter-spacing: 1px;
+}
+
+@media (min-width: 1051px) and (max-height: 820px) {
+  #screen-menu { align-items: flex-start; overflow-y: auto; }
+  .menu-inner { margin: 0 auto; padding-top: 12px; padding-bottom: 18px; }
+  .menu-pretitle { margin-bottom: 4px; }
+  .game-title { font-size: clamp(66px, 10.5vh, 86px); }
+  .menu-tagline { margin: 7px 0 13px; }
+  .menu-buttons { margin-bottom: 10px; }
+  .menu-buttons .btn { padding-top: 10px; padding-bottom: 10px; }
+  #controller-settings { margin-bottom: 10px; padding-top: 9px; padding-bottom: 9px; }
+  .controller-settings-head { margin-bottom: 6px; padding-bottom: 6px; }
+  #controller-curve { height: 110px; }
+  .menu-controls { font-size: 11px; line-height: 1.55; }
+  .menu-warn { margin-top: 6px; }
+}
 
 /* intro */
 .intro-inner { text-align: center; }
@@ -642,7 +706,7 @@ body.touch-mode .spec-hint-touch { display: inline; }
 /* ============ RESPONSIVE NON-COMBAT UI ============ */
 @media (max-width: 1050px) {
   .screen {
-    align-items: flex-start; overflow-y: auto;
+    align-items: flex-start; overflow-x: hidden; overflow-y: auto;
     padding: max(18px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
       max(18px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
   }
@@ -698,8 +762,9 @@ body.touch-mode .spec-hint-touch { display: inline; }
   .game-title { font-size: clamp(48px, 14vw, 88px); letter-spacing: clamp(1px, 1vw, 6px); }
   .menu-pretitle { font-size: clamp(9px, 2.3vw, 12px); letter-spacing: clamp(2px, 0.8vw, 6px); }
   .menu-tagline { margin: 12px 0 20px; }
-  .menu-buttons { flex-direction: column; align-items: stretch; margin: 0 auto 22px; max-width: 460px; }
+  .menu-buttons { flex-direction: column; align-items: stretch; margin: 0 auto 14px; max-width: 460px; }
   .menu-buttons .btn { width: 100%; min-height: 52px; }
+  #controller-settings { max-width: 720px; }
   .menu-controls { font-size: 11px; line-height: 1.65; }
   .intro-vs { font-size: clamp(30px, 8vw, 52px); }
   .intro-vs span { font-size: 0.6em; margin: 0 5px; }
@@ -714,6 +779,7 @@ body.touch-mode .spec-hint-touch { display: inline; }
 
 @media (max-width: 600px) {
   .dim { font-size: 10px; }
+  .game-title { font-size: clamp(44px, 13vw, 58px); letter-spacing: 0.5px; }
   .shop-header { align-items: center; }
   .shop-title { letter-spacing: 1px; }
   .shop-money { font-size: clamp(27px, 8vw, 38px); }
@@ -730,6 +796,11 @@ body.touch-mode .spec-hint-touch { display: inline; }
   .pack-side { min-width: 0; }
   .shop-turn-status { font-size: 9px; letter-spacing: 1px; }
   .shop-footer .btn { width: 100%; }
+  #controller-settings { padding: 10px; }
+  .controller-settings-head { align-items: flex-start; }
+  .controller-settings-head span { font-size: 10px; }
+  .controller-settings-body { grid-template-columns: 1fr; gap: 10px; }
+  #controller-curve { height: 112px; }
   .menu-controls > div { margin-bottom: 5px; }
   body.touch-mode .menu-controls > div:not(:nth-last-child(2)):not(.menu-warn) { display: none; }
 }

@@ -98,6 +98,46 @@
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
       </div>
+      <section id="controller-settings" aria-label="Controller aim calibration">
+        <div class="controller-settings-head">
+          <div>
+            <b>🎮 CONTROLLER AIM LAB</b>
+            <span>Move the right stick to test the response curve live.</span>
+          </div>
+          <button id="controller-settings-reset" class="btn btn-ghost">RESET</button>
+        </div>
+        <div class="controller-settings-body">
+          <div class="controller-sliders">
+            <label for="controller-sensitivity">
+              <span>LOOK SENSITIVITY <output id="controller-sensitivity-value">0.65×</output></span>
+              <input id="controller-sensitivity" type="range" min="0.3" max="1.5" step="0.05" value="0.65" />
+              <small>Maximum turn speed</small>
+            </label>
+            <label for="controller-exponent">
+              <span>RESPONSE EXPONENT <output id="controller-exponent-value">2.15</output></span>
+              <input id="controller-exponent" type="range" min="1.2" max="3" step="0.05" value="2.15" />
+              <small>Higher values soften small stick movements</small>
+            </label>
+            <label for="controller-aim-assist">
+              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
+              <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
+              <small>Narrow slowdown and micro-correction only</small>
+            </label>
+          </div>
+          <div class="controller-curve-wrap">
+            <svg id="controller-curve" viewBox="0 0 300 150" role="img" aria-label="Controller response curve">
+              <path class="curve-grid" d="M22 26V126H278 M22 101H278 M22 76H278 M22 51H278 M86 26V126 M150 26V126 M214 26V126" />
+              <path class="curve-linear" d="M22 126L278 26" />
+              <rect class="curve-deadzone" x="22" y="26" width="30.7" height="100" />
+              <path id="controller-curve-path" d="" />
+              <circle id="controller-curve-dot" cx="22" cy="126" r="5" />
+              <text x="22" y="143">STICK INPUT</text>
+              <text x="4" y="25">TURN</text>
+            </svg>
+            <div id="controller-curve-sample">STICK 0% → TURN 0%</div>
+          </div>
+        </div>
+      </section>
       <div class="menu-controls">
         <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean (tap toggles, hold holds)</div>
         <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire / slash &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–2</b> guns &nbsp; <b>3</b> knife</div>

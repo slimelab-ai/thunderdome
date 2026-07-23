@@ -1,4 +1,4 @@
-const FOCUSABLE = 'button:not(:disabled), [data-controller-item]';
+const FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item]';
 const CARRY_TARGETS = '[data-controller-target]';
 
 function center(rect) {
@@ -70,6 +70,13 @@ export class MenuNavigator {
       this._updateHint();
       return true;
     }
+    const active = items[index];
+    if (active.matches('input[type="range"]') && (action === 'left' || action === 'right')) {
+      action === 'right' ? active.stepUp() : active.stepDown();
+      active.dispatchEvent(new Event('input', { bubbles: true }));
+      this._updateHint();
+      return true;
+    }
     if (action === 'back') {
       const back = root.querySelector('#btn-intro-back, #btn-resume');
       if (back && !back.disabled) {
@@ -123,8 +130,11 @@ export class MenuNavigator {
     const activeScreen = this.doc.querySelector('.screen:not(.hidden)');
     const show = this.doc.body.classList.contains('controller-mode') && !!activeScreen;
     hint.classList.toggle('hidden', !show);
+    const adjusting = this.doc.activeElement?.matches?.('input[type="range"]');
     hint.textContent = this.doc.body.classList.contains('controller-carrying')
       ? 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB CHANGE MARKET TAB'
+      : adjusting
+        ? 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  B BACK'
       : 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB CHANGE TAB';
   }
 }

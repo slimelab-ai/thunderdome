@@ -43,7 +43,7 @@ test('aim assist targets an enemy near the crosshair and applies friction', () =
   const { hub } = makeHub({ enemies: [enemyAt(0.8, 1.62, -12)] });
   const target = hub._assistTarget();
   assert.ok(target, 'enemy inside the slow cone should be targeted');
-  assert.ok(target.ang < AIM_ASSIST.slowCone);
+  assert.ok(target.ang < AIM_ASSIST.gamepad.slowCone);
   const mult = hub._friction(target, AIM_ASSIST.gamepad);
   assert.ok(mult < 1 && mult >= AIM_ASSIST.gamepad.friction - 1e-9);
   // no target → no slowdown
@@ -165,6 +165,37 @@ test('looking with the right stick turns the view and aim assist slows it near a
   assert.ok(clean.player.yaw < 0, 'stick right turns right');
   assert.ok(Math.abs(assisted.player.yaw) < Math.abs(clean.player.yaw),
     `friction should slow the turn: ${assisted.player.yaw} vs ${clean.player.yaw}`);
+});
+
+test('controller look settings govern turn speed and keep default magnetism subtle', () => {
+  const { hub, player } = makeHub();
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  hub._pad = () => ({ connected: true, mapping: 'standard', axes: [0, 0, 1, 0], buttons });
+  hub.setControllerSettings({ sensitivity: 0.5, exponent: 1, aimAssist: 0.35 });
+  hub.update(1 / 60, 'match');
+  assert.ok(Math.abs(player.yaw + STICK.yawRate * 0.5 / 60) < 1e-9);
+
+  const centered = { ang: 0 };
+  const friction = hub._friction(centered, AIM_ASSIST.gamepad, hub.controllerSettings.aimAssist);
+  assert.ok(friction > 0.9, `default slowdown should be mild, got ${friction}`);
+
+  const before = player.yaw;
+  hub._applyPull({ point: new THREE.Vector3(1, 1.62, -12) }, AIM_ASSIST.gamepad, 1 / 60, 0);
+  assert.equal(player.yaw, before, 'zero magnetism must not rotate the player');
+});
+
+test('aim magnetism never steers an idle crosshair just because fire or ADS is held', () => {
+  const { hub, player } = makeHub({ enemies: [enemyAt(0.35, 1.62, -12)] });
+  player.onMouseDown = () => {};
+  player.onMouseUp = () => {};
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  buttons[7] = { pressed: true, value: 1 };
+  buttons[6] = { pressed: true, value: 1 };
+  hub._pad = () => ({ connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons });
+  hub.setControllerSettings({ aimAssist: 1 });
+  hub.update(1 / 60, 'match');
+  assert.equal(player.yaw, 0);
+  assert.equal(player.pitch, 0);
 });
 
 test('while dead, d-pad and bumpers cycle spectator targets instead of gameplay actions', () => {
