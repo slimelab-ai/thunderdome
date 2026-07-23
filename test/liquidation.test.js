@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AttritionMarket, CircuitMarket } from '../src/market.js';
+import { LiquidationMarket, CircuitMarket } from '../src/market.js';
 import { makeItem } from '../src/items.js';
 import {
-  newAttritionState, fundDraftRound, runAttritionAI, suggestedAttritionBankroll,
-  attritionOdds, attritionBetOptions, resupplyAttrition, draftCanCoverDebt,
-} from '../src/attrition.js';
+  newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
+  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt,
+} from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
-  const market = new AttritionMarket(null, () => 0.5);
+  const market = new LiquidationMarket(null, () => 0.5);
   const before = market.quoteBuy('ammo_9mm');
   const paid = market.buy('ammo_9mm');
   assert.ok(market.quoteBuy('ammo_9mm') > before);
@@ -23,7 +23,7 @@ test('circuits retains its 55% sale adapter', () => {
 });
 
 test('ten fight-linked envelopes disburse equal full bankrolls', () => {
-  const state = newAttritionState(suggestedAttritionBankroll(), () => 0);
+  const state = newLiquidationState(suggestedLiquidationBankroll(), () => 0);
   let playerMoney = 0;
   let enemyFirstTurns = 0;
   for (let round = 0; round < 10; round++) {
@@ -36,8 +36,8 @@ test('ten fight-linked envelopes disburse equal full bankrolls', () => {
 });
 
 test('each funded round records one envelope', () => {
-  const state = newAttritionState(25000, () => 0.9);
-  let playerMoney = fundDraftRound(state, 0);
+  const state = newLiquidationState(25000, () => 0.9);
+  const playerMoney = fundDraftRound(state, 0);
   assert.equal(playerMoney, 2500);
   // Main gates funding by round; the primitive tracks each funded bout explicitly.
   assert.equal(state.draft.fundedRounds, 1);
@@ -45,7 +45,7 @@ test('each funded round records one envelope', () => {
 });
 
 test('the next draft envelope protects only a recoverable deficit', () => {
-  const state = newAttritionState(25000, () => 0.5);
+  const state = newLiquidationState(25000, () => 0.5);
   fundDraftRound(state, 0);
   assert.equal(draftCanCoverDebt(state, -2400), true);
   assert.equal(draftCanCoverDebt(state, -2600), false);
@@ -54,31 +54,31 @@ test('the next draft envelope protects only a recoverable deficit', () => {
 });
 
 test('rival AI pivots away from a squeezed 9mm pool and explains the buy', () => {
-  const market = new AttritionMarket(null, () => 0.5);
+  const market = new LiquidationMarket(null, () => 0.5);
   for (let i = 0; i < 7; i++) market.buy('ammo_9mm');
-  const state = newAttritionState(20000, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
   state.enemyMoney = 10000;
-  const action = runAttritionAI(state, market, { hoarded9mm: true });
+  const action = runLiquidationAI(state, market, { hoarded9mm: true });
   assert.equal(state.enemy.strategy, 'rifle');
   assert.ok(action.action.includes('RIFLE'));
   assert.ok(state.enemy.log[0].includes('bought'));
 });
 
 test('underdog sees comeback odds and can raise the stake', () => {
-  const state = newAttritionState(20000, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
   state.enemyMoney = 20000;
-  assert.ok(attritionOdds(state, 5000) > 2);
-  assert.deepEqual(attritionBetOptions(state, 5000), [250, 500, 1250, 2500]);
-  assert.deepEqual(attritionBetOptions(state, 100), [250]);
+  assert.ok(liquidationOdds(state, 5000) > 2);
+  assert.deepEqual(liquidationBetOptions(state, 5000), [250, 500, 1250, 2500]);
+  assert.deepEqual(liquidationBetOptions(state, 100), [250]);
 });
 
 test('every third completed round resupplies only shared consumables and ammo', () => {
-  const market = new AttritionMarket(null, () => 0.5);
-  const state = newAttritionState(20000, () => 0.5);
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
   state.round = 4;
   const ammoBefore = market.info('ammo_762').units;
   const rifleBefore = market.info('rifle').units;
-  const drop = resupplyAttrition(state, market, () => 0);
+  const drop = resupplyLiquidation(state, market, () => 0);
   assert.equal(drop.round, 3);
   assert.equal(market.info('ammo_762').units, ammoBefore + 2);
   assert.equal(market.info('rifle').units, rifleBefore);

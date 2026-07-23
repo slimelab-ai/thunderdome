@@ -1,8 +1,8 @@
 import { ITEM_TYPES, AMMO_TYPES } from './items.js';
 
-export const ATTRITION_DRAFT_TURNS = 10;
+export const LIQUIDATION_DRAFT_TURNS = 10;
 
-export function suggestedAttritionBankroll() {
+export function suggestedLiquidationBankroll() {
   const elite = 2200; // kept here to avoid coupling the mode to UI presentation data
   const perElite = elite + ITEM_TYPES.helm2.price + ITEM_TYPES.vest2.price + ITEM_TYPES.pads2.price +
     ITEM_TYPES.rifle.price + ITEM_TYPES.ammo_762.price * 3 + ITEM_TYPES.grenade.price * 3 +
@@ -10,7 +10,7 @@ export function suggestedAttritionBankroll() {
   return Math.round(perElite * 3 / 500) * 500;
 }
 
-export function newAttritionState(bankroll = suggestedAttritionBankroll(), random = Math.random) {
+export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), random = Math.random) {
   const starter = random() < 0.5 ? 'player' : 'enemy';
   return {
     bankroll, draft: { version: 2, fundedRounds: 0, starter, complete: false, pendingEnemyShop: false, lastEnvelope: 0 },
@@ -20,7 +20,7 @@ export function newAttritionState(bankroll = suggestedAttritionBankroll(), rando
   };
 }
 
-export function attritionOdds(state, playerMoney) {
+export function liquidationOdds(state, playerMoney) {
   const rival = Math.max(1, state.enemyMoney);
   const player = Math.max(1, playerMoney);
   // Bankroll is a useful public proxy for squad strength. The poorer squad gets
@@ -28,14 +28,14 @@ export function attritionOdds(state, playerMoney) {
   return Math.max(1.25, Math.min(4, +(2 + (rival - player) / Math.max(rival, player)).toFixed(2)));
 }
 
-export function attritionBetOptions(state, playerMoney) {
+export function liquidationBetOptions(state, playerMoney) {
   // The $250 floor can push a desperate squad below zero; that is the terminal
-  // pressure Attrition needs instead of allowing two broke squads to stalemate.
+  // pressure Liquidation needs instead of allowing two broke squads to stalemate.
   const values = [250, ...[0.10, 0.25, 0.50].map(f => Math.max(250, Math.floor(playerMoney * f / 50) * 50))];
   return [...new Set(values)];
 }
 
-export function resupplyAttrition(state, market, random = Math.random) {
+export function resupplyLiquidation(state, market, random = Math.random) {
   const completedRound = state.round - 1;
   if (completedRound <= 0 || completedRound % 3 !== 0) return null;
   const delivered = {};
@@ -55,14 +55,14 @@ export function resupplyAttrition(state, market, random = Math.random) {
 
 export function draftShare(state) {
   // Ten fight-linked envelopes total exactly one starting bankroll per squad.
-  const base = Math.floor(state.bankroll / ATTRITION_DRAFT_TURNS / 100) * 100;
-  return state.draft.fundedRounds === ATTRITION_DRAFT_TURNS - 1
-    ? state.bankroll - base * (ATTRITION_DRAFT_TURNS - 1)
+  const base = Math.floor(state.bankroll / LIQUIDATION_DRAFT_TURNS / 100) * 100;
+  return state.draft.fundedRounds === LIQUIDATION_DRAFT_TURNS - 1
+    ? state.bankroll - base * (LIQUIDATION_DRAFT_TURNS - 1)
     : base;
 }
 
 export function fundDraftRound(state, playerMoney, onEnemyFirst) {
-  if (state.draft.complete || state.draft.fundedRounds >= ATTRITION_DRAFT_TURNS) return playerMoney;
+  if (state.draft.complete || state.draft.fundedRounds >= LIQUIDATION_DRAFT_TURNS) return playerMoney;
   const amount = draftShare(state);
   playerMoney += amount;
   state.enemyMoney += amount;
@@ -71,7 +71,7 @@ export function fundDraftRound(state, playerMoney, onEnemyFirst) {
   state.draft.lastEnvelope = amount;
   state.draft.pendingEnemyShop = !enemyFirst;
   if (enemyFirst) onEnemyFirst?.(amount);
-  if (state.draft.fundedRounds >= ATTRITION_DRAFT_TURNS) state.draft.complete = true;
+  if (state.draft.fundedRounds >= LIQUIDATION_DRAFT_TURNS) state.draft.complete = true;
   return playerMoney;
 }
 
@@ -86,7 +86,7 @@ const STRATEGIES = {
   balanced: { guns: ['rifle', 'smg'], ammo: ['ammo_762', 'ammo_9mm'], armor: ['helm1', 'vest1', 'pads1'] },
 };
 
-export function runAttritionAI(state, market, playerSignals = {}) {
+export function runLiquidationAI(state, market, playerSignals = {}) {
   const inv = state.enemy.inventory;
   const price = t => market.quoteBuy(t);
   const pressure = t => market.info(t)?.pressure || 1;

@@ -1,9 +1,9 @@
 import { ITEM_TYPES, AMMO_TYPES } from './items.js';
 
 // One market API serves both modes. Circuits uses the fixed-price adapter;
-// Attrition persists shared constant-product pools in the career save.
+// Liquidation persists shared constant-product pools in the career save.
 export function createMarket(mode, state = null, random = Math.random) {
-  return mode === 'attrition' ? new AttritionMarket(state, random) : new CircuitMarket();
+  return mode === 'liquidation' ? new LiquidationMarket(state, random) : new CircuitMarket();
 }
 
 export class CircuitMarket {
@@ -21,7 +21,7 @@ export class CircuitMarket {
   info() { return null; }
 }
 
-export class AttritionMarket {
+export class LiquidationMarket {
   constructor(state = null, random = Math.random) {
     this.pools = state?.pools || {};
     for (const [type, def] of Object.entries(ITEM_TYPES)) {

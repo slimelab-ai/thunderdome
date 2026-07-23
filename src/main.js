@@ -15,9 +15,9 @@ import {
 } from './items.js';
 import { createMarket } from './market.js';
 import {
-  newAttritionState, fundDraftRound, runAttritionAI, enemyRoster,
-  attritionOdds, attritionBetOptions, resupplyAttrition, draftCanCoverDebt,
-} from './attrition.js';
+  newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
+  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt,
+} from './liquidation.js';
 
 // ============================================================ setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -90,11 +90,11 @@ function newCareer(mode = 'circuits') {
     stash: { cols: STASH_COLS, rows: 0, items: [] },
     bet: 0,
     totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0, circuitsCleared: 0 },
-    attrition: mode === 'attrition' ? newAttritionState() : null,
+    liquidation: mode === 'liquidation' ? newLiquidationState() : null,
   };
 }
 function save() {
-  if (career?.mode === 'attrition' && market) career.attrition.market = market.snapshot();
+  if (career?.mode === 'liquidation' && market) career.liquidation.market = market.snapshot();
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); } catch { /* private mode */ }
 }
 function load() {
@@ -103,15 +103,19 @@ function load() {
     if (s) {
       const c = JSON.parse(s);
       if (c && c.rank >= 1 && c.playerCh && c.stash?.items) {
-        if ((c.mode === 'attrition' || c.attrition) && c.attrition?.complete) {
+        // Preserve in-progress wars saved before the mode was renamed.
+        if (c.attrition && !c.liquidation) c.liquidation = c.attrition;
+        if (c.mode === 'attrition') c.mode = 'liquidation';
+        delete c.attrition;
+        if ((c.mode === 'liquidation' || c.liquidation) && c.liquidation?.complete) {
           localStorage.removeItem(SAVE_KEY);
           return null;
         }
         for (const m of c.crew || []) if (m.benched === undefined) m.benched = false;
-        c.mode ||= c.attrition ? 'attrition' : 'circuits'; c.attrition ||= null;
-        if (c.attrition?.draft && c.attrition.draft.version !== 2) {
-          const old = c.attrition.draft;
-          c.attrition.draft = {
+        c.mode ||= c.liquidation ? 'liquidation' : 'circuits'; c.liquidation ||= null;
+        if (c.liquidation?.draft && c.liquidation.draft.version !== 2) {
+          const old = c.liquidation.draft;
+          c.liquidation.draft = {
             version: 2,
             fundedRounds: old.complete ? 10 : Math.min(10, Math.floor((old.turn || 0) / 2)),
             starter: old.starter || 'player', complete: !!old.complete,
@@ -217,18 +221,18 @@ function clearCombatants() {
 }
 
 function startMatch() {
-  if (career.mode === 'attrition' && career.attrition.draft.pendingEnemyShop) {
-    for (let i = 0; i < 8; i++) runAttritionAI(career.attrition, market, {
+  if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
+    for (let i = 0; i < 8; i++) runLiquidationAI(career.liquidation, market, {
       hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     });
-    career.attrition.draft.pendingEnemyShop = false;
+    career.liquidation.draft.pendingEnemyShop = false;
     save();
   }
   clearCombatants();
   match = makeMatch();
-  const attrition = career.mode === 'attrition';
-  const squad = attrition
-    ? { name: 'THE RIVAL SYNDICATE', shirt: 0x5b2434, roster: enemyRoster(career.attrition) }
+  const liquidation = career.mode === 'liquidation';
+  const squad = liquidation
+    ? { name: 'THE RIVAL SYNDICATE', shirt: 0x5b2434, roster: enemyRoster(career.liquidation) }
     : SQUADS[career.rank];
 
   // spawn crew — deployed, breathing, and carrying exactly what you stocked them with
@@ -257,16 +261,16 @@ function startMatch() {
   });
 
   // spawn enemies (circuit scaling + mutators applied here)
-  const cn = attrition ? 0 : circuitN();
+  const cn = liquidation ? 0 : circuitN();
   const roster = [...squad.roster];
-  if (!attrition && hasMut('swarm') && roster.length <= 4) roster.push({ ...roster[roster.length - 1] });
+  if (!liquidation && hasMut('swarm') && roster.length <= 4) roster.push({ ...roster[roster.length - 1] });
   const names = squadNames(roster.length);
   roster.forEach((r, i) => {
     const c = new Combatant({
       name: r.name || names[i], team: 'enemy', weaponId: r.w,
       skill: {
         spreadMult: r.sp * Math.max(0.55, 1 - cn * 0.1),
-        reaction: r.re * Math.max(0.45, 1 - cn * 0.08) * (!attrition && hasMut('hair_trigger') ? 0.8 : 1),
+        reaction: r.re * Math.max(0.45, 1 - cn * 0.08) * (!liquidation && hasMut('hair_trigger') ? 0.8 : 1),
         speedMult: 1 + (15 - career.rank) * 0.008 + cn * 0.03,
       },
       hp: Math.round(r.hp * (1 + cn * 0.4) * (r.boss ? 1 + cn * 0.15 : 1)),
@@ -274,21 +278,21 @@ function startMatch() {
       archetype: r.arch,
     });
     // higher-league fighters carry supplies
-    c.nades = attrition ? Math.min(2, career.attrition.enemy.inventory.grenade || 0) : career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
-    c.healKits = attrition ? Math.min(2, career.attrition.enemy.inventory.medkit || 0) : career.rank <= 9 ? 1 : 0;
+    c.nades = liquidation ? Math.min(2, career.liquidation.enemy.inventory.grenade || 0) : career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
+    c.healKits = liquidation ? Math.min(2, career.liquidation.enemy.inventory.medkit || 0) : career.rank <= 9 ? 1 : 0;
     if (r.arch === 'medic') c.healKits = 3;
     if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; }
     if (r.boss) { c.nades = 2; c.healKits = 2; }
     // the house stocks its fighters (fresh every match, no economy to grind):
     // 5 mags' worth, then they go to the knife like everyone else
     const et = ITEM_TYPES[r.w]?.ammo;
-    if (et) c.ammoPools[et] = attrition ? (r.ammo || 0) : WEAPONS[r.w].mag * 5;
+    if (et) c.ammoPools[et] = liquidation ? (r.ammo || 0) : WEAPONS[r.w].mag * 5;
     c._initialPools = { ...c.ammoPools }; // for honest end-of-match settlement
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
   match.enemiesAlive = match.enemies.length;
-  world.enemyDmgScale = 0.85 * (!attrition && hasMut('hard_rounds') ? 1.15 : 1);
+  world.enemyDmgScale = 0.85 * (!liquidation && hasMut('hard_rounds') ? 1.15 : 1);
 
   // reset player — loadout straight off the paper doll; the knife lives on [3]
   const pch = career.playerCh;
@@ -315,12 +319,12 @@ function startMatch() {
   world.globalDmgMult = 1;
 
   // escrow the bet
-  if (attrition) {
+  if (liquidation) {
     career.bet = Math.max(250, career.bet || 0);
-    match.betOdds = attritionOdds(career.attrition, career.money);
+    match.betOdds = liquidationOdds(career.liquidation, career.money);
     match.enemyBet = career.bet;
     career.money -= career.bet;
-    career.attrition.enemyMoney -= match.enemyBet;
+    career.liquidation.enemyMoney -= match.enemyBet;
   } else if (career.bet > 0) career.money -= career.bet;
 
   announcer.clear();
@@ -340,7 +344,7 @@ function betOdds() {
 }
 
 function payout(base) {
-  if (match?.mode === 'attrition') return 0;
+  if (match?.mode === 'liquidation') return 0;
   const mult = (match.frenzy ? 2 : 1) * payMult();
   const amt = Math.round(base * mult);
   if (match.frenzy) match.frenzyMoney += base;
@@ -377,7 +381,7 @@ function handleKill(killer, victim, part) {
       const amt = payout(base + (headshot ? 100 : 0));
       match.killMoney += base;
       if (headshot) match.hsMoney += 100;
-      if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); } // attrition kills pay in position, not cash
+      if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); } // liquidation kills pay in position, not cash
       player.hp = Math.min(player.maxHp, player.hp + 12); // adrenaline
       if (headshot) announcer.say('playerHeadshot', { victim: victim.name });
       else announcer.say('playerKill', { victim: victim.name });
@@ -559,10 +563,10 @@ function randomFloorSpot(margin = 5) {
 }
 
 const EVENTS = ['lightsout', 'gas', 'frenzy', 'airdrop', 'molotov', 'bounty', 'bloodrules'];
-// attrition has no kill payouts, so the money-themed spectacles would announce cash that never arrives
-const ATTRITION_EVENTS = ['lightsout', 'gas', 'airdrop', 'molotov', 'bloodrules'];
+// liquidation has no kill payouts, so the money-themed spectacles would announce cash that never arrives
+const LIQUIDATION_EVENTS = ['lightsout', 'gas', 'airdrop', 'molotov', 'bloodrules'];
 function fireEvent() {
-  const pool = match.mode === 'attrition' ? ATTRITION_EVENTS : EVENTS;
+  const pool = match.mode === 'liquidation' ? LIQUIDATION_EVENTS : EVENTS;
   let ev = pool[(Math.random() * pool.length) | 0];
   if (ev === 'bounty' && !match.enemies.some(c => c.alive && !c.boss)) ev = 'frenzy';
   audio.klaxon();
@@ -752,15 +756,15 @@ function finishMatch() {
   }
   // settle the bet
   if (career.bet > 0) {
-    if (match.mode === 'attrition') {
+    if (match.mode === 'liquidation') {
       const winnings = Math.round(career.bet * match.betOdds);
       if (match.won) {
         career.money += winnings;
         career.totals.earned += winnings;
-        career.attrition.playerWins++;
+        career.liquidation.playerWins++;
       } else {
-        career.attrition.enemyMoney += career.bet + match.enemyBet;
-        career.attrition.enemyWins++;
+        career.liquidation.enemyMoney += career.bet + match.enemyBet;
+        career.liquidation.enemyWins++;
       }
       match.betWinnings = match.won ? winnings : 0;
     } else if (match.won) {
@@ -782,10 +786,10 @@ function finishMatch() {
   career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
   clearCombatants();
 
-  if (match.mode === 'attrition') {
-    const a = career.attrition;
+  if (match.mode === 'liquidation') {
+    const a = career.liquidation;
     a.round++;
-    resupplyAttrition(a, market);
+    resupplyLiquidation(a, market);
     // The rival burns stock too; combat is the principal resource sink.
     // Settle by rounds ACTUALLY fired per ammo type, not by whatever strategy
     // the shopkeeper AI happens to hold now.
@@ -801,7 +805,7 @@ function finishMatch() {
       a.enemy.inventory[itemType] = Math.max(0, (a.enemy.inventory[itemType] || 0) - Math.ceil(used / AMMO_TYPES[t].box));
     }
     if (!match.won) a.enemy.inventory.medkit = Math.max(0, (a.enemy.inventory.medkit || 0) - 1);
-    for (let i = 0; i < 3; i++) runAttritionAI(a, market, {
+    for (let i = 0; i < 3; i++) runLiquidationAI(a, market, {
       hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     });
     const playerBroke = career.money < 0 && !draftCanCoverDebt(a, career.money);
@@ -810,7 +814,7 @@ function finishMatch() {
       a.complete = true;
       save();
       phase = playerBroke ? 'executed' : 'champion';
-      const result = `Attrition ended after <b>${a.round - 1} rounds</b> · you ${a.playerWins}–${a.enemyWins} rival.<br>` +
+      const result = `Liquidation ended after <b>${a.round - 1} rounds</b> · you ${a.playerWins}–${a.enemyWins} rival.<br>` +
         `Final bankrolls: <b style="color:var(--gold)">$${career.money}</b> vs <b>$${a.enemyMoney}</b>.`;
       if (playerBroke) { ui.renderExecuted(result, true); ui.showScreen('executed'); }
       else { ui.renderChampion(result, true); ui.showScreen('champion'); }
@@ -940,7 +944,7 @@ function moveItem(uid, to) {
 
   if (to.kind === 'sell') {
     detachItem(found);
-    career.money += career.mode === 'attrition' ? market.sell(it) : market.quoteSell(it, priceMult());
+    career.money += career.mode === 'liquidation' ? market.sell(it) : market.quoteSell(it, priceMult());
     audio.cashRegister();
     return true;
   }
@@ -1031,17 +1035,17 @@ function assignOpeningPlays() {
 }
 
 function openShop(earnings = null) {
-  if (career.mode === 'attrition') ensureAttritionRoundFunding();
+  if (career.mode === 'liquidation') ensureLiquidationRoundFunding();
   phase = 'shop';
   ui.showScreen('shop');
   renderShop(earnings);
 }
 
-function ensureAttritionRoundFunding() {
-  const a = career.attrition;
+function ensureLiquidationRoundFunding() {
+  const a = career.liquidation;
   if (!a || a.complete || a.draft.fundedRounds >= Math.min(a.round, 10)) return;
   career.money = fundDraftRound(a, career.money, () => {
-    for (let i = 0; i < 8; i++) runAttritionAI(a, market, {
+    for (let i = 0; i < 8; i++) runLiquidationAI(a, market, {
       hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     });
   });
@@ -1049,7 +1053,7 @@ function ensureAttritionRoundFunding() {
 }
 
 function renderShop(earnings) {
-  ui.renderShop(career, player, career.mode === 'attrition' ? { name: 'THE RIVAL SYNDICATE', blurb: '', roster: [] } : SQUADS[career.rank], earnings, {
+  ui.renderShop(career, player, career.mode === 'liquidation' ? { name: 'THE RIVAL SYNDICATE', blurb: '', roster: [] } : SQUADS[career.rank], earnings, {
     playerPatchCost,
     crewPatchCost,
     priceMult,
@@ -1187,19 +1191,19 @@ function renderShop(earnings) {
 
 function showIntro() {
   phase = 'intro';
-  const attrition = career.mode === 'attrition';
-  const attritionBets = attrition ? attritionBetOptions(career.attrition, career.money) : [];
-  career.bet = attrition ? (attritionBets[1] || attritionBets[0] || 0) : 0;
-  const squad = career.mode === 'attrition'
-    ? { name: 'THE RIVAL SYNDICATE', blurb: `Round ${career.attrition.round}. Choose your stake; a poorer squad receives longer comeback odds.` }
+  const liquidation = career.mode === 'liquidation';
+  const liquidationBets = liquidation ? liquidationBetOptions(career.liquidation, career.money) : [];
+  career.bet = liquidation ? (liquidationBets[1] || liquidationBets[0] || 0) : 0;
+  const squad = career.mode === 'liquidation'
+    ? { name: 'THE RIVAL SYNDICATE', blurb: `Round ${career.liquidation.round}. Choose your stake; a poorer squad receives longer comeback odds.` }
     : SQUADS[career.rank];
-  const rerender = () => ui.renderIntro(career, squad, attrition ? attritionOdds(career.attrition, career.money) : betOdds(), (amt) => {
+  const rerender = () => ui.renderIntro(career, squad, liquidation ? liquidationOdds(career.liquidation, career.money) : betOdds(), (amt) => {
     if (amt <= career.money) {
       career.bet = amt;
       audio.uiClick();
       rerender();
     }
-  }, attritionBets);
+  }, liquidationBets);
   rerender();
   ui.showScreen('intro');
 }
@@ -1271,7 +1275,7 @@ document.addEventListener('pointerlockchange', () => {
 const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.init(); audio.resume(); audio.uiClick(); fn(); });
 
 on('btn-new', () => { career = newCareer('circuits'); market = createMarket('circuits'); save(); showIntro(); });
-on('btn-new-attrition', () => { career = newCareer('attrition'); market = createMarket('attrition'); save(); openShop(); });
+on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });
 on('btn-continue', () => { showIntro(); });
 on('btn-fight', () => startMatch());
 on('btn-next-fight', () => showIntro());
@@ -1287,11 +1291,11 @@ function returnToMainMenu() {
   phase = 'menu';
 }
 on('btn-newgame', () => {
-  if (career.mode === 'attrition' && career.attrition?.complete) returnToMainMenu();
+  if (career.mode === 'liquidation' && career.liquidation?.complete) returnToMainMenu();
   else openShop(); // circuits: next lap is already armed
 });
 on('btn-executed-new', () => {
-  if (career.mode === 'attrition' && career.attrition?.complete) returnToMainMenu();
+  if (career.mode === 'liquidation' && career.liquidation?.complete) returnToMainMenu();
   else { career = newCareer(); save(); showIntro(); }
 });
 on('btn-resume', () => {
@@ -1302,7 +1306,7 @@ on('btn-resume', () => {
 on('btn-abandon', () => {
   if (career.bet > 0) {
     career.money += career.bet;
-    if (career.mode === 'attrition') career.attrition.enemyMoney += career.bet;
+    if (career.mode === 'liquidation') career.liquidation.enemyMoney += career.bet;
     career.bet = 0;
   } // no contest, stake returned
   clearCombatants();
@@ -1319,7 +1323,7 @@ if (saved) {
 } else {
   career = newCareer();
 }
-market = createMarket(career.mode, career.attrition?.market);
+market = createMarket(career.mode, career.liquidation?.market);
 ui.showScreen('menu');
 
 // idle backdrop camera for menu

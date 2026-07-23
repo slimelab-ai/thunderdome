@@ -88,7 +88,7 @@
       <div class="menu-buttons">
         <button id="btn-continue" class="btn btn-big hidden">CONTINUE CAREER</button>
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
-        <button id="btn-new-attrition" class="btn btn-big btn-blood">NEW ATTRITION WAR</button>
+        <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
       </div>
       <div class="menu-controls">
         <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean (tap toggles, hold holds)</div>
@@ -161,9 +161,14 @@
   </div>
 
   <div id="screen-champion" class="screen hidden">
+    <div class="champ-backdrop" aria-hidden="true"></div>
+    <div class="champ-rays" aria-hidden="true"></div>
+    <div id="champ-confetti" class="champ-confetti" aria-hidden="true"></div>
     <div class="champ-inner">
-      <div class="champ-pre">RANK 1 IS DEAD. LONG LIVE</div>
-      <h1 class="champ-title">THE CHAMPION</h1>
+      <div class="champ-crown" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div id="champ-pre" class="champ-pre">THE HOUSE DECLARES</div>
+      <h1 id="champ-title" class="champ-title">VICTORY</h1>
+      <div id="champ-sub" class="champ-sub">YOU OWN THE PIT</div>
       <div id="champ-stats" class="champ-stats"></div>
       <button id="btn-newgame" class="btn btn-big btn-blood">NEXT CIRCUIT ➤</button>
       <div class="death-hint">Same pit. Worse odds. Better money. It never ends until you do.</div>

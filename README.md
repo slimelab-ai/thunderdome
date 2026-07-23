@@ -10,9 +10,9 @@ climb ten ranks of increasingly dangerous squads, and everything is ultra-lethal
 Two modes share the same arena, inventory, combatants, and black-market catalog:
 
 - **Circuits** is the ranked ladder career.
-- **Attrition** is a two-squad economic war. Equal bankrolls arrive through ten
+- **Liquidation** is a two-squad economic war. Equal bankrolls arrive through ten
   alternating draft rounds, both squads trade against the same scarce AMM item pools,
-  and repeated self-bet bouts continue until one bankroll falls below zero. Attrition
+  and repeated self-bet bouts continue until one bankroll falls below zero. Liquidation
   sales receive the full live pool quote; Circuits keeps its 55% liquidation rate.
 
 ## Run it

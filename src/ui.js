@@ -222,10 +222,10 @@ export class UI {
   renderShop(career, player, nextSquad, earnings, actions) {
     this._shopArgs = [career, player, nextSquad, earnings, actions];
     $('shop-money').textContent = career.money.toLocaleString();
-    const attrition = career.mode === 'attrition';
-    const draftBout = attrition && career.attrition.round <= 10;
-    $('shop-sub').textContent = attrition
-      ? `Attrition · Round ${career.attrition.round} · ${draftBout ? `draft envelope ${career.attrition.draft.fundedRounds}/10 (+$${career.attrition.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.attrition.enemyMoney.toLocaleString()}`
+    const liquidation = career.mode === 'liquidation';
+    const draftBout = liquidation && career.liquidation.round <= 10;
+    $('shop-sub').textContent = liquidation
+      ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
       : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
         (career.mutators.length ? ` · ${career.mutators.length} house conditions` : '');
 
@@ -290,14 +290,14 @@ export class UI {
     }).join('');
 
     // ---- next bout ----
-    $('next-bout').innerHTML = attrition
-      ? `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.attrition.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${career.attrition.enemy.strategy.toUpperCase()}<br><span class="dim">${career.attrition.enemy.log[0] || 'Watching your opening purchases.'}</span>`
+    $('next-bout').innerHTML = liquidation
+      ? `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${career.liquidation.enemy.strategy.toUpperCase()}<br><span class="dim">${career.liquidation.enemy.log[0] || 'Watching your opening purchases.'}</span>`
       : `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
 
     $('btn-next-fight').disabled = false;
-    $('sell-bin').textContent = attrition ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
+    $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
     const CELL = 42;
@@ -473,10 +473,10 @@ export class UI {
   }
 
 
-  renderIntro(career, squad, odds, onBet, attritionBets = []) {
-    const attrition = career.mode === 'attrition';
-    $('intro-rank').parentElement.innerHTML = attrition
-      ? `ATTRITION ROUND <span id="intro-rank">${career.attrition.round}</span>`
+  renderIntro(career, squad, odds, onBet, liquidationBets = []) {
+    const liquidation = career.mode === 'liquidation';
+    $('intro-rank').parentElement.innerHTML = liquidation
+      ? `LIQUIDATION ROUND <span id="intro-rank">${career.liquidation.round}</span>`
       : `RANK <span id="intro-rank">${career.rank}</span> BOUT`;
     $('intro-squad').textContent = squad.name;
     $('intro-flavor').textContent = squad.blurb;
@@ -491,9 +491,9 @@ export class UI {
       `<span class="intro-hp" style="color:${healthColor(hp / maxHp)}">${Math.round(hp)}/${maxHp} HP</span>` +
       (hurt ? '<span class="limb-flag">⚠ PATCH UP AT THE MARKET</span>' : '') +
       (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
-    const bets = attrition ? attritionBets : [0, 200, 500, 1000];
-    $('bet-row').innerHTML = attrition
-      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.attrition.enemyMoney.toLocaleString()}</span> ` +
+    const bets = liquidation ? liquidationBets : [0, 200, 500, 1000];
+    $('bet-row').innerHTML = liquidation
+      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.liquidation.enemyMoney.toLocaleString()}</span> ` +
         bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}</button>`).join('')
       : `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
@@ -509,13 +509,29 @@ export class UI {
     $('death-stats').innerHTML = stats;
   }
 
-  renderChampion(statsHtml, attritionComplete = false) {
+  renderChampion(statsHtml, liquidationComplete = false) {
+    const screen = this.screens.champion;
+    screen.classList.toggle('liquidation-win', liquidationComplete);
+    $('champ-pre').textContent = liquidationComplete ? 'RIVAL INSOLVENT · HOUSE LIQUIDATED' : 'THE HOUSE DECLARES';
+    $('champ-title').textContent = 'VICTORY';
+    $('champ-sub').textContent = liquidationComplete ? 'YOU BROKE THE SYNDICATE' : 'YOU OWN THE PIT';
     $('champ-stats').innerHTML = statsHtml;
-    $('btn-newgame').textContent = attritionComplete ? 'RETURN TO MAIN MENU' : 'NEXT CIRCUIT ➤';
+    $('btn-newgame').textContent = liquidationComplete ? 'RETURN TO MAIN MENU' : 'NEXT CIRCUIT ➤';
+    const confetti = $('champ-confetti');
+    confetti.replaceChildren(...Array.from({ length: 64 }, (_, i) => {
+      const piece = document.createElement('i');
+      piece.style.setProperty('--x', (i * 37) % 101);
+      piece.style.setProperty('--drift', ((i * 29) % 31) - 15);
+      piece.style.setProperty('--fall', `${3.8 + (i % 9) * 0.31}s`);
+      piece.style.setProperty('--delay', `${-((i * 17) % 50) / 10}s`);
+      piece.style.setProperty('--spin', `${i % 2 ? 720 : -720}deg`);
+      return piece;
+    }));
+    audio.victoryFanfare();
   }
 
-  renderExecuted(statsHtml, attritionComplete = false) {
+  renderExecuted(statsHtml, liquidationComplete = false) {
     $('executed-stats').innerHTML = statsHtml;
-    $('btn-executed-new').textContent = attritionComplete ? 'RETURN TO MAIN MENU' : 'NEXT CONTESTANT — NEW CAREER';
+    $('btn-executed-new').textContent = liquidationComplete ? 'RETURN TO MAIN MENU' : 'NEXT CONTESTANT — NEW CAREER';
   }
 }
