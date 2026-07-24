@@ -158,12 +158,6 @@ export class MenuNavigator {
       this._updateHint();
       return false;
     }
-    if (root.id === 'screen-shop' && !dialog && (action === 'left' || action === 'right')) {
-      const handled = this._jumpPanel(root, action === 'right' ? 1 : -1, false);
-      this._updateHint();
-      return handled;
-    }
-
     const items = this._items(root);
     if (!items.length) return false;
     let index = items.indexOf(this.current);
@@ -208,11 +202,18 @@ export class MenuNavigator {
         }
       }
     }
-    const linearShopMove = root.id === 'screen-shop' && (action === 'up' || action === 'down');
+    const linearShopMove = root.id === 'screen-shop'
+      && (action === 'up' || action === 'down')
+      && !active.matches?.('[data-controller-item]');
     const next = linearShopMove
       ? navIndex + (action === 'down' ? 1 : -1)
       : directionalCandidate(navItems.map(el => el.getBoundingClientRect()), navIndex, action);
     if (next < 0 || next >= navItems.length) {
+      if (root.id === 'screen-shop' && (action === 'left' || action === 'right')) {
+        const handled = this._jumpPanel(root, action === 'right' ? 1 : -1, false);
+        this._updateHint();
+        return handled;
+      }
       this._updateHint();
       return false;
     }

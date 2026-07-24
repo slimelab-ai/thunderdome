@@ -121,6 +121,67 @@ test('panel shortcuts jump directly between market regions', () => {
   assert.deepEqual(focusCalls, ['stash-item']);
 });
 
+test('horizontal stick navigation moves across grid tiles before crossing panels', () => {
+  const focused = [];
+  const panel = (name, left) => ({
+    getAttribute: (attr) => attr === 'data-shop-panel' ? name : null,
+    getBoundingClientRect: () => rect(left, 0, 280, 700),
+  });
+  const stash = panel('stash', 300);
+  const squad = panel('squad', 600);
+  const gridItem = (id, left) => ({
+    id,
+    matches: (selector) => selector === '[data-controller-item]',
+    closest: (selector) => selector === '[data-shop-panel], [data-controller-panel]'
+      || selector === '[data-shop-panel]' ? stash : null,
+    getBoundingClientRect: () => rect(left, 180, 60, 60),
+  });
+  const first = gridItem('stash-first', 320);
+  const second = gridItem('stash-second', 410);
+  const squadControl = {
+    id: 'squad-control',
+    matches: () => false,
+    closest: (selector) => selector === '[data-shop-panel]' ? squad : null,
+    getBoundingClientRect: () => rect(630, 180),
+  };
+  const root = {
+    id: 'screen-shop',
+    querySelectorAll: (selector) => selector === '[data-shop-panel]' ? [stash, squad] : [],
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    activeElement: first,
+    body: { classList: { contains: () => false } },
+    querySelector: () => root,
+  };
+  navigator.current = first;
+  navigator.lastCenter = { x: 350, y: 210 };
+  navigator.panelMemory = new Map();
+  navigator.activate = () => {};
+  navigator._dialog = () => null;
+  navigator._visible = () => true;
+  navigator._updateHint = () => {};
+  navigator._items = (scope) => scope === stash
+    ? [first, second]
+    : scope === squad ? [squadControl] : [first, second, squadControl];
+  navigator._focus = (el) => {
+    navigator.current = el;
+    navigator.doc.activeElement = el;
+    const bounds = el.getBoundingClientRect();
+    navigator.lastCenter = {
+      x: bounds.left + bounds.width / 2,
+      y: bounds.top + bounds.height / 2,
+    };
+    focused.push(el.id);
+  };
+
+  assert.equal(navigator.handle('right'), true);
+  assert.equal(navigator.current, second, 'right moves to the next tile in the grid');
+  assert.equal(navigator.handle('right'), true);
+  assert.equal(navigator.current, squadControl, 'right crosses panels only at the grid edge');
+  assert.deepEqual(focused, ['stash-second', 'squad-control']);
+});
+
 test('alternate market action buys the focused row directly to the selected fighter', () => {
   let clicks = 0;
   const buyTo = {

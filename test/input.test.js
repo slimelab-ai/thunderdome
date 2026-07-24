@@ -241,6 +241,17 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
 
   pad.axes[1] = 0;
   hub.update(1 / 60, 'menu');
+  pad.axes[0] = 0.8;
+  hub.update(1 / 60, 'shop');
+  assert.equal(actions.at(-1), 'right', 'horizontal left-stick input navigates menus');
+  pad.axes[0] = 0;
+  hub.update(1 / 60, 'shop');
+  pad.axes[0] = -0.8;
+  hub.update(1 / 60, 'shop');
+  assert.equal(actions.at(-1), 'left', 'horizontal left-stick input navigates both directions');
+  pad.axes[0] = 0;
+  hub.update(1 / 60, 'shop');
+
   for (const [index, action] of [
     [0, 'activate'], [1, 'back'], [2, 'alternate'],
     [4, 'previousTab'], [5, 'nextTab'], [6, 'nextPanel'], [7, 'previousPanel'],
