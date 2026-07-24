@@ -3,6 +3,10 @@ import { audio } from './audio.js';
 import {
   ITEM_TYPES, AMMO_TYPES, countInPack, characterWeight, weightSpeedMult, gridRows,
 } from './items.js';
+import {
+  PLAYER_TYPE, HIRE_TYPES, trainingTrees, trainingCost, combatProfile,
+} from './progression.js';
+import { CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP } from './roster.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,27 +17,16 @@ function healthColor(f) {
   return `rgb(${r},${g},60)`;
 }
 
+const FIGHTER_MARKS = {
+  challenger: '◆', enforcer: '▰', rusher: '»', shield: '⬒', marksman: '⌖', medic: '✚',
+};
+
 // icon sheet is 6×4 cells
 function iconStyle(icon) {
   const col = icon % 6, row = (icon / 6) | 0;
   return `background-image:url(/assets/icons/items_sheet.png);background-size:600% 400%;` +
     `background-position:${(col / 5) * 100}% ${(row / 3) * 100}%;`;
 }
-
-// Recruits are PERMANENT: they come with nothing but a pistol and their base stats.
-// You arm and armor them from the stash; when they go down mid-match they're back
-// (bruised, free of charge) for the next bout with everything you gave them.
-export const CREW_TIERS = {
-  rookie: { name: 'Rookie', price: 400, hp: 85, spreadMult: 1.7, reaction: 0.75, speedMult: 1, desc: 'Some kid with a pistol and a dream. Cheap to sign, slow to aim.' },
-  veteran: { name: 'Veteran', price: 1000, hp: 110, spreadMult: 1.15, reaction: 0.5, speedMult: 1.05, desc: 'Ex-military. Steady hands, moderate trauma. Bring your own gun.' },
-  elite: { name: 'Elite', price: 2000, hp: 140, spreadMult: 0.85, reaction: 0.35, speedMult: 1.1, desc: 'Cartel-trained killer. Give this one the good rifle.' },
-};
-
-export const TRAINING = {
-  aim: { name: 'MARKSMANSHIP', max: 2, prices: [700, 1500], desc: 'Tighter spread, tamer recoil.' },
-  cardio: { name: 'CARDIO', max: 2, prices: [600, 1300], desc: 'Move faster, snap to sights quicker.' },
-  tough: { name: 'PAIN TOLERANCE', max: 2, prices: [800, 1700], desc: '+25 max HP per level.' },
-};
 
 const MUT_NAMES = {
   blood_money: 'RICH CROWD', dim: 'BROWNOUT', pricey_docs: 'MEDICAL RACKET',
@@ -55,6 +48,7 @@ export class UI {
       damageFlash: $('damage-flash'), lowhp: $('lowhp-overlay'),
       eventBanner: $('event-banner'), eventTitle: $('event-title'), eventSub: $('event-sub'),
       objective: $('objective-line'), interact: $('interact-hint'),
+      spectator: $('spectator-banner'), spectatorName: $('spectator-name'), spectatorCount: $('spectator-count'),
       consRow: $('consumables'), channelWrap: $('channel-wrap'), channelFill: $('channel-fill'), channelLabel: $('channel-label'),
       bp: { head: $('bp-head'), torso: $('bp-torso'), armL: $('bp-armL'), armR: $('bp-armR'), legL: $('bp-legL'), legR: $('bp-legR') },
     };
@@ -66,13 +60,35 @@ export class UI {
     this._eventTimer = null;
     this.selChar = 'player';
     this.hireOpen = false;
+    this.controllerCarry = null;
+    document.addEventListener('controllercancel', () => this._cancelControllerCarry());
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      if (!$('screen-shop').classList.contains('hidden') && this._shopArgs) {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => this.renderShop(...this._shopArgs), 120);
+      }
+    });
   }
 
   showScreen(name) {
     for (const [k, s] of Object.entries(this.screens)) s.classList.toggle('hidden', k !== name);
     this.el.hud.classList.toggle('hidden', !(name === null));
+    if (name !== null) this.hideSpectator();
+    if (name !== 'shop') this._cancelControllerCarry();
+    document.dispatchEvent(new CustomEvent('screenchange', { detail: name }));
   }
   showHUDOnly() { this.showScreen(null); }
+  showSpectator(name, index, total) {
+    this.el.hud.classList.add('spectating');
+    this.el.spectator.classList.remove('hidden');
+    this.el.spectatorName.textContent = name;
+    this.el.spectatorCount.textContent = `${index + 1}/${total}`;
+  }
+  hideSpectator() {
+    this.el.hud.classList.remove('spectating');
+    this.el.spectator.classList.add('hidden');
+  }
 
   // ---------- HUD ----------
   updateHUD(player, career, match) {
@@ -224,6 +240,10 @@ export class UI {
     $('shop-money').textContent = career.money.toLocaleString();
     const liquidation = career.mode === 'liquidation';
     const draftBout = liquidation && career.liquidation.round <= 10;
+    const draftTurn = draftBout
+      ? (actions.draftShopState?.() || { mustEndTurn: false, locked: false })
+      : { mustEndTurn: false, locked: false };
+    $('screen-shop').classList.toggle('turn-locked', draftTurn.locked);
     $('shop-sub').textContent = liquidation
       ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
       : `Circuit ${career.circuit} · Rank ${career.rank} contender` +
@@ -237,6 +257,7 @@ export class UI {
         `<span>🏆 win purse → <b>$${earnings.winBonus}</b></span>` +
         (earnings.frenzyMoney ? `<span>💰 frenzy → <b>$${earnings.frenzyMoney}</b></span>` : '') +
         (earnings.betWinnings ? `<span>🎲 bet → <b>$${earnings.betWinnings}</b></span>` : '') +
+        (earnings.xpAwards?.length ? `<span>★ XP → <b>${earnings.xpAwards.map(a => `${a.name} +${a.xp}`).join(' · ')}</b></span>` : '') +
         `<span>TOTAL: <b>$${earnings.total}</b></span>`;
     } else eb.classList.add('hidden');
 
@@ -268,47 +289,84 @@ export class UI {
         const soldOut = !Number.isFinite(cost);
         const mi = actions.marketInfo?.(t);
         const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
-        const canBuy = !soldOut && career.money >= cost;
-        return `<div class="market-row">
+        const canBuy = !draftTurn.locked && !soldOut && career.money >= cost;
+        return `<div class="market-row" data-controller-market-row="${t}" tabindex="-1" role="group" aria-label="${def.name}">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
           <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
-          <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button>
-          <button class="btn" data-buy-to="${t}" ${canBuy ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
+          <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}><span class="pad-key pad-a controller-only" aria-hidden="true">A</span>${soldOut ? 'OUT' : '$' + cost}</button>
+          <button class="btn" data-buy-to="${t}" data-controller-skip ${canBuy ? '' : 'disabled'} title="buy straight onto ${selName}"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span>→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
         </div>`;
       }).join('')).join('');
 
-    // ---- training ----
-    $('shop-training').innerHTML = Object.entries(TRAINING).map(([id, t]) => {
-      const lvl = career.skills[id];
-      const maxed = lvl >= t.max;
-      const price = maxed ? 0 : Math.round(t.prices[lvl] * pm);
-      return `<div class="shop-item ${maxed ? 'owned' : ''}">
-        <div class="si-info"><div class="si-name">${t.name} ${'★'.repeat(lvl)}${'☆'.repeat(t.max - lvl)}</div><div class="si-desc">${t.desc}</div></div>
-        ${maxed ? '<span class="si-owned">MAXED</span>'
-          : `<button class="btn" data-train="${id}" ${career.money >= price ? '' : 'disabled'}>$${price}</button>`}
-      </div>`;
-    }).join('');
-
     // ---- next bout ----
-    $('next-bout').innerHTML = liquidation
-      ? `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${career.liquidation.enemy.strategy.toUpperCase()}<br><span class="dim">${career.liquidation.enemy.log[0] || 'Watching your opening purchases.'}</span>`
-      : `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
+    if (liquidation) {
+      const rival = career.liquidation.enemy;
+      const rivalTeam = (rival.recruits || ['enforcer']).map(type => HIRE_TYPES[type]?.name || type.toUpperCase());
+      $('next-bout').innerHTML =
+        `<b>THE RIVAL SYNDICATE</b><br>${draftBout ? `DRAFT ROUND ${career.liquidation.draft.fundedRounds}/10` : 'THE STRANGLE — no more envelopes'} · Strategy: ${rival.strategy.toUpperCase()}<br>` +
+        `<span class="dim">TEAM ${rivalTeam.length}/5 · ${rivalTeam.join(' / ')}<br>Their inventory is private. Their team, trades, and bankroll are not.</span>`;
+    } else {
+      $('next-bout').innerHTML = `<b>${nextSquad.name}</b><br>${nextSquad.blurb}<br>
       <span class="dim">${nextSquad.roster.length} fighters · circuit ${career.circuit}` +
       (career.mutators.length ? `<br>house conditions: ${career.mutators.map(m => MUT_NAMES[m] || m).join(', ')}` : '') + `</span>`;
+    }
 
-    $('btn-next-fight').disabled = false;
+    const tapeWrap = $('market-tape-wrap');
+    tapeWrap.classList.toggle('hidden', !liquidation);
+    if (liquidation) {
+      const tape = $('market-tape');
+      tape.innerHTML = (career.liquidation.marketLog || []).map(entry => {
+        if (entry.kind === 'round') {
+          return `<div class="tape-round"><span>ROUND ${entry.round}</span></div>`;
+        }
+        if (entry.kind === 'event') {
+          return `<div class="tape-event">${entry.text}</div>`;
+        }
+        const item = entry.label || ITEM_TYPES[entry.type]?.name || entry.type;
+        const playerSide = entry.side === 'player';
+        const credit = entry.action === 'sell' || entry.action === 'release';
+        const verb = { buy: 'BOUGHT', sell: 'SOLD', hire: 'HIRED', release: 'RELEASED' }[entry.action] || entry.action.toUpperCase();
+        return `<div class="tape-row ${playerSide ? 'tape-player' : 'tape-rival'}">` +
+          `<span class="tape-side">${playerSide ? 'YOU' : 'RIVAL'}</span>` +
+          `<span class="tape-action">${verb} ${item}</span>` +
+          `<b class="${credit ? 'tape-credit' : 'tape-debit'}">${credit ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
+      }).join('');
+      tape.scrollTop = tape.scrollHeight;
+    }
+
+    const turnStatus = $('shop-turn-status');
+    const endTurn = $('btn-end-turn');
+    turnStatus.classList.toggle('hidden', !draftBout);
+    turnStatus.className = !draftBout ? 'hidden' :
+      `shop-turn-status ${draftTurn.locked ? 'turn-committed' : draftTurn.mustEndTurn ? 'turn-open' : 'turn-second'}`;
+    turnStatus.textContent = draftTurn.locked
+      ? 'TURN COMMITTED · RIVAL TRANSACTIONS COMPLETE'
+      : draftTurn.mustEndTurn
+        ? 'YOUR DRAFT TURN · COMMIT WHEN YOUR TRANSACTIONS ARE COMPLETE'
+        : draftBout ? 'RIVAL MOVED FIRST · YOUR TURN' : '';
+    endTurn.classList.toggle('hidden', !draftTurn.mustEndTurn);
+    endTurn.disabled = !draftTurn.mustEndTurn;
+    endTurn.onclick = draftTurn.mustEndTurn
+      ? () => { audio.uiClick(); actions.endDraftTurn(); }
+      : null;
+    $('btn-next-fight').disabled = draftTurn.mustEndTurn;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
 
     // ---- stash grid ----
-    const CELL = 42;
+    const compactLandscape = window.innerWidth <= 1050 && window.innerWidth > window.innerHeight;
+    const CELL = compactLandscape
+      ? Math.max(22, Math.min(32, Math.floor(((window.innerWidth - 48) * 0.29) / 10)))
+      : window.innerWidth <= 820
+        ? Math.max(28, Math.min(38, Math.floor((window.innerWidth - 32) / 10)))
+      : window.innerWidth < 1450 ? 38 : 42;
     const stashRows = gridRows(career.stash);
     const gridHtml = (grid, dropName, who) => {
       const rows = grid.rows > 0 ? grid.rows : stashRows;
-      let html = `<div class="inv-grid" data-drop="${dropName}" ${who !== undefined ? `data-who="${who}"` : ''}
-        style="width:${grid.cols * CELL}px;height:${rows * CELL}px;">`;
+      let html = `<div class="inv-grid" data-drop="${dropName}" data-controller-target="${dropName}" tabindex="-1" ${who !== undefined ? `data-who="${who}"` : ''}
+        style="--cell:${CELL}px;width:${grid.cols * CELL}px;height:${rows * CELL}px;">`;
       for (const e of grid.items) {
         const def = ITEM_TYPES[e.it.type];
-        html += `<div class="inv-item" data-item="${e.it.uid}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
+        html += `<div class="inv-item" data-item="${e.it.uid}" data-controller-item data-inventory="${dropName}" tabindex="0" role="button" aria-label="Move ${def.name}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
           style="left:${e.x * CELL}px;top:${e.y * CELL}px;width:${def.w * CELL}px;height:${def.h * CELL}px;">
           <span class="inv-ico" style="${iconStyle(def.icon)}"></span>
           ${e.it.rounds != null ? `<span class="inv-count">${e.it.rounds}</span>` : ''}
@@ -321,24 +379,106 @@ export class UI {
     // ---- squad panel ----
     if (this.selChar === undefined) this.selChar = 'player';
     if (this.selChar !== 'player' && !career.crew[this.selChar]) this.selChar = 'player';
-    const deployed = career.crew.filter(c => !c.benched).length;
-    const tabs = [['player', 'YOU'], ...career.crew.map((m, i) => [i, m.name])];
-    $('char-tabs').innerHTML = tabs.map(([who, label]) => {
-      const benched = who !== 'player' && career.crew[who].benched;
-      const hp = who === 'player'
-        ? (career.playerHp == null ? 1 : career.playerHp / (100 + career.skills.tough * 25))
-        : (career.crew[who].hp == null ? 1 : career.crew[who].hp / CREW_TIERS[career.crew[who].tier].hp);
-      return `<button class="btn char-tab ${String(this.selChar) === String(who) ? 'char-tab-sel' : ''} ${benched ? 'char-tab-benched' : ''}" data-char="${who}">
-        ${label}${benched ? ' 🪑' : ''}<i class="tab-hp" style="width:${Math.max(2, hp * 100)}%;background:${healthColor(hp)}"></i></button>`;
-    }).join('') + (career.crew.length < 8
-      ? `<button class="btn btn-ghost char-tab" data-hire-menu="1">+ HIRE</button>` : '')
-      + `<span class="dim" style="align-self:center;font-size:10px">${deployed}/5 deploy</span>`;
+    const deployedCrew = career.crew.map((member, index) => ({ member, index })).filter(entry => !entry.member.benched);
+    const reserveCrew = career.crew.map((member, index) => ({ member, index })).filter(entry => entry.member.benched);
+    const deployed = deployedCrew.length;
+
+    const fighterView = (who) => {
+      const isPlayerView = who === 'player';
+      const member = isPlayerView ? null : career.crew[who];
+      const type = isPlayerView ? PLAYER_TYPE : member.type;
+      const typeDef = isPlayerView ? { name: 'CHALLENGER', desc: 'The contender calling the shots.' } : HIRE_TYPES[type];
+      const progress = isPlayerView ? career.playerProgress : member.progress;
+      const profile = combatProfile(type, progress, isPlayerView);
+      const hp = isPlayerView
+        ? (career.playerHp == null ? profile.maxHp : career.playerHp)
+        : (member.hp == null ? profile.maxHp : member.hp);
+      const limbs = isPlayerView ? career.playerLimbs : (member.limbs || { arm: 0, leg: 0 });
+      const character = isPlayerView ? career.playerCh : member.ch;
+      const gear = ['gun1', 'gun2', 'head', 'body'].map(slot => character.gear[slot]).filter(Boolean);
+      return {
+        who, member, type, typeDef, progress, profile, hp, limbs, character, gear,
+        name: isPlayerView ? 'YOU' : member.name,
+        kills: isPlayerView ? career.totals.kills : (member.kills || 0),
+        mark: FIGHTER_MARKS[type] || FIGHTER_MARKS.enforcer,
+      };
+    };
+
+    const fighterPopover = (view, status) => {
+      const hpFraction = Math.max(0, view.hp / view.profile.maxHp);
+      const tierCount = Object.values(view.progress.skills || {}).reduce((sum, level) => sum + level, 0);
+      const injury = view.limbs.arm > 0.05 || view.limbs.leg > 0.05;
+      const gear = view.gear.length
+        ? view.gear.map(item => {
+          const def = ITEM_TYPES[item.type];
+          return `<span class="fighter-tip-gear"><i style="${iconStyle(def.icon)}"></i>${def.name}</span>`;
+        }).join('')
+        : '<span class="fighter-tip-empty">SIDEARM ONLY</span>';
+      return `<div id="fighter-tip-${view.who}" class="fighter-popover" role="tooltip">
+        <div class="fighter-tip-banner">
+          <span class="fighter-tip-mark">${view.mark}</span>
+          <div><b>${view.name}</b><small>${view.typeDef.name} · ${status}</small></div>
+          <strong>${Math.round(view.hp)}/${view.profile.maxHp}</strong>
+        </div>
+        <div class="fighter-tip-hp"><i style="width:${hpFraction * 100}%;background:${healthColor(hpFraction)}"></i></div>
+        <p>${view.typeDef.desc}</p>
+        <div class="fighter-tip-stats">
+          <span><b>${view.kills}</b>KILLS</span><span><b>${view.progress.xp}</b>XP</span>
+          <span><b>${tierCount}</b>TRAINING</span><span><b>${Math.round(view.profile.speedMult * 100)}%</b>SPEED</span>
+        </div>
+        ${injury ? `<div class="fighter-tip-warning">⚠ ${view.limbs.arm > 0.05 ? 'ARM ' : ''}${view.limbs.leg > 0.05 ? 'LEG ' : ''}TRAUMA</div>` : ''}
+        <div class="fighter-tip-loadout">${gear}</div>
+      </div>`;
+    };
+
+    const rosterSlot = (view, status, reserve = false) => {
+      const hpFraction = Math.max(0, view.hp / view.profile.maxHp);
+      const selected = String(this.selChar) === String(view.who);
+      return `<div class="roster-slot-wrap ${reserve ? 'reserve-slot-wrap' : ''} ${selected ? 'roster-slot-selected' : ''}">
+        <button class="roster-slot ${reserve ? 'reserve-slot' : ''} ${selected ? 'char-tab-sel' : ''}" data-char="${view.who}"
+          aria-label="${view.name}, ${view.typeDef.name}, ${status}" aria-describedby="fighter-tip-${view.who}">
+          <span class="roster-slot-mark">${view.mark}</span>
+          <span class="roster-slot-copy"><b>${view.name}</b><small>${view.typeDef.name}</small></span>
+          <span class="roster-slot-hp"><i style="width:${Math.max(2, hpFraction * 100)}%;background:${healthColor(hpFraction)}"></i></span>
+        </button>
+        ${fighterPopover(view, status)}
+      </div>`;
+    };
+
+    const playerView = fighterView('player');
+    const deployedSlots = Array.from({ length: DEPLOYED_CREW_CAP }, (_, slot) => {
+      const entry = deployedCrew[slot];
+      if (entry) return rosterSlot(fighterView(entry.index), `DEPLOYED ${slot + 1}`);
+      const canHire = career.crew.length < CREW_CONTRACT_CAP;
+      return `<div class="roster-slot-wrap">
+        <button class="roster-slot roster-slot-empty" data-hire-menu="${slot}" ${canHire ? '' : 'disabled'}>
+          <span class="roster-slot-mark">+</span>
+          <span class="roster-slot-copy"><b>${canHire ? 'HIRE' : 'EMPTY'}</b><small>SLOT ${slot + 1}</small></span>
+        </button>
+      </div>`;
+    }).join('');
+    const reserveSlots = reserveCrew.length
+      ? reserveCrew.map(({ index }) => rosterSlot(fighterView(index), 'RESERVE', true)).join('')
+      : '<div class="reserve-empty">NO BENCHED FIGHTERS</div>';
+
+    $('char-tabs').innerHTML = `
+      <div class="roster-section-head"><span>ACTIVE SQUAD</span><b>${deployed + 1}/${DEPLOYED_CREW_CAP + 1}</b></div>
+      <div class="squad-selector">
+        <span class="roster-cycle-hint controller-only" aria-hidden="true"><span class="pad-key">LB</span><small>PREV</small></span>
+        <div class="deployed-roster">${rosterSlot(playerView, 'CHALLENGER')}${deployedSlots}</div>
+        <span class="roster-cycle-hint controller-only" aria-hidden="true"><span class="pad-key">RB</span><small>NEXT</small></span>
+      </div>
+      <div class="roster-section-head reserve-head"><span>RESERVE LOCKER</span><b>${reserveCrew.length} BENCHED · ${career.crew.length}/${CREW_CONTRACT_CAP} CONTRACTS</b></div>
+      <div class="reserve-roster">${reserveSlots}</div>`;
 
     const who = this.selChar;
     const isPlayer = who === 'player';
     const m = isPlayer ? null : career.crew[who];
     const ch = isPlayer ? career.playerCh : m.ch;
-    const maxHp = isPlayer ? 100 + career.skills.tough * 25 : CREW_TIERS[m.tier].hp;
+    const type = isPlayer ? PLAYER_TYPE : m.type;
+    const progress = isPlayer ? career.playerProgress : m.progress;
+    const typeDef = isPlayer ? { name: 'CHALLENGER' } : HIRE_TYPES[type];
+    const maxHp = combatProfile(type, progress, isPlayer).maxHp;
     const hp = isPlayer ? (career.playerHp == null ? maxHp : career.playerHp) : (m.hp == null ? maxHp : m.hp);
     const limbs = isPlayer ? career.playerLimbs : (m.limbs || { arm: 0, leg: 0 });
     const patchCost = isPlayer ? actions.playerPatchCost() : actions.crewPatchCost(m);
@@ -351,21 +491,33 @@ export class UI {
       const chip = def?.kind === 'gun' && def.ammo
         ? `<span class="ammo-chip slot-chip">${AMMO_TYPES[def.ammo].name} ×${ch.pack.items.reduce((n, e) => n + (ITEM_TYPES[e.it.type].ammoType === def.ammo ? e.it.rounds : 0), 0)}</span>`
         : '';
-      return `<div class="doll-slot ${slot.startsWith('gun') ? 'doll-slot-gun' : ''}" data-slot="${slot}" data-who="${who}" title="${label}${def ? ' — ' + def.name : ''}">
-        ${it ? `<div class="inv-item doll-it" data-item="${it.uid}" style="width:100%;height:100%;">
+      return `<div class="doll-slot ${slot.startsWith('gun') ? 'doll-slot-gun' : ''}" data-slot="${slot}" data-who="${who}" data-controller-target="slot" tabindex="-1" title="${label}${def ? ' — ' + def.name : ''}">
+        ${it ? `<div class="inv-item doll-it" data-item="${it.uid}" data-controller-item tabindex="0" role="button" aria-label="Move ${def.name}" style="width:100%;height:100%;">
           <span class="inv-ico" style="${iconStyle(def.icon)}"></span>${chip}</div>` : `<span class="doll-lbl">${label}</span>`}
       </div>`;
     };
 
     const limbFlag = (l) => (l.arm > 0.05 ? ' <span class="limb-flag">ARM</span>' : '') + (l.leg > 0.05 ? ' <span class="limb-flag">LEG</span>' : '');
-    const next = !isPlayer && (m.tier === 'rookie' ? 'veteran' : m.tier === 'veteran' ? 'elite' : null);
-    const upCost = next ? Math.round((CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200) * pm) : 0;
+    const trees = trainingTrees(type);
+    const releaseValue = !isPlayer ? actions.releaseValue(m.type) : 0;
+    const trainingRows = (label, nodes) => `<div class="training-tree"><div class="training-tree-title">${label}</div>` +
+      nodes.map(node => {
+        const level = progress.skills[node.id] || 0;
+        const cost = trainingCost(progress, type, node.id);
+        const maxed = level >= 3;
+        const effect = node.desc[Math.min(level, 2)];
+        return `<div class="training-node ${maxed ? 'owned' : ''}">
+          <div class="si-info"><div class="si-name">${node.name} ${'★'.repeat(level)}${'☆'.repeat(3 - level)}</div><div class="si-desc">${effect}</div></div>
+          ${maxed ? '<span class="si-owned">MAXED</span>' :
+            `<button class="btn" data-train="${node.id}" ${progress.xp >= cost ? '' : 'disabled'}>${cost} XP</button>`}
+        </div>`;
+      }).join('') + '</div>';
 
     $('char-panel').innerHTML = `
       <div class="char-head">
         <div>
           <b>${isPlayer ? 'YOU' : m.name}</b>
-          <span class="dim">${isPlayer ? 'the challenger' : CREW_TIERS[m.tier].name + ' · ' + (m.kills || 0) + ' kills'}</span>
+          <span class="dim">${typeDef.name} · ${isPlayer ? career.totals.kills : (m.kills || 0)} kills · ${progress.xp} XP</span>
           ${limbFlag(limbs)}${hp <= 0 ? ' <span class="limb-flag">OUT — NEEDS MEDICAL</span>' : ''}
         </div>
         <div class="char-hp"><span class="mini-hp"><i style="width:${(hp / maxHp) * 100}%;background:${healthColor(hp / maxHp)}"></i></span>${Math.round(hp)}/${maxHp}</div>
@@ -383,16 +535,36 @@ export class UI {
         </div>
       </div>
       <div class="char-actions">
-        ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}>🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
-        ${next ? `<button class="btn" data-upgrade="${who}" ${career.money >= upCost ? '' : 'disabled'}>⬆ ${next.toUpperCase()} $${upCost}</button>` : ''}
+        ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}><span class="pad-key pad-up controller-only" aria-hidden="true">↑</span> 🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
         ${!isPlayer ? `<button class="btn" data-bench="${who}">${m.benched ? '▶ DEPLOY' : '🪑 BENCH'}</button>` : ''}
-        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">SELL $${Math.round(CREW_TIERS[m.tier].price * 0.5)}</button>` : ''}
+        ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">RELEASE +$${releaseValue}</button>` : ''}
       </div>
-      ${this.hireOpen ? `<div class="hire-menu">${Object.entries(CREW_TIERS).map(([id, t]) => {
-        const cost = Math.round(t.price * pm);
-        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}</div></div>
-        <button class="btn" data-hire="${id}" ${career.money >= cost && career.crew.length < 5 ? '' : 'disabled'}>$${cost}</button></div>`;
-      }).join('')}</div>` : ''}`;
+      <div class="training-head"><b>CHARACTER TRAINING</b><span>${progress.xp} XP AVAILABLE</span></div>
+      ${trainingRows('COMMON TREE', trees.common)}
+      ${trainingRows(`${typeDef.name} TREE`, trees.role)}`;
+
+    if (draftTurn.locked) this.hireOpen = false;
+    const hireOverlay = $('hire-overlay');
+    hireOverlay.classList.toggle('hidden', !this.hireOpen);
+    $('hire-options').innerHTML = !this.hireOpen ? '' : Object.entries(HIRE_TYPES).map(([id, t]) => {
+        const cost = actions.recruitPrice(id);
+        const soldOut = !Number.isFinite(cost);
+        const mi = actions.recruitMarketInfo(id);
+        const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
+        const accuracy = Math.max(15, Math.min(100, 135 / t.spreadMult));
+        const speed = Math.max(15, Math.min(100, t.speedMult * 82));
+        return `<article class="hire-card">
+          <div class="hire-card-mark">${FIGHTER_MARKS[id]}</div>
+          <div class="hire-card-title"><b>${t.name}</b><span>${marketFlag}</span></div>
+          <p>${t.desc}</p>
+          <div class="hire-stat"><span>TOUGHNESS</span><i><b style="width:${Math.min(100, t.hp / 1.2)}%"></b></i><em>${t.hp}</em></div>
+          <div class="hire-stat"><span>ACCURACY</span><i><b style="width:${accuracy}%"></b></i><em>${Math.round(accuracy)}</em></div>
+          <div class="hire-stat"><span>MOBILITY</span><i><b style="width:${speed}%"></b></i><em>${Math.round(t.speedMult * 100)}%</em></div>
+          <button class="btn hire-sign" data-hire="${id}" ${!soldOut && career.money >= cost && career.crew.length < CREW_CONTRACT_CAP ? '' : 'disabled'}>
+            <span class="pad-key pad-a controller-only" aria-hidden="true">A</span>${soldOut ? 'SOLD OUT' : `SIGN · $${cost}`}
+          </button>
+        </article>`;
+      }).join('');
 
     // ---- wire buttons ----
     const wire = (sel, attr, fn) => {
@@ -401,22 +573,89 @@ export class UI {
     wire('[data-buy-item]', 'data-buy-item', actions.buyItem);
     wire('[data-buy-to]', 'data-buy-to', (t) => actions.buyItemTo(t, this.selChar));
     wire('[data-bench]', 'data-bench', (i) => actions.toggleBench(parseInt(i)));
-    wire('[data-train]', 'data-train', actions.train);
+    wire('[data-train]', 'data-train', (id) => actions.train(this.selChar, id));
     wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
-    wire('[data-upgrade]', 'data-upgrade', (i) => actions.upgradeCrew(parseInt(i)));
     wire('[data-sell-crew]', 'data-sell-crew', (i) => { actions.sellCrew(parseInt(i)); this.selChar = 'player'; });
     wire('[data-hire]', 'data-hire', (id) => { this.hireOpen = false; actions.hire(id); });
     wire('[data-char]', 'data-char', (whoSel) => {
       this.selChar = whoSel === 'player' ? 'player' : parseInt(whoSel);
       this.hireOpen = false;
       this.renderShop(...this._shopArgs);
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-char="${whoSel}"]`)?.focus({ preventScroll: true });
+      });
     });
     wire('[data-hire-menu]', 'data-hire-menu', () => {
-      this.hireOpen = !this.hireOpen;
+      this.hireOpen = true;
       this.renderShop(...this._shopArgs);
     });
+    $('btn-hire-close').onclick = () => {
+      audio.uiClick();
+      this.hireOpen = false;
+      this.renderShop(...this._shopArgs);
+    };
+    hireOverlay.onclick = (event) => {
+      if (event.target !== hireOverlay) return;
+      audio.uiClick();
+      this.hireOpen = false;
+      this.renderShop(...this._shopArgs);
+    };
 
-    this._bindDrag(actions, CELL);
+    $('sell-bin').setAttribute('data-controller-target', 'sell');
+    $('sell-bin').setAttribute('tabindex', '-1');
+    if (draftTurn.locked) {
+      this._cancelControllerCarry();
+      document.querySelectorAll('#screen-shop .shop-cols button').forEach(button => {
+        button.disabled = true;
+      });
+    } else {
+      this._bindControllerTransfers(actions);
+      this._bindDrag(actions, CELL);
+    }
+  }
+
+  _bindControllerTransfers(actions) {
+    document.querySelectorAll('[data-controller-item]').forEach(el => {
+      el.onclick = (event) => {
+        event.stopPropagation();
+        if (event.detail !== 0 || !document.body.classList.contains('controller-mode')) return;
+        this.controllerCarry = el.getAttribute('data-item');
+        document.body.classList.add('controller-carrying');
+        document.querySelectorAll('[data-controller-item]').forEach(item => {
+          item.classList.toggle('controller-held-item', item.getAttribute('data-item') === this.controllerCarry);
+        });
+        document.dispatchEvent(new CustomEvent('controllercarrychange'));
+      };
+      el.addEventListener('controllerequip', () => {
+        if (el.getAttribute('data-inventory') !== 'stash') return;
+        actions.equipStashItem(el.getAttribute('data-item'), this.selChar);
+      });
+      el.addEventListener('controllersell', () => {
+        actions.moveItem(el.getAttribute('data-item'), { kind: 'sell' });
+      });
+    });
+    document.querySelectorAll('[data-controller-target]').forEach(el => {
+      el.onclick = (event) => {
+        if (event.detail !== 0 || !this.controllerCarry || !document.body.classList.contains('controller-mode')) return;
+        const uid = this.controllerCarry;
+        const target = el.getAttribute('data-controller-target');
+        let destination;
+        if (target === 'sell') destination = { kind: 'sell' };
+        else if (target === 'slot') {
+          destination = { kind: 'slot', who: this._whoAttr(el), slot: el.getAttribute('data-slot') };
+        } else if (target === 'stash') destination = { kind: 'stash' };
+        else destination = { kind: 'pack', who: this._whoAttr(el) };
+        this._cancelControllerCarry();
+        actions.moveItem(uid, destination);
+      };
+    });
+  }
+
+  _cancelControllerCarry() {
+    this.controllerCarry = null;
+    document.body.classList.remove('controller-carrying');
+    document.querySelectorAll('.controller-held-item').forEach(el => el.classList.remove('controller-held-item'));
+    document.dispatchEvent(new CustomEvent('controllercarrychange'));
   }
 
   // pointer-based drag & drop between stash / packs / doll slots / the SELL bin
@@ -482,7 +721,7 @@ export class UI {
     $('intro-flavor').textContent = squad.blurb;
 
     // don't let anyone stumble into the pit broke, bleeding, and surprised
-    const maxHp = 100 + career.skills.tough * 25;
+    const maxHp = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
     const hp = career.playerHp == null ? maxHp : career.playerHp;
     const hurt = hp < maxHp * 0.6 || career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05;
     const benchedOut = career.crew.filter(c => c.hp != null && c.hp <= 0 && !c.benched).length;

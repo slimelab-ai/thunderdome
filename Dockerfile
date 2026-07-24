@@ -1,5 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG VITE_BUILD_SHA=unknown
+ENV VITE_BUILD_SHA=$VITE_BUILD_SHA
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY index.html ./

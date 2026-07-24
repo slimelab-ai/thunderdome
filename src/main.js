@@ -4,7 +4,7 @@ import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
-import { UI, CREW_TIERS, TRAINING, nextCrewName } from './ui.js';
+import { UI, nextCrewName } from './ui.js';
 import { WEAPONS } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
@@ -14,10 +14,24 @@ import {
   ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
+import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
+import { TouchControls, isTouchDevice } from './touch.js';
+import { MenuNavigator } from './ui-nav.js';
+import { ControllerSettingsPanel } from './controller-settings.js';
+import { analytics } from './analytics.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
-  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt,
+  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  recordMarketRound, recordMarketTrade, commitPlayerDraftTurn,
 } from './liquidation.js';
+import {
+  PLAYER_TYPE, HIRE_TYPES, createProgression, normalizeProgression, buyTraining,
+  combatProfile, emptyXpStats, calculateXp, grantXp,
+} from './progression.js';
+import {
+  CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP, deployedCrewCount,
+  normalizeCrewDeployment, shouldBenchNewHire,
+} from './roster.js';
 
 // ============================================================ setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -43,6 +57,7 @@ window.addEventListener('resize', () => {
 const arena = buildArena(scene);
 const fx = new FX(scene);
 const ui = new UI();
+const menuNavigator = new MenuNavigator();
 const announcer = new Announcer();
 
 // ============================================================ world
@@ -60,12 +75,29 @@ const world = {
   playerShooter: { isPlayer: true, team: 'player', name: 'YOU' },
   onPlayerDamaged: (dmg, part, fromPos) => handlePlayerDamaged(dmg, part, fromPos),
   onKill: (killer, victim, part) => handleKill(killer, victim, part),
+  onDamage: (shooter, victim, amount) => handleXpDamage(shooter, victim, amount),
+  onSupport: (supporter, amount) => handleXpSupport(supporter, amount),
   onHitmarker: (kill, headshot) => ui.hitmarker(kill, headshot),
 };
 
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
+
+// controller + touch input (mouse/keyboard bypass this and get no aim assist)
+const touchMode = isTouchDevice();
+if (touchMode) document.body.classList.add('touch-mode');
+const onCycleSpectator = (dir) => { if (phase === 'match' && match?.spectating) cycleSpectator(dir); };
+const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch(), onCycleSpectator }) : null;
+const input = new InputHub(player, world, camera, {
+  touch,
+  onPause: () => pauseMatch(),
+  onResume: () => resumeFromPause(),
+  onCycleSpectator,
+  onMenuInput: (action) => menuNavigator.handle(action),
+  onControllerActive: () => menuNavigator.activate(),
+});
+const controllerSettingsPanel = new ControllerSettingsPanel(input);
 
 // ============================================================ career / save
 // v2: unified grid inventory — old v1 saves are a different economy entirely, no migration
@@ -80,13 +112,14 @@ function newCareer(mode = 'circuits') {
   autoPlace(playerCh.pack, makeItem('grenade'));
   autoPlace(playerCh.pack, makeItem('grenade'));
   return {
+    analyticsId: crypto.randomUUID(),
     mode,
     money: 0, rank: 15, circuit: 1, mutators: [],
     playerCh,
     playerHp: null,                    // null = full; persists between matches
     playerLimbs: { arm: 0, leg: 0 },
-    skills: { aim: 0, cardio: 0, tough: 0 },
-    crew: [],                          // {name, tier, kills, hp, limbs, ch}
+    playerProgress: createProgression(),
+    crew: [],                          // {name, type, progress, kills, hp, limbs, ch}
     stash: { cols: STASH_COLS, rows: 0, items: [] },
     bet: 0,
     totals: { kills: 0, headshots: 0, deaths: 0, earned: 0, crewLost: 0, circuitsCleared: 0 },
@@ -107,20 +140,52 @@ function load() {
         if (c.attrition && !c.liquidation) c.liquidation = c.attrition;
         if (c.mode === 'attrition') c.mode = 'liquidation';
         delete c.attrition;
+        if (c.liquidation) {
+          c.liquidation.marketLog ||= [{ kind: 'round', round: c.liquidation.round || 1 }];
+          delete c.liquidation.enemy?.log;
+        }
         if ((c.mode === 'liquidation' || c.liquidation) && c.liquidation?.complete) {
           localStorage.removeItem(SAVE_KEY);
           return null;
         }
-        for (const m of c.crew || []) if (m.benched === undefined) m.benched = false;
+        c.playerProgress = normalizeProgression(c.playerProgress, c.skills);
+        delete c.skills;
+        for (const m of c.crew || []) {
+          if (m.benched === undefined) m.benched = false;
+          if (!m.type) {
+            const legacyXp = m.tier === 'elite' ? 900 : m.tier === 'veteran' ? 350 : 0;
+            m.type = 'enforcer';
+            m.progress = normalizeProgression(m.progress || createProgression({}, legacyXp, legacyXp));
+          } else {
+            m.progress = normalizeProgression(m.progress);
+          }
+          delete m.tier;
+        }
+        normalizeCrewDeployment(c.crew);
         c.mode ||= c.liquidation ? 'liquidation' : 'circuits'; c.liquidation ||= null;
-        if (c.liquidation?.draft && c.liquidation.draft.version !== 2) {
+        c.analyticsId ||= crypto.randomUUID();
+        if (c.liquidation) {
+          c.liquidation.enemy ||= { strategy: 'balanced', inventory: {} };
+          if (!Array.isArray(c.liquidation.enemy.recruits) || !c.liquidation.enemy.recruits.length) {
+            c.liquidation.enemy.recruits = ['enforcer'];
+          }
+        }
+        if (c.liquidation?.draft && c.liquidation.draft.version !== 3) {
           const old = c.liquidation.draft;
-          c.liquidation.draft = {
-            version: 2,
-            fundedRounds: old.complete ? 10 : Math.min(10, Math.floor((old.turn || 0) / 2)),
-            starter: old.starter || 'player', complete: !!old.complete,
-            pendingEnemyShop: false, lastEnvelope: 0,
-          };
+          if (old.version === 2) {
+            c.liquidation.draft = {
+              ...old, version: 3,
+              playerFirst: !!old.pendingEnemyShop,
+              playerTurnEnded: false,
+            };
+          } else {
+            c.liquidation.draft = {
+              version: 3,
+              fundedRounds: old.complete ? 10 : Math.min(10, Math.floor((old.turn || 0) / 2)),
+              starter: old.starter || 'player', complete: !!old.complete,
+              pendingEnemyShop: false, playerFirst: false, playerTurnEnded: false, lastEnvelope: 0,
+            };
+          }
         }
         return c;
       }
@@ -188,12 +253,139 @@ const DEATH_LINES = [
 ];
 
 // ============================================================ match state
-let phase = 'menu'; // menu | intro | match | shop | dead | champion
+let phase = 'menu'; // menu | settings | intro | match | shop | dead | champion
+let settingsReturnPhase = 'menu';
 let locked = false;
 let match = null;
 
+function itemSnapshot(it) {
+  return it ? { type: it.type, ...(it.rounds == null ? {} : { rounds: it.rounds }) } : null;
+}
+
+function characterSnapshot(ch) {
+  if (!ch) return null;
+  return {
+    gear: Object.fromEntries(Object.entries(ch.gear).map(([slot, it]) => [slot, itemSnapshot(it)])),
+    pack: ch.pack.items.map(entry => itemSnapshot(entry.it)),
+  };
+}
+
+function progressionSnapshot(progress) {
+  return progress ? {
+    level: progress.level,
+    xp: progress.xp,
+    skills: { ...progress.skills },
+  } : null;
+}
+
+function careerSnapshot() {
+  const liquidation = career.liquidation;
+  return {
+    mode: career.mode,
+    money: career.money,
+    rank: career.rank,
+    circuit: career.circuit,
+    bet: career.bet,
+    player: {
+      hp: career.playerHp,
+      limbs: { ...career.playerLimbs },
+      progression: progressionSnapshot(career.playerProgress),
+      inventory: characterSnapshot(career.playerCh),
+    },
+    crew: career.crew.map(member => ({
+      name: member.name,
+      type: member.type,
+      hp: member.hp,
+      limbs: { ...member.limbs },
+      benched: member.benched,
+      progression: progressionSnapshot(member.progress),
+      inventory: characterSnapshot(member.ch),
+    })),
+    stash: career.stash.items.map(entry => itemSnapshot(entry.it)),
+    liquidation: liquidation ? {
+      round: liquidation.round,
+      bankroll: liquidation.bankroll,
+      playerWins: liquidation.playerWins,
+      enemyWins: liquidation.enemyWins,
+      enemyMoney: liquidation.enemyMoney,
+      draft: { ...liquidation.draft },
+      enemy: structuredClone(liquidation.enemy),
+      market: market?.snapshot() ? structuredClone(market.snapshot()) : null,
+    } : null,
+  };
+}
+
+function fighterSnapshot(fighter) {
+  if (fighter?.isPlayer && fighter !== player) return fighterSnapshot(player);
+  const isPlayer = fighter === player || fighter?.isPlayer;
+  const pos = fighter?.pos || { x: 0, y: 0, z: 0 };
+  const armDmg = Number(fighter?.armDmg || 0);
+  const legDmg = Number(fighter?.legDmg || 0);
+  return {
+    name: isPlayer ? 'YOU' : fighter?.name || 'UNKNOWN',
+    team: isPlayer ? 'player' : fighter?.team || null,
+    alive: fighter?.alive ?? null,
+    hp: Number.isFinite(fighter?.hp) ? Math.round(fighter.hp) : null,
+    maxHp: Number.isFinite(fighter?.maxHp) ? Math.round(fighter.maxHp) : null,
+    limbs: { arm: +armDmg.toFixed(2), leg: +legDmg.toFixed(2) },
+    position: {
+      x: +(Number(pos.x) || 0).toFixed(2),
+      y: +(Number(pos.y) || 0).toFixed(2),
+      z: +(Number(pos.z) || 0).toFixed(2),
+    },
+    weapon: fighter?.weapon?.id || fighter?.weaponId || null,
+    role: fighter?.role || null,
+    ammo: fighter?.ammoPools ? { ...fighter.ammoPools } : null,
+    supplies: {
+      medkit: fighter?.healKits || 0,
+      splint: fighter?.splints || 0,
+      grenade: fighter?.nades || 0,
+    },
+    inventory: characterSnapshot(fighter?.character),
+  };
+}
+
+function matchSnapshot() {
+  return {
+    time: +match.time.toFixed(3),
+    player: fighterSnapshot(player),
+    crew: match.crew.map(fighterSnapshot),
+    enemies: match.enemies.map(fighterSnapshot),
+  };
+}
+
+function emitCareerEvent(type, payload = {}) {
+  try {
+    analytics.setContext({
+      career_id: career.analyticsId,
+      war_id: career.mode === 'liquidation' ? career.analyticsId : null,
+      mode: career.mode,
+      round: career.liquidation?.round || null,
+      match_id: match?.analyticsId || null,
+    });
+    analytics.emit(type, payload);
+  } catch (error) {
+    console.warn('analytics event dropped', type, error);
+  }
+}
+
+function runTrackedLiquidationAI(reason) {
+  const before = careerSnapshot();
+  const signals = { hoarded9mm: market.info('ammo_9mm').pressure > 1.4 };
+  const result = runLiquidationAI(career.liquidation, market, signals);
+  emitCareerEvent('liquidation_ai_decision', {
+    reason,
+    signals,
+    result,
+    before,
+    after: careerSnapshot(),
+  });
+  return result;
+}
+
 function makeMatch() {
   return {
+    analyticsId: crypto.randomUUID(),
     mode: career.mode,
     crew: [], enemies: [],
     frenzy: false, frenzyT: 0,
@@ -202,6 +394,8 @@ function makeMatch() {
     eventTimer: 12 + Math.random() * 10, eventsFired: 0,
     lightsOut: 0, airdrop: null,
     enemiesAlive: 0,
+    playerXp: emptyXpStats(),
+    spectating: false, spectatorTarget: null,
     time: 0,
     campAnchor: { x: 0, z: 0 }, campT: 0, campWarned: false,
   };
@@ -222,11 +416,8 @@ function clearCombatants() {
 
 function startMatch() {
   if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
-    for (let i = 0; i < 8; i++) runLiquidationAI(career.liquidation, market, {
-      hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
-    });
-    career.liquidation.draft.pendingEnemyShop = false;
-    save();
+    openShop();
+    return;
   }
   clearCombatants();
   match = makeMatch();
@@ -236,18 +427,28 @@ function startMatch() {
     : SQUADS[career.rank];
 
   // spawn crew — deployed, breathing, and carrying exactly what you stocked them with
-  career.crew.filter(cm => !cm.benched && (cm.hp == null || cm.hp > 0)).slice(0, 5).forEach((cm, i) => {
-    const t = CREW_TIERS[cm.tier];
+  career.crew.filter(cm => !cm.benched && (cm.hp == null || cm.hp > 0)).slice(0, DEPLOYED_CREW_CAP).forEach((cm, i) => {
+    const stats = combatProfile(cm.type, cm.progress);
     const mits = armorMits(cm.ch);
     const c = new Combatant({
       name: cm.name, team: 'player', weaponId: bestUsableGun(cm.ch),
-      skill: { spreadMult: t.spreadMult, reaction: t.reaction, speedMult: t.speedMult * weightSpeedMult(cm.ch) },
-      hp: t.hp, shirt: 0x2e5d33,
+      skill: {
+        spreadMult: stats.spreadMult, reaction: stats.reaction,
+        speedMult: stats.speedMult * weightSpeedMult(cm.ch),
+      },
+      hp: stats.maxHp, shirt: 0x2e5d33,
       armorParts: mits,
+      archetype: stats.archetype,
+      damageMult: stats.damageMult,
+      damageTakenMult: stats.damageTakenMult,
+      healingMult: stats.healingMult,
+      medicCooldownMult: stats.medicCooldownMult,
     });
     c.careerRef = cm;
+    c.matchXp = emptyXpStats();
     c.character = cm.ch;
     c.healKits = countInPack(cm.ch, 'medkit');
+    c.splints = countInPack(cm.ch, 'splint');
     c.nades = countInPack(cm.ch, 'grenade');
     c.shotsFired = 0;
     c.gunOptions = ['gun1', 'gun2'].map(s => cm.ch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
@@ -278,16 +479,26 @@ function startMatch() {
       archetype: r.arch,
     });
     // higher-league fighters carry supplies
-    c.nades = liquidation ? Math.min(2, career.liquidation.enemy.inventory.grenade || 0) : career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
-    c.healKits = liquidation ? Math.min(2, career.liquidation.enemy.inventory.medkit || 0) : career.rank <= 9 ? 1 : 0;
-    if (r.arch === 'medic') c.healKits = 3;
-    if (r.arch === 'rusher') { c.nades = 0; c.healKits = 0; }
-    if (r.boss) { c.nades = 2; c.healKits = 2; }
-    // the house stocks its fighters (fresh every match, no economy to grind):
-    // 5 mags' worth, then they go to the knife like everyone else
+    c.nades = liquidation
+      ? allocateRivalSupply(career.liquidation.enemy.inventory, 'grenade', i, roster.length)
+      : career.rank <= 5 ? 2 : career.rank <= 10 ? 1 : 0;
+    c.healKits = liquidation
+      ? allocateRivalSupply(career.liquidation.enemy.inventory, 'medkit', i, roster.length)
+      : career.rank <= 9 ? 1 : 0;
+    c.splints = liquidation
+      ? allocateRivalSupply(career.liquidation.enemy.inventory, 'splint', i, roster.length)
+      : 0;
+    // Circuit personalities get house-issued supplies; Liquidation archetypes
+    // must use only the persistent stock their team actually purchased.
+    if (!liquidation && r.arch === 'medic') c.healKits = 3;
+    if (!liquidation && r.arch === 'rusher') { c.nades = 0; c.healKits = 0; c.splints = 0; }
+    if (!liquidation && r.boss) { c.nades = 2; c.healKits = 2; }
+    // Circuit fighters get five magazines from the house. Liquidation divides
+    // the rival's persistent ammo inventory across its paid roster.
     const et = ITEM_TYPES[r.w]?.ammo;
     if (et) c.ammoPools[et] = liquidation ? (r.ammo || 0) : WEAPONS[r.w].mag * 5;
     c._initialPools = { ...c.ammoPools }; // for honest end-of-match settlement
+    c._initialSupplies = { grenade: c.nades, medkit: c.healKits, splint: c.splints };
     c.addTo(world, arena.spawns.enemy[i % arena.spawns.enemy.length]);
     match.enemies.push(c);
   });
@@ -299,11 +510,17 @@ function startMatch() {
   const guns = ['gun1', 'gun2'].map(s => pch.gear[s]).filter(Boolean).map(g => ITEM_TYPES[g.type].gun);
   player.slots = guns;
   player.slotIdx = 0;
-  player.skills = career.skills;
+  const playerStats = combatProfile(PLAYER_TYPE, career.playerProgress, true);
+  player.skills = career.playerProgress.skills;
+  player.progressStats = playerStats;
+  player.damageTakenMult = playerStats.damageTakenMult;
   player.armor = armorMits(pch);
   player.character = pch;
   player.weightMult = weightSpeedMult(pch);
-  player.resetForMatch(arena.spawns.player);
+  // Start angled toward the right-hand gap in the protective gate screen
+  // instead of staring squarely into it from three metres away.
+  player.resetForMatch(arena.spawns.player, -0.72);
+  player.vmRoot.visible = true;
   player._mountViewmodel();
   player.loadMagsFromPack();
   // player wounds carry over too
@@ -313,6 +530,15 @@ function startMatch() {
 
   assignRoles();
   assignOpeningPlays();
+  emitCareerEvent('match_enter', {
+    game_mode: career.mode,
+    opening_plays: {
+      player: match.crew.map(c => ({ name: c.name, role: c.role, goal: c.openingGoal?.toArray() })),
+      enemy: match.enemies.map(c => ({ name: c.name, role: c.role, goal: c.openingGoal?.toArray() })),
+    },
+    career: careerSnapshot(),
+    squads: matchSnapshot(),
+  });
 
   match.campAnchor.x = player.pos.x;
   match.campAnchor.z = player.pos.z;
@@ -334,6 +560,7 @@ function startMatch() {
   audio.klaxon();
 
   phase = 'match';
+  ui.hideSpectator();
   ui.showHUDOnly();
   enterCombatMode();
 }
@@ -353,11 +580,71 @@ function payout(base) {
   return amt;
 }
 
+function handleXpDamage(shooter, victim, amount) {
+  if (!match || victim.team !== 'enemy' || shooter?.team !== 'player' || amount <= 0) return;
+  const stats = shooter.isPlayer ? match.playerXp : shooter.matchXp;
+  if (stats) stats.damage += amount;
+}
+
+function handleXpSupport(supporter, amount) {
+  if (!match || supporter?.team !== 'player' || amount <= 0) return;
+  if (supporter.matchXp) supporter.matchXp.support += amount;
+}
+
+function livingCrew() {
+  return match?.crew.filter(c => c.alive) || [];
+}
+
+function endPlayerTeamLoss() {
+  if (match.ended) return;
+  match.ended = true;
+  match.won = false;
+  match.endTimer = 2.2;
+  announcer.say('lose', {}, { force: true });
+  audio.crowdRoar(1);
+}
+
+function cycleSpectator(direction = 1) {
+  const alive = livingCrew();
+  if (!alive.length) {
+    match.spectatorTarget = null;
+    ui.hideSpectator();
+    endPlayerTeamLoss();
+    return;
+  }
+  const current = alive.indexOf(match.spectatorTarget);
+  const next = current < 0 ? 0 : (current + direction + alive.length) % alive.length;
+  match.spectatorTarget = alive[next];
+  ui.showSpectator(match.spectatorTarget.name, next, alive.length);
+}
+
+function handlePlayerDeath() {
+  if (match.playerDeathHandled) return;
+  match.playerDeathHandled = true;
+  career.totals.deaths++;
+  player.clearInput();
+  player.vmRoot.visible = false;
+  if (livingCrew().length) {
+    match.spectating = true;
+    cycleSpectator(1);
+    ui.eventBanner('YOU ARE DOWN', 'Your squad is still fighting', 'var(--gold)');
+  } else {
+    endPlayerTeamLoss();
+  }
+}
+
 function handleKill(killer, victim, part) {
   const headshot = part === 'head';
   const killerName = killer.isPlayer ? 'YOU' : killer.name;
   ui.killfeed(killerName, victim.name, headshot, killer.team === 'player');
   audio.crowdRoar(headshot ? 1 : 0.6);
+  emitCareerEvent('combat_kill', {
+    time: +match.time.toFixed(3),
+    part,
+    headshot,
+    killer: fighterSnapshot(killer),
+    victim: fighterSnapshot(victim),
+  });
 
   if (!match.firstBlood) {
     match.firstBlood = true;
@@ -368,6 +655,11 @@ function handleKill(killer, victim, part) {
     match.enemiesAlive--;
     match.kills++;
     if (headshot) match.headshots++;
+    const xpStats = killer.isPlayer ? match.playerXp : killer.matchXp;
+    if (killer.team === 'player' && xpStats) {
+      xpStats.kills++;
+      if (headshot) xpStats.headshots++;
+    }
 
     let base = 140 + (15 - career.rank) * 20;
     if (victim.bountyT > 0) {
@@ -382,7 +674,7 @@ function handleKill(killer, victim, part) {
       match.killMoney += base;
       if (headshot) match.hsMoney += 100;
       if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); } // liquidation kills pay in position, not cash
-      player.hp = Math.min(player.maxHp, player.hp + 12); // adrenaline
+      player.hp = Math.min(player.maxHp, player.hp + (player.progressStats.killHeal || 8)); // adrenaline
       if (headshot) announcer.say('playerHeadshot', { victim: victim.name });
       else announcer.say('playerKill', { victim: victim.name });
     } else {
@@ -404,6 +696,7 @@ function handleKill(killer, victim, part) {
     if (victim.careerRef) career.totals.crewLost++;
     if (killer && killer.isPlayer) announcer.say('teamkill', { victim: victim.name }, { force: true });
     else announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
+    if (!player.alive) cycleSpectator(1);
   }
 }
 
@@ -419,12 +712,7 @@ function handlePlayerDamaged(dmg, part, fromPos) {
     else if (part === 'legL' || part === 'legR') announcer.say('playerLegHit', {}, { minGap: 8 });
     else if (player.hp < 30) announcer.say('playerLow', {}, { minGap: 10 });
     else announcer.say('playerHurt', {}, { minGap: 9 });
-  } else if (!match.ended) {
-    match.ended = true; match.won = false; match.endTimer = 2.2;
-    announcer.say('lose', {}, { force: true });
-    career.totals.deaths++;
-    audio.crowdRoar(1);
-  }
+  } else handlePlayerDeath();
 }
 
 // ============================================================ grenades
@@ -562,6 +850,25 @@ function randomFloorSpot(margin = 5) {
   };
 }
 
+function makeBountyMarker() {
+  const marker = new THREE.Group();
+  const gold = new THREE.MeshBasicMaterial({
+    color: 0xffb92e,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: true,
+    depthWrite: false,
+  });
+  const diamond = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), gold);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.025, 6, 18), gold);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = -0.24;
+  marker.add(diamond, ring);
+  marker.position.y = 2.25;
+  marker.visible = false;
+  return marker;
+}
+
 const EVENTS = ['lightsout', 'gas', 'frenzy', 'airdrop', 'molotov', 'bounty', 'bloodrules'];
 // liquidation has no kill payouts, so the money-themed spectacles would announce cash that never arrives
 const LIQUIDATION_EVENTS = ['lightsout', 'gas', 'airdrop', 'molotov', 'bloodrules'];
@@ -574,9 +881,10 @@ function fireEvent() {
     const marks = match.enemies.filter(c => c.alive && !c.boss);
     const mark = marks[(Math.random() * marks.length) | 0];
     mark.bountyT = 22;
-    mark.bountyLight = new THREE.PointLight(0xffb92e, 30, 7, 1.5);
-    mark.bountyLight.position.y = 2.3;
-    mark.group.add(mark.bountyLight);
+    mark.bountyRevealed = mark.hadLoS || mark.sinceHit < 0.75 || mark.shotsFired > 0;
+    mark.bountyMarker = makeBountyMarker();
+    mark.bountyMarker.visible = mark.bountyRevealed;
+    mark.group.add(mark.bountyMarker);
     ui.eventBanner('BOUNTY POSTED', `${mark.name} is worth TRIPLE for 20 seconds`, 'var(--gold)');
     announcer.say('bounty', { victim: mark.name }, { force: true });
     return;
@@ -640,10 +948,16 @@ function updateEvents(dt) {
   for (const c of match.enemies) {
     if (c.bountyT > 0) {
       c.bountyT -= dt;
-      if (c.bountyLight) c.bountyLight.intensity = 22 + Math.sin(match.time * 8) * 14;
-      if ((c.bountyT <= 0 || !c.alive) && c.bountyLight) {
-        c.group.remove(c.bountyLight);
-        c.bountyLight = null;
+      if (c.bountyMarker) {
+        if (c.hadLoS || c.sinceHit < 0.75 || c.shotsFired > 0) c.bountyRevealed = true;
+        c.bountyMarker.visible = c.bountyRevealed;
+        const pulse = 1 + Math.sin(match.time * 7) * 0.12;
+        c.bountyMarker.scale.setScalar(pulse);
+      }
+      if ((c.bountyT <= 0 || !c.alive) && c.bountyMarker) {
+        c.group.remove(c.bountyMarker);
+        c.bountyMarker = null;
+        c.bountyRevealed = false;
       }
     }
   }
@@ -688,11 +1002,7 @@ function updateEvents(dt) {
       if (z._flash <= 0) { z._flash = 0.7; ui.damageFlash(); audio.hurt(); }
       if (player.hp <= 0) {
         player.hp = 0; player.alive = false; player.deathT = 0;
-        if (!match.ended) {
-          match.ended = true; match.won = false; match.endTimer = 2.2;
-          announcer.say('lose', {}, { force: true });
-          career.totals.deaths++;
-        }
+        handlePlayerDeath();
       }
     }
     // damage AI
@@ -735,8 +1045,26 @@ function updateEvents(dt) {
 }
 
 // ============================================================ match end
+function awardMatchExperience() {
+  const awards = [];
+  const award = (name, progress, stats, survived) => {
+    const result = calculateXp(stats, { won: match.won, survived });
+    const xp = grantXp(progress, result.total);
+    awards.push({ name, xp, ...result });
+  };
+  award('YOU', career.playerProgress, match.playerXp, player.alive);
+  for (const c of match.crew) {
+    if (!c.careerRef || !c.matchXp) continue;
+    award(c.name, c.careerRef.progress, c.matchXp, c.alive);
+  }
+  match.xpAwards = awards;
+  return awards;
+}
+
 function finishMatch() {
   document.exitPointerLock();
+  ui.hideSpectator();
+  const xpAwards = awardMatchExperience();
   // crew burn real supplies: rounds actually fired (per pool), kits and frags used
   for (const c of match.crew) {
     const ch = c.character;
@@ -746,6 +1074,7 @@ function finishMatch() {
         if (used > 0) consumeAmmo(ch, type, used);
       }
       while (countInPack(ch, 'medkit') > c.healKits) useFromPack(ch, 'medkit');
+      while (countInPack(ch, 'splint') > c.splints) useFromPack(ch, 'splint');
       while (countInPack(ch, 'grenade') > c.nades) useFromPack(ch, 'grenade');
     }
     // health persists; the downed stay at zero until someone pays the doctor
@@ -784,19 +1113,33 @@ function finishMatch() {
     career.money -= 25; // the house medic's "you live" fee, non-negotiable
   }
   career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
+  emitCareerEvent('match_exit', {
+    won: match.won,
+    duration: +match.time.toFixed(3),
+    kills: match.kills,
+    headshots: match.headshots,
+    squads: matchSnapshot(),
+    career_before_settlement: careerSnapshot(),
+  });
   clearCombatants();
 
   if (match.mode === 'liquidation') {
     const a = career.liquidation;
     a.round++;
+    recordMarketRound(a);
     resupplyLiquidation(a, market);
     // The rival burns stock too; combat is the principal resource sink.
     // Settle by rounds ACTUALLY fired per ammo type, not by whatever strategy
     // the shopkeeper AI happens to hold now.
     const usedByType = {};
+    const usedSupplies = { grenade: 0, medkit: 0, splint: 0 };
     for (const c of match.enemies) {
       for (const [t, initial] of Object.entries(c._initialPools || {})) {
         usedByType[t] = (usedByType[t] || 0) + Math.max(0, initial - (c.ammoPools[t] || 0));
+      }
+      for (const [type, initial] of Object.entries(c._initialSupplies || {})) {
+        const remaining = type === 'grenade' ? c.nades : type === 'medkit' ? c.healKits : c.splints;
+        usedSupplies[type] += Math.max(0, initial - remaining);
       }
     }
     for (const [t, used] of Object.entries(usedByType)) {
@@ -804,10 +1147,10 @@ function finishMatch() {
       const itemType = `ammo_${t}`;
       a.enemy.inventory[itemType] = Math.max(0, (a.enemy.inventory[itemType] || 0) - Math.ceil(used / AMMO_TYPES[t].box));
     }
-    if (!match.won) a.enemy.inventory.medkit = Math.max(0, (a.enemy.inventory.medkit || 0) - 1);
-    for (let i = 0; i < 3; i++) runLiquidationAI(a, market, {
-      hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
-    });
+    for (const [type, used] of Object.entries(usedSupplies)) {
+      a.enemy.inventory[type] = Math.max(0, (a.enemy.inventory[type] || 0) - used);
+    }
+    for (let i = 0; i < 3; i++) runTrackedLiquidationAI('post_match');
     const playerBroke = career.money < 0 && !draftCanCoverDebt(a, career.money);
     const enemyBroke = a.enemyMoney < 0 && !draftCanCoverDebt(a, a.enemyMoney);
     if (playerBroke || enemyBroke) {
@@ -823,6 +1166,7 @@ function finishMatch() {
     save();
     openShop({ kills: match.kills, headshots: match.headshots, killMoney: 0, hsMoney: 0,
       frenzyMoney: 0, winBonus: 0, betWinnings: match.betWinnings || 0,
+      xpAwards,
       total: match.won ? match.betWinnings || 0 : 0 });
     return;
   }
@@ -836,6 +1180,7 @@ function finishMatch() {
       killMoney: match.killMoney, hsMoney: match.hsMoney,
       frenzyMoney: match.frenzyMoney, winBonus,
       betWinnings: match.betWinnings || 0,
+      xpAwards,
       total: match.killMoney + match.hsMoney + match.frenzyMoney + winBonus + (match.betWinnings || 0),
     };
     audio.cashRegister();
@@ -884,7 +1229,8 @@ function finishMatch() {
       DEATH_LINES[(Math.random() * DEATH_LINES.length) | 0],
       `The house took its cut: <b style="color:var(--blood)">−$${cut}</b><br>` +
       `Bankroll: $${career.money} — go into debt and the house collects YOU.<br>` +
-      `Kills this bout: ${match.kills} · Career deaths: ${career.totals.deaths}`
+      `Kills this bout: ${match.kills} · Career deaths: ${career.totals.deaths}<br>` +
+      `Experience: ${xpAwards.map(a => `${a.name} +${a.xp} XP`).join(' · ')}`
     );
     ui.showScreen('death');
   }
@@ -892,14 +1238,14 @@ function finishMatch() {
 
 // medical pricing: this is the drain that makes dying expensive (circuits inflate it)
 function playerPatchCost() {
-  const max = 100 + career.skills.tough * 25;
+  const max = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
   const missing = career.playerHp == null ? 0 : Math.max(0, max - career.playerHp);
   const limbs = (career.playerLimbs.arm > 0.05 || career.playerLimbs.leg > 0.05) ? 80 : 0;
   return Math.round((missing * 2.2 + limbs) * medMult());
 }
 function crewPatchCost(m) {
   if (!m) return 0;
-  const max = CREW_TIERS[m.tier].hp;
+  const max = combatProfile(m.type, m.progress).maxHp;
   const missing = m.hp == null ? 0 : Math.max(0, max - m.hp);
   const limbs = (m.limbs && (m.limbs.arm > 0.05 || m.limbs.leg > 0.05)) ? 60 : 0;
   return Math.round((missing * 1.6 + limbs) * medMult());
@@ -944,7 +1290,9 @@ function moveItem(uid, to) {
 
   if (to.kind === 'sell') {
     detachItem(found);
-    career.money += career.mode === 'liquidation' ? market.sell(it) : market.quoteSell(it, priceMult());
+    const value = career.mode === 'liquidation' ? market.sell(it) : market.quoteSell(it, priceMult());
+    career.money += value;
+    if (career.mode === 'liquidation') recordPlayerMarket('sell', it.type, value);
     audio.cashRegister();
     return true;
   }
@@ -982,6 +1330,23 @@ function moveItem(uid, to) {
     ch.gear[to.slot] = it;
     if (old) autoPlace(career.stash, old); // displaced piece goes home
     return true;
+  }
+  return false;
+}
+
+function equipStashItem(uid, who) {
+  const found = findItem(uid);
+  if (!found || found.loc.kind !== 'stash') return false;
+  const ch = getChar(who);
+  const def = ITEM_TYPES[found.it.type];
+  if (!ch || !def) return false;
+  if (def.kind === 'gun') {
+    const slot = !ch.gear.gun1 ? 'gun1' : !ch.gear.gun2 ? 'gun2' : 'gun2';
+    return moveItem(uid, { kind: 'slot', who, slot });
+  }
+  if (def.kind === 'armor') return moveItem(uid, { kind: 'slot', who, slot: def.slot });
+  if (def.kind === 'consumable' || def.kind === 'ammo') {
+    return moveItem(uid, { kind: 'pack', who });
   }
   return false;
 }
@@ -1045,11 +1410,37 @@ function ensureLiquidationRoundFunding() {
   const a = career.liquidation;
   if (!a || a.complete || a.draft.fundedRounds >= Math.min(a.round, 10)) return;
   career.money = fundDraftRound(a, career.money, () => {
-    for (let i = 0; i < 8; i++) runLiquidationAI(a, market, {
-      hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
-    });
+    for (let i = 0; i < 8; i++) runTrackedLiquidationAI('enemy_first_draft');
   });
+  emitCareerEvent('liquidation_draft_funding', { state: careerSnapshot() });
   save();
+}
+
+function draftShopState() {
+  if (career.mode !== 'liquidation' || career.liquidation.round > 10) {
+    return { mustEndTurn: false, locked: false };
+  }
+  const draft = career.liquidation.draft;
+  return {
+    mustEndTurn: !!draft.playerFirst && !draft.playerTurnEnded,
+    locked: !!draft.playerFirst && !!draft.playerTurnEnded,
+  };
+}
+
+function runRivalDraftShop() {
+  for (let i = 0; i < 8; i++) runTrackedLiquidationAI('player_draft_commit');
+}
+
+function recordPlayerMarket(action, type, amount, label = null) {
+  recordMarketTrade(career.liquidation, 'player', action, type, amount, label);
+  emitCareerEvent('liquidation_market_action', {
+    side: 'player',
+    action,
+    type,
+    amount,
+    label,
+    state: careerSnapshot(),
+  });
 }
 
 function renderShop(earnings) {
@@ -1059,21 +1450,41 @@ function renderShop(earnings) {
     priceMult,
     priceOf: (type) => market.quoteBuy(type, 1, priceMult()),
     marketInfo: (type) => market.info(type),
+    recruitPrice: (type) => market.quoteRecruit(type),
+    recruitMarketInfo: (type) => market.recruitInfo(type),
+    releaseValue: (type) => market.quoteReleaseRecruit(type),
+    draftShopState,
+    endDraftTurn: () => {
+      if (commitPlayerDraftTurn(career.liquidation, runRivalDraftShop)) {
+        audio.klaxon();
+        save();
+        renderShop(earnings);
+      }
+    },
     buyItem: (type) => {
+      if (draftShopState().locked) return;
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
       if (def && career.money >= cost) {
         market.buy(type);
         career.money -= cost;
+        if (career.mode === 'liquidation') recordPlayerMarket('buy', type, cost);
         autoPlace(career.stash, makeItem(type));
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
     moveItem: (uid, to) => {
+      if (draftShopState().locked) return;
       if (moveItem(uid, to)) { audio.uiClick(); save(); }
       renderShop(earnings);
     },
+    equipStashItem: (uid, who) => {
+      if (draftShopState().locked) return;
+      if (equipStashItem(uid, who)) { audio.uiClick(); save(); }
+      renderShop(earnings);
+    },
     patchPlayer: () => {
+      if (draftShopState().locked) return;
       const cost = playerPatchCost();
       const pay = Math.min(cost, career.money);
       if (cost <= 0 || pay <= 0) return;
@@ -1084,15 +1495,19 @@ function renderShop(earnings) {
         career.playerLimbs = { arm: 0, leg: 0 };
       } else {
         // broke? the doc does what the money covers
-        const max = 100 + career.skills.tough * 25;
+        const max = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
         const cur = career.playerHp == null ? max : career.playerHp;
         career.playerHp = Math.min(max, Math.round(cur + (max - cur) * f));
         career.playerLimbs.arm = +(career.playerLimbs.arm * (1 - f)).toFixed(2);
         career.playerLimbs.leg = +(career.playerLimbs.leg * (1 - f)).toFixed(2);
       }
+      if (career.mode === 'liquidation') emitCareerEvent('liquidation_patch', {
+        target: 'player', cost: pay, state: careerSnapshot(),
+      });
       audio.cashRegister(); save(); renderShop(earnings);
     },
     patchCrew: (idx) => {
+      if (draftShopState().locked) return;
       const m = career.crew[idx];
       const cost = crewPatchCost(m);
       const pay = Math.min(cost, career.money);
@@ -1103,60 +1518,71 @@ function renderShop(earnings) {
         m.hp = null;
         m.limbs = { arm: 0, leg: 0 };
       } else {
-        const max = CREW_TIERS[m.tier].hp;
+        const max = combatProfile(m.type, m.progress).maxHp;
         const cur = m.hp == null ? max : m.hp;
         m.hp = Math.min(max, Math.round(cur + (max - cur) * f));
         m.limbs.arm = +((m.limbs.arm || 0) * (1 - f)).toFixed(2);
         m.limbs.leg = +((m.limbs.leg || 0) * (1 - f)).toFixed(2);
       }
+      if (career.mode === 'liquidation') emitCareerEvent('liquidation_patch', {
+        target: m.name, cost: pay, state: careerSnapshot(),
+      });
       audio.cashRegister(); save(); renderShop(earnings);
     },
     sellCrew: (idx) => {
+      if (draftShopState().locked) return;
       const m = career.crew[idx];
       if (!m) return;
-      // everything they carry goes back to the stash, 50% of signing fee back
+      // Everything they carry goes back to the stash. In Liquidation their
+      // contract returns to that archetype's public AMM pool.
       for (const slot of ['head', 'body', 'limbs', 'gun1', 'gun2']) {
         const it = m.ch.gear[slot];
         if (it && !(it.type === 'pistol' && slot === 'gun1')) autoPlace(career.stash, it);
       }
       for (const e of [...m.ch.pack.items]) autoPlace(career.stash, e.it);
-      career.money += Math.round(CREW_TIERS[m.tier].price * 0.5);
+      const refund = market.releaseRecruit(m.type);
+      career.money += refund;
+      if (career.mode === 'liquidation') {
+        recordPlayerMarket('release', null, refund, `${HIRE_TYPES[m.type].name} CONTRACT`);
+      }
       career.crew.splice(idx, 1);
       audio.cashRegister(); save(); renderShop(earnings);
     },
-    upgradeCrew: (idx) => {
-      const m = career.crew[idx];
-      const next = m?.tier === 'rookie' ? 'veteran' : m?.tier === 'veteran' ? 'elite' : null;
-      if (!next) return;
-      const cost = Math.round((CREW_TIERS[next].price - CREW_TIERS[m.tier].price + 200) * priceMult());
-      if (career.money >= cost) {
-        career.money -= cost;
-        m.tier = next;
-        audio.cashRegister(); save(); renderShop(earnings);
-      }
-    },
-    hire: (tierId) => {
-      const t = CREW_TIERS[tierId];
-      const cost = Math.round(t.price * priceMult());
-      if (career.money >= cost && career.crew.length < 8) {
+    hire: (typeId) => {
+      if (draftShopState().locked) return;
+      const t = HIRE_TYPES[typeId];
+      const quoted = market.quoteRecruit(typeId);
+      if (t && Number.isFinite(quoted) && career.money >= quoted && career.crew.length < CREW_CONTRACT_CAP) {
+        const cost = market.buyRecruit(typeId);
         career.money -= cost;
         const ch = makeCharacter();
         autoPlace(ch.pack, makeItem('ammo_9mm')); // signs on stocked, like you did
         autoPlace(ch.pack, makeItem('medkit'));
-        career.crew.push({ name: nextCrewName(), tier: tierId, kills: 0, hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch });
+        const name = nextCrewName();
+        career.crew.push({
+          name, type: typeId, progress: createProgression(), kills: 0,
+          hp: null, limbs: { arm: 0, leg: 0 },
+          benched: shouldBenchNewHire(career.crew),
+          ch,
+        });
+        if (career.mode === 'liquidation') {
+          recordPlayerMarket('hire', null, cost, `${t.name} · ${name}`);
+        }
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
     toggleBench: (idx) => {
+      if (draftShopState().locked) return;
       const m = career.crew[idx];
       if (!m) return;
       // deploy cap: 5 in the pit at once
-      const deployed = career.crew.filter(c => !c.benched).length;
-      if (m.benched && deployed >= 5) return;
+      const deployed = deployedCrewCount(career.crew);
+      if (m.benched && deployed >= DEPLOYED_CREW_CAP) return;
       m.benched = !m.benched;
       audio.uiClick(); save(); renderShop(earnings);
     },
     buyItemTo: (type, who) => {
+      if (draftShopState().locked) return;
       const def = ITEM_TYPES[type];
       const cost = market.quoteBuy(type, 1, priceMult());
       if (!def || career.money < cost) return;
@@ -1164,6 +1590,7 @@ function renderShop(earnings) {
       if (!ch) return;
       career.money -= cost;
       market.buy(type);
+      if (career.mode === 'liquidation') recordPlayerMarket('buy', type, cost);
       const it = makeItem(type);
       if (def.kind === 'gun') {
         if (!ch.gear.gun1) ch.gear.gun1 = it;
@@ -1177,12 +1604,18 @@ function renderShop(earnings) {
       }
       audio.cashRegister(); save(); renderShop(earnings);
     },
-    train: (skillId) => {
-      const t = TRAINING[skillId];
-      const lvl = career.skills[skillId];
-      if (lvl < t.max && career.money >= t.prices[lvl]) {
-        career.money -= t.prices[lvl];
-        career.skills[skillId]++;
+    train: (who, skillId) => {
+      if (draftShopState().locked) return;
+      const isPlayer = who === 'player';
+      const member = isPlayer ? null : career.crew[Number(who)];
+      const progress = isPlayer ? career.playerProgress : member?.progress;
+      const type = isPlayer ? PLAYER_TYPE : member?.type;
+      if (progress && buyTraining(progress, type, skillId)) {
+        if (career.mode === 'liquidation') emitCareerEvent('liquidation_training', {
+          target: isPlayer ? 'YOU' : member.name,
+          skill_id: skillId,
+          state: careerSnapshot(),
+        });
         audio.cashRegister(); save(); renderShop(earnings);
       }
     },
@@ -1190,6 +1623,10 @@ function renderShop(earnings) {
 }
 
 function showIntro() {
+  if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
+    openShop();
+    return;
+  }
   phase = 'intro';
   const liquidation = career.mode === 'liquidation';
   const liquidationBets = liquidation ? liquidationBetOptions(career.liquidation, career.money) : [];
@@ -1227,6 +1664,10 @@ const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyR', 'KeyQ
 document.addEventListener('keydown', (e) => {
   if (phase === 'match') {
     if (GAME_KEYS.has(e.code) || e.ctrlKey) e.preventDefault();
+    if (match?.spectating && !e.repeat && (e.code === 'KeyA' || e.code === 'KeyD')) {
+      cycleSpectator(e.code === 'KeyD' ? 1 : -1);
+      return;
+    }
     player.onKey(e.code, true);
   }
 });
@@ -1255,21 +1696,52 @@ async function enterCombatMode() {
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
   } catch { /* user denied or unsupported — playable regardless */ }
+  if (touchMode) return; // no pointer to lock; the touch layer drives input
   try {
     if (navigator.keyboard?.lock) await navigator.keyboard.lock([...GAME_KEYS]);
   } catch { /* unsupported — fine */ }
-  renderer.domElement.requestPointerLock();
+  // may reject without user activation (gamepad Start resume) — pad play doesn't need the lock
+  try { renderer.domElement.requestPointerLock()?.catch?.(() => {}); } catch { /* fine */ }
 }
 document.addEventListener('wheel', (e) => { if (locked && phase === 'match') player.onWheel(e.deltaY); });
 
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   player.clearInput();
-  if (!locked && phase === 'match' && player.alive && !match.ended) {
+  if (!locked && phase === 'match' && (player.alive || match.spectating) && !match.ended) {
+    // pointer-lock loss only pauses mouse players; a controller plays unlocked
+    if (input.gamepadActive) return;
     ui.showScreen('pause');
     phase = 'paused';
   }
 });
+
+// pause/resume paths that don't depend on pointer lock (gamepad Start, touch button)
+function pauseMatch() {
+  if (phase !== 'match' || match?.ended || (!player.alive && !match?.spectating)) return;
+  if (document.pointerLockElement) document.exitPointerLock();
+  player.clearInput();
+  ui.showScreen('pause');
+  phase = 'paused';
+}
+function resumeFromPause() {
+  if (phase !== 'paused') return;
+  phase = 'match';
+  ui.showHUDOnly();
+  enterCombatMode();
+}
+function openSettings() {
+  if (phase !== 'menu' && phase !== 'paused') return;
+  settingsReturnPhase = phase;
+  phase = 'settings';
+  document.getElementById('settings-overlay').classList.remove('hidden');
+}
+function closeSettings() {
+  if (phase !== 'settings') return;
+  document.getElementById('settings-overlay').classList.add('hidden');
+  phase = settingsReturnPhase;
+  document.dispatchEvent(new CustomEvent('screenchange', { detail: phase }));
+}
 
 // ============================================================ buttons
 const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.init(); audio.resume(); audio.uiClick(); fn(); });
@@ -1277,8 +1749,11 @@ const on = (id, fn) => document.getElementById(id).addEventListener('click', () 
 on('btn-new', () => { career = newCareer('circuits'); market = createMarket('circuits'); save(); showIntro(); });
 on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });
 on('btn-continue', () => { showIntro(); });
+on('btn-menu-settings', () => openSettings());
 on('btn-fight', () => startMatch());
-on('btn-next-fight', () => showIntro());
+on('btn-next-fight', () => {
+  if (!draftShopState().mustEndTurn) showIntro();
+});
 on('btn-retry', () => openShop());
 on('btn-intro-back', () => { career.bet = 0; openShop(); });
 function returnToMainMenu() {
@@ -1298,10 +1773,11 @@ on('btn-executed-new', () => {
   if (career.mode === 'liquidation' && career.liquidation?.complete) returnToMainMenu();
   else { career = newCareer(); save(); showIntro(); }
 });
-on('btn-resume', () => {
-  phase = 'match';
-  ui.showHUDOnly();
-  enterCombatMode();
+on('btn-resume', () => resumeFromPause());
+on('btn-pause-settings', () => openSettings());
+on('btn-settings-close', () => closeSettings());
+document.getElementById('settings-overlay').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeSettings();
 });
 on('btn-abandon', () => {
   if (career.bet > 0) {
@@ -1334,10 +1810,30 @@ camera.lookAt(0, 1, 0);
 const clock = new THREE.Clock();
 
 const _aimTmp = new THREE.Vector3();
+const _spectatorPos = new THREE.Vector3();
+const _spectatorLook = new THREE.Vector3();
+
+function updateSpectatorCamera(dt) {
+  if (!match.spectatorTarget?.alive) cycleSpectator(1);
+  const target = match.spectatorTarget;
+  if (!target) return;
+  const forwardX = Math.sin(target.yaw);
+  const forwardZ = Math.cos(target.yaw);
+  _spectatorPos.set(
+    target.pos.x - forwardX * 3.8,
+    target.pos.y + 2.5,
+    target.pos.z - forwardZ * 3.8,
+  );
+  camera.position.lerp(_spectatorPos, 1 - Math.exp(-dt * 7));
+  _spectatorLook.set(target.pos.x + forwardX * 2, target.pos.y + 1.25, target.pos.z + forwardZ * 2);
+  camera.lookAt(_spectatorLook);
+  const alive = livingCrew();
+  ui.showSpectator(target.name, Math.max(0, alive.indexOf(target)), alive.length);
+}
 
 function stepMatch(dt) {
   match.time += dt;
-  player.update(dt, locked);
+  player.update(dt, locked || touchMode || input.gamepadActive);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);
@@ -1369,6 +1865,7 @@ function stepMatch(dt) {
     }
   }
   for (const c of world.combatants) c.update(world, dt);
+  if (match.spectating) updateSpectatorCamera(dt);
   updateEvents(dt);
   updateGrenades(dt);
   announcer.update(dt);
@@ -1384,6 +1881,9 @@ function stepMatch(dt) {
 window.__game = {
   get world() { return world; }, get match() { return match; }, get player() { return player; },
   get phase() { return phase; }, get career() { return career; },
+  get input() { return input; },
+  get controllerSettings() { return input.controllerSettings; },
+  tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
   setLocked(v) { locked = v; },
 };
@@ -1397,6 +1897,11 @@ function tick() {
   updateArenaAmbience(arena, t);
   fx.update(dt);
   audio.update(dt);
+  input.update(dt, phase); // gamepad + touch → player (runs in pause too, for Start-resume)
+  if (touch) {
+    touch.setVisible(phase === 'match');
+    touch.setSpectating(phase === 'match' && !!match?.spectating);
+  }
 
   if (phase === 'match') {
     stepMatch(dt);

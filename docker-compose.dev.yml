@@ -1,10 +1,28 @@
 services:
+  analytics:
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    image: thunderdome-analytics:dev
+    container_name: thunderdome_dev_analytics
+    restart: always
+    environment:
+      ANALYTICS_DATA_DIR: /data
+      ANALYTICS_RETENTION_DAYS: ${ANALYTICS_RETENTION_DAYS:-90}
+    volumes:
+      - analytics-data:/data
+
   app-dev:
     build:
       context: .
+      args:
+        VITE_BUILD_SHA: ${VITE_BUILD_SHA:-unknown}
     image: thunderdome:dev
     container_name: thunderdome_dev_app
     restart: always
+    depends_on:
+      analytics:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 30s
@@ -28,3 +46,6 @@ services:
 networks:
   default:
     name: thunderdome_dev_net
+
+volumes:
+  analytics-data:

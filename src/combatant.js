@@ -43,6 +43,10 @@ export class Combatant {
     this.armorParts = opts.armorParts || { head: 0, body: opts.armor || 0, limbs: 0 };
     this.boss = !!opts.boss;
     this.archetype = opts.archetype || null; // 'medic' | 'shield' | 'rusher' | 'marksman'
+    this.damageMult = opts.damageMult || 1;
+    this.damageTakenMult = opts.damageTakenMult || 1;
+    this.healingMult = opts.healingMult || 1;
+    this.medicCooldownMult = opts.medicCooldownMult || 1;
     this.scale = opts.scale || (0.95 + Math.random() * 0.09); // natural height variety
     this.mendCd = 4;
     this.mendT = 0;
@@ -82,7 +86,9 @@ export class Combatant {
     this.nades = 0;
     this.nadeCd = 6 + Math.random() * 8;
     this.healKits = 0;
+    this.splints = 0;
     this.healingT = 0;
+    this.healingKind = null;
     this.sinceHit = 99;
     // stance: crouch cycling + cosmetic lean so heads aren't all at one height
     this.crouchK = 1;
@@ -267,8 +273,11 @@ export class Combatant {
     if (part === 'torso') dmg *= (1 - this.armorParts.body);
     else if (part === 'head') dmg *= (1 - this.armorParts.head);
     else dmg *= (1 - this.armorParts.limbs);
+    dmg *= this.damageTakenMult;
     if (this.boss && part === 'head') dmg *= 0.55; // gold mask
+    const hpBefore = this.hp;
     this.hp -= dmg;
+    world.onDamage?.(shooter, this, Math.min(hpBefore, Math.max(0, dmg)));
 
     if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + 0.4);
     if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + 0.4);
@@ -289,7 +298,8 @@ export class Combatant {
     this.deathT = 0;
     this.tag.visible = false;
     if (this.laser) this.laser.visible = false;
-    if (this.bountyLight) { this.group.remove(this.bountyLight); this.bountyLight = null; }
+    if (this.bountyMarker) { this.group.remove(this.bountyMarker); this.bountyMarker = null; }
+    this.bountyRevealed = false;
     // remove hitboxes
     world.hitMeshes = world.hitMeshes.filter(m => m.userData.combatant !== this);
     audio.hurt();
@@ -340,9 +350,13 @@ export class Combatant {
     if (this.healingT > 0) {
       this.healingT -= dt;
       if (this.healingT <= 0) {
-        this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.45);
-        this.armDmg = 0;
-        this.legDmg = 0;
+        if (this.healingKind === 'splint') {
+          this.armDmg = 0;
+          this.legDmg = 0;
+        } else {
+          this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.45);
+        }
+        this.healingKind = null;
       }
     }
 
@@ -353,9 +367,11 @@ export class Combatant {
         this.mendT -= dt;
         if (this.mendT <= 0 && this.mendTarget?.alive) {
           const t = this.mendTarget;
-          t.hp = Math.min(t.maxHp, t.hp + t.maxHp * 0.4);
+          const hpBefore = t.hp;
+          t.hp = Math.min(t.maxHp, t.hp + t.maxHp * 0.4 * this.healingMult);
           t.armDmg = 0; t.legDmg = 0;
-          this.mendCd = 9;
+          world.onSupport?.(this, Math.max(0, t.hp - hpBefore));
+          this.mendCd = 9 * this.medicCooldownMult;
           this.mendTarget = null;
         }
       } else if (this.mendCd <= 0 && this.sinceHit > 1.5 && (!this.mendTarget || !this.mendTarget.alive)) {
@@ -460,10 +476,17 @@ export class Combatant {
       if (this.healKits > 0 && this.hp < this.maxHp * 0.38 && this.sinceHit > 2.2 && (!sight || dist > engage * 1.6)) {
         this.healKits--;
         this.healingT = 2.1;
+        this.healingKind = 'medkit';
+      } else if (this.splints > 0 && Math.max(this.armDmg, this.legDmg) >= 0.4 &&
+        this.sinceHit > 2.2 && (!sight || dist > engage * 1.6)) {
+        this.splints--;
+        this.healingT = 1.8;
+        this.healingKind = 'splint';
       }
       // frag the target's hiding spot when we can't get an angle —
       // but never with a friendly (or, for crew, the boss) inside the blast radius
-      if (this.nades > 0 && this.nadeCd <= 0 && !sight && dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
+      if (this.healingT <= 0 && this.nades > 0 && this.nadeCd <= 0 && !sight &&
+        dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
         let friendlyInBlast = false;
         for (const c of world.combatants) {
           if (c === this || !c.alive || c.team !== this.team) continue;
@@ -619,7 +642,7 @@ export class Combatant {
 
       if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && dist < w.meleeRange) {
         // slash
-        const mdmg = w.dmg * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
+        const mdmg = w.dmg * this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
         if (this.target.isPlayer) world.onPlayerDamaged(mdmg, Math.random() < 0.2 ? 'armL' : 'torso', this.pos);
         else this.target.applyDamage(world, 'torso', mdmg, this, this.target.aimPoint());
         audio.slash(1.2 / (1 + eye.distanceTo(world.cameraPos) * 0.09));
@@ -635,7 +658,8 @@ export class Combatant {
         const pellets = w.pellets;
         for (let i = 0; i < pellets; i++) {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
-          const res = fireRay(world, this, fireEye, sdir, w, this.team === 'enemy' ? world.enemyDmgScale : 1);
+          const res = fireRay(world, this, fireEye, sdir, w,
+            this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
           world.fx.tracer(fireEye.clone().addScaledVector(sdir, 0.6), res.point);
           if (res.type === 'wall') { world.fx.sparks(res.point); if (Math.random() < 0.3) audio.ricochet(); }
         }

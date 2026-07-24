@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>THUNDERDOME — Underground Kill League</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
   <div id="app"></div>
+  <div id="controller-hint" class="hidden"></div>
 
   <!-- ===================== HUD ===================== -->
   <div id="hud" class="hidden">
@@ -34,6 +35,13 @@
     <div id="event-banner" class="hidden">
       <div id="event-title">LIGHTS OUT</div>
       <div id="event-sub">The tournament master spices things up</div>
+    </div>
+
+    <div id="spectator-banner" class="hidden">
+      <b>SPECTATING <span id="spectator-name"></span></b>
+      <span id="spectator-count"></span>
+      <small class="spec-hint-kb">A / D · D-PAD — SWITCH FIGHTER</small>
+      <small class="spec-hint-touch">TAP LEFT / RIGHT — SWITCH FIGHTER</small>
     </div>
 
     <div id="killfeed"></div>
@@ -89,11 +97,15 @@
         <button id="btn-continue" class="btn btn-big hidden">CONTINUE CAREER</button>
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
+        <button id="btn-menu-settings" class="btn btn-big btn-ghost">SETTINGS</button>
       </div>
+      <div class="menu-controller-guide controller-only">LEFT STICK CURSOR · <span class="pad-key pad-a">A</span> SELECT</div>
       <div class="menu-controls">
         <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean (tap toggles, hold holds)</div>
         <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire / slash &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–2</b> guns &nbsp; <b>3</b> knife</div>
         <div><b>H</b> medkit &nbsp; <b>V</b> splint &nbsp; <b>G</b> grenade</div>
+        <div><b>🎮 GAMEPAD</b> sticks move/aim &nbsp; <b>RT</b> fire &nbsp; <b>LT</b> sights &nbsp; <b>A</b> jump &nbsp; <b>B</b> crouch &nbsp; <b>X</b> reload &nbsp; <b>Y</b> swap &nbsp; <b>RB</b> frag &nbsp; <b>LB</b> knife &nbsp; <b>L3</b> sprint &nbsp; <b>D-PAD</b> heals / lean</div>
+        <div><b>📱 TOUCH</b> left thumb moves &nbsp; drag the right side to aim &nbsp; buttons do the rest</div>
         <div class="menu-warn">Locational damage is real. Get shot in the arm — your aim goes. Get shot in the leg — you limp. Play slow. Play smart.</div>
       </div>
     </div>
@@ -107,9 +119,10 @@
       <div id="intro-status"></div>
       <div id="bet-row"></div>
       <div class="intro-actions">
-        <button id="btn-intro-back" class="btn">◀ BLACK MARKET</button>
-        <button id="btn-fight" class="btn btn-big btn-blood">⚔ FIGHT</button>
+        <button id="btn-intro-back" class="btn"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> ◀ BLACK MARKET</button>
+        <button id="btn-fight" class="btn btn-big btn-blood"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> ⚔ FIGHT</button>
       </div>
+      <div class="intro-controller-guide controller-only">LEFT STICK CURSOR · <span class="pad-key pad-a">A</span> SELECT</div>
       <div class="intro-hint">Click FIGHT to lock in — the game goes fullscreen. ESC pauses.</div>
     </div>
   </div>
@@ -125,27 +138,47 @@
       </div>
       <div id="earnings-box" class="hidden"></div>
       <div class="shop-cols">
-        <div class="shop-col">
+        <div class="shop-col" data-shop-panel="market">
           <div class="shop-col-title">🛒 THE MARKET <span class="dim">(purchases land in your stash)</span></div>
           <div id="market-list"></div>
-          <div class="shop-col-title" style="margin-top:14px">🏋 TRAINING</div>
-          <div id="shop-training"></div>
         </div>
-        <div class="shop-col">
+        <div class="shop-col" data-shop-panel="stash">
           <div class="shop-col-title">📦 STASH <span class="dim">(drag anywhere — gear, packs, or the bin)</span></div>
           <div id="stash-scroll"><div id="stash-wrap"></div></div>
           <div id="sell-bin">💰 SELL — drop anything here to liquidate (55%)</div>
           <div class="shop-col-title" style="margin-top:14px">📋 NEXT BOUT</div>
           <div id="next-bout"></div>
+          <div id="market-tape-wrap" class="hidden">
+            <div class="shop-col-title" style="margin-top:14px">▤ MARKET TAPE <span class="dim">(public trades)</span></div>
+            <div id="market-tape" aria-label="Liquidation market transaction log"></div>
+          </div>
         </div>
-        <div class="shop-col">
+        <div class="shop-col" data-shop-panel="squad">
           <div class="shop-col-title">👥 THE SQUAD <span class="dim">(wounds carry over — pay up or fight hurt)</span></div>
           <div id="char-tabs"></div>
           <div id="char-panel"></div>
         </div>
       </div>
-      <div class="shop-footer">
-        <button id="btn-next-fight" class="btn btn-big btn-blood">NEXT FIGHT ➤</button>
+      <div class="shop-footer" data-controller-panel="actions">
+        <div id="shop-controller-guide" class="shop-controller-guide controller-only">
+          LEFT STICK CURSOR · RIGHT STICK SCROLL · A SELECT · X ALTERNATE · LT / RT PANEL
+        </div>
+        <div id="shop-turn-status" class="hidden"></div>
+        <button id="btn-end-turn" class="btn btn-big hidden"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> END TURN — LET THE RIVAL SHOP</button>
+        <button id="btn-next-fight" class="btn btn-big btn-blood"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> NEXT FIGHT ➤</button>
+      </div>
+    </div>
+    <div id="hire-overlay" class="hire-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="hire-title">
+      <div class="hire-dialog">
+        <div class="hire-dialog-head">
+          <div>
+            <span class="hire-kicker">CONTRACT MARKET</span>
+            <h2 id="hire-title">HIRE A FIGHTER</h2>
+          </div>
+          <button id="btn-hire-close" class="btn btn-ghost"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> CLOSE</button>
+        </div>
+        <div id="hire-options" class="hire-options"></div>
+        <div class="hire-dialog-hint controller-only"><span class="pad-key pad-a">A</span> SIGN CONTRACT · <span class="pad-key pad-b">B</span> CANCEL</div>
       </div>
     </div>
   </div>
@@ -191,7 +224,66 @@
       <h2>PAUSED</h2>
       <div class="pause-sub">The crowd is booing.</div>
       <button id="btn-resume" class="btn">RESUME</button>
+      <button id="btn-pause-settings" class="btn">SETTINGS</button>
       <button id="btn-abandon" class="btn btn-ghost">FORFEIT MATCH</button>
+    </div>
+  </div>
+
+  <div id="settings-overlay" class="settings-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="settings-dialog">
+      <div class="settings-dialog-head">
+        <div>
+          <span>THUNDERDOME CONFIGURATION</span>
+          <h2 id="settings-title">SETTINGS</h2>
+        </div>
+        <button id="btn-settings-close" class="btn btn-ghost"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> BACK</button>
+      </div>
+      <section id="controller-settings" aria-label="Controller aim calibration">
+        <div class="controller-settings-head">
+          <div>
+            <b>🎮 CONTROLLER AIM LAB</b>
+            <span>Move the right stick to test the response curve live.</span>
+          </div>
+          <button id="controller-settings-reset" class="btn btn-ghost">RESET</button>
+        </div>
+        <div class="controller-settings-body">
+          <div class="controller-sliders">
+            <label for="controller-sensitivity">
+              <span>LOOK SENSITIVITY <output id="controller-sensitivity-value">0.65×</output></span>
+              <input id="controller-sensitivity" type="range" min="0.3" max="1.5" step="0.05" value="0.65" />
+              <small>Maximum turn speed</small>
+            </label>
+            <label for="controller-cursor-sensitivity">
+              <span>CURSOR SENSITIVITY <output id="controller-cursor-sensitivity-value">0.80×</output></span>
+              <input id="controller-cursor-sensitivity" type="range" min="0.4" max="1.5" step="0.05" value="0.8" />
+              <small>Menu pointer speed</small>
+            </label>
+            <label for="controller-exponent">
+              <span>RESPONSE EXPONENT <output id="controller-exponent-value">2.15</output></span>
+              <input id="controller-exponent" type="range" min="1.2" max="3" step="0.05" value="2.15" />
+              <small>Higher values soften small stick movements</small>
+            </label>
+            <label for="controller-aim-assist">
+              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
+              <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
+              <small>Narrow slowdown and micro-correction only</small>
+            </label>
+          </div>
+          <div class="controller-curve-wrap">
+            <svg id="controller-curve" viewBox="0 0 300 150" role="img" aria-label="Controller response curve">
+              <path class="curve-grid" d="M22 26V126H278 M22 101H278 M22 76H278 M22 51H278 M86 26V126 M150 26V126 M214 26V126" />
+              <path class="curve-linear" d="M22 126L278 26" />
+              <rect class="curve-deadzone" x="22" y="26" width="30.7" height="100" />
+              <path id="controller-curve-path" d="" />
+              <circle id="controller-curve-dot" cx="22" cy="126" r="5" />
+              <text x="22" y="143">STICK INPUT</text>
+              <text x="4" y="25">TURN</text>
+            </svg>
+            <div id="controller-curve-sample">STICK 0% → TURN 0%</div>
+          </div>
+        </div>
+      </section>
+      <div class="settings-controller-guide controller-only">LEFT STICK CURSOR · RIGHT STICK SCROLL · <span class="pad-key pad-a">A</span> SELECT · <span class="pad-key pad-b">B</span> BACK</div>
     </div>
   </div>
 

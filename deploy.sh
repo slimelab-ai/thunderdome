@@ -15,6 +15,7 @@ fi
 
 git checkout -B "$branch" "origin/$branch"
 git restore --source "origin/$branch" --staged --worktree -- .
-docker compose build app
+export VITE_BUILD_SHA="$remote_sha"
+docker compose build
 docker compose up -d
 printf '%s\n' "$remote_sha" > .deployed-sha

@@ -1,4 +1,7 @@
 import { ITEM_TYPES, AMMO_TYPES } from './items.js';
+import { HIRE_TYPES } from './progression.js';
+
+export const recruitPoolKey = type => `recruit_${type}`;
 
 // One market API serves both modes. Circuits uses the fixed-price adapter;
 // Liquidation persists shared constant-product pools in the career save.
@@ -17,6 +20,11 @@ export class CircuitMarket {
   }
   buy() {}
   sell() {}
+  quoteRecruit(type) { return HIRE_TYPES[type]?.price ?? Infinity; }
+  buyRecruit(type) { return this.quoteRecruit(type); }
+  quoteReleaseRecruit(type) { return Math.round((HIRE_TYPES[type]?.price || 0) * 0.5); }
+  releaseRecruit(type) { return this.quoteReleaseRecruit(type); }
+  recruitInfo() { return null; }
   snapshot() { return null; }
   info() { return null; }
 }
@@ -30,6 +38,12 @@ export class LiquidationMarket {
       const units = Math.max(4, Math.round((scarce ? 18 : 8) * (0.82 + random() * 0.36)));
       // x items * y dollars = k. Initial marginal price equals catalog price.
       this.pools[type] = { units, cash: units * def.price, initial: units };
+    }
+    for (const [type, def] of Object.entries(HIRE_TYPES)) {
+      const key = recruitPoolKey(type);
+      if (this.pools[key]) continue;
+      const units = Math.max(5, Math.round(8 * (0.82 + random() * 0.36)));
+      this.pools[key] = { units, cash: units * def.price, initial: units };
     }
   }
   _buyRaw(type, quantity = 1) {
@@ -60,6 +74,23 @@ export class LiquidationMarket {
     p.units += q; p.cash = Math.max(1, p.cash - value);
     return value;
   }
+  quoteRecruit(type) { return this.quoteBuy(recruitPoolKey(type)); }
+  buyRecruit(type) { return this.buy(recruitPoolKey(type)); }
+  quoteReleaseRecruit(type) {
+    const key = recruitPoolKey(type);
+    const p = this.pools[key];
+    return p ? Math.max(1, Math.floor(p.cash / (p.units + 1))) : 0;
+  }
+  releaseRecruit(type) {
+    const key = recruitPoolKey(type);
+    const p = this.pools[key];
+    if (!p) return 0;
+    const value = this.quoteReleaseRecruit(type);
+    p.units += 1;
+    p.cash = Math.max(1, p.cash - value);
+    return value;
+  }
+  recruitInfo(type) { return this.info(recruitPoolKey(type)); }
   restock(type, quantity) {
     const p = this.pools[type];
     if (!p || quantity <= 0) return;
