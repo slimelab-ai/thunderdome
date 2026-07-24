@@ -71,8 +71,6 @@ export class InputHub {
     this.onControllerSample = onControllerSample;
     this.controllerSettings = { ...DEFAULT_CONTROLLER_SETTINGS, ...controllerSettings };
     this.prevButtons = [];
-    this.navHeld = null;
-    this.navRepeat = 0;
     this.menuYHeldFor = 0;
     this.menuYHoldFired = false;
     this.gamepadActiveAt = -10;
@@ -132,21 +130,15 @@ export class InputHub {
       if (!inMatch) {
         const ax = pad.axes[0] || 0;
         const ay = pad.axes[1] || 0;
-        let nav = null;
-        if (ay < -0.55) nav = 'up';
-        else if (ay > 0.55) nav = 'down';
-        else if (ax < -0.55) nav = 'left';
-        else if (ax > 0.55) nav = 'right';
-        if (nav !== this.navHeld) {
-          this.navHeld = nav;
-          this.navRepeat = 0.34;
-          if (nav) this.onMenuInput?.(nav);
-        } else if (nav) {
-          this.navRepeat -= dt;
-          if (this.navRepeat <= 0) {
-            this.navRepeat = 0.11;
-            this.onMenuInput?.(nav);
-          }
+        const cursor = stickCurve(ax, ay, 0.14, 1.45);
+        if (cursor.mag > 0) {
+          this.onMenuInput?.({
+            type: 'cursorMove',
+            x: cursor.x,
+            y: cursor.y,
+            magnitude: cursor.mag,
+            dt,
+          });
         }
         if (edge(BTN.A)) this.onMenuInput?.('activate');
         if (edge(BTN.B)) this.onMenuInput?.('back');
@@ -171,7 +163,6 @@ export class InputHub {
         if (edge(BTN.LT)) this.onMenuInput?.('nextPanel');
         if (edge(BTN.RT)) this.onMenuInput?.('previousPanel');
       } else {
-        this.navHeld = null;
         this.menuYHeldFor = 0;
         this.menuYHoldFired = false;
       }

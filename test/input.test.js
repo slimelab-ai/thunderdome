@@ -222,7 +222,7 @@ test('while dead, d-pad and bumpers cycle spectator targets instead of gameplay 
   }
 });
 
-test('outside combat, controller inputs drive UI navigation with held-stick repeat', () => {
+test('outside combat, the left stick drives a continuous analog cursor', () => {
   const { hub } = makeHub();
   const actions = [];
   let controllerActivations = 0;
@@ -235,20 +235,22 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
   pad.axes[1] = 0.8;
   hub.update(1 / 60, 'menu');
   hub.update(1 / 60, 'menu');
-  assert.deepEqual(actions, ['down'], 'initial stick deflection moves once');
-  hub.update(0.35, 'menu');
-  assert.deepEqual(actions, ['down', 'down'], 'held stick repeats after the navigation delay');
+  assert.equal(actions.length, 2, 'held stick sends movement every frame');
+  assert.equal(actions[0].type, 'cursorMove');
+  assert.ok(actions[0].y > 0);
+  assert.ok(actions[0].magnitude > 0 && actions[0].magnitude <= 1);
 
   pad.axes[1] = 0;
   hub.update(1 / 60, 'menu');
   pad.axes[0] = 0.8;
   hub.update(1 / 60, 'shop');
-  assert.equal(actions.at(-1), 'right', 'horizontal left-stick input navigates menus');
+  assert.equal(actions.at(-1).type, 'cursorMove');
+  assert.ok(actions.at(-1).x > 0, 'horizontal stick movement is preserved');
   pad.axes[0] = 0;
   hub.update(1 / 60, 'shop');
   pad.axes[0] = -0.8;
   hub.update(1 / 60, 'shop');
-  assert.equal(actions.at(-1), 'left', 'horizontal left-stick input navigates both directions');
+  assert.ok(actions.at(-1).x < 0, 'the cursor moves in both horizontal directions');
   pad.axes[0] = 0;
   hub.update(1 / 60, 'shop');
 

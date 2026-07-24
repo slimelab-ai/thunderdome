@@ -1,4 +1,5 @@
 const FOCUSABLE = 'button:not(:disabled):not([data-controller-skip]), input[type="range"]:not(:disabled), [data-controller-item]';
+const CURSOR_FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item]';
 const CARRY_TARGETS = '[data-controller-target]';
 const NAV_SCOPE_SELECTOR = '[data-shop-panel], [data-controller-panel]';
 const IDENTITY_ATTRIBUTES = [
@@ -49,25 +50,43 @@ export function directionalCandidate(rects, currentIndex, direction) {
   return best;
 }
 
+export function cursorMagnetCandidate(rects, x, y) {
+  let best = -1;
+  let bestScore = Infinity;
+  rects.forEach((rect, index) => {
+    const nearX = Math.max(rect.left, Math.min(rect.left + rect.width, x));
+    const nearY = Math.max(rect.top, Math.min(rect.top + rect.height, y));
+    const edgeDistance = Math.hypot(nearX - x, nearY - y);
+    if (edgeDistance > 12) return;
+    const point = center(rect);
+    const score = edgeDistance + Math.hypot(point.x - x, point.y - y) * 0.001;
+    if (score < bestScore) {
+      best = index;
+      bestScore = score;
+    }
+  });
+  return best;
+}
+
 export function controllerHint(screenId, {
   carrying = false, adjusting = false, inventoryItem = false, stashItem = false,
 } = {}) {
-  if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LEFT / RIGHT OR LT / RT PANEL';
-  if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  A SELECT';
+  if (carrying) return 'LEFT STICK CURSOR  ·  A PLACE / SELL  ·  B CANCEL  ·  LT / RT PANEL';
+  if (adjusting) return 'LEFT STICK CURSOR  ·  A SET VALUE  ·  B BACK';
   if (screenId === 'screen-shop' && stashItem) {
-    return 'A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
+    return 'LEFT STICK CURSOR  ·  A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-shop' && inventoryItem) {
-    return 'A MOVE  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH  ·  LEFT STICK MOVE';
+    return 'LEFT STICK CURSOR  ·  A MOVE  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-shop') {
-    return 'LEFT STICK ← / → OR LT / RT PANEL  ·  A PRIMARY  ·  X ALTERNATE  ·  START ADVANCE  ·  D-PAD ↑ PATCH';
+    return 'LEFT STICK CURSOR  ·  A SELECT  ·  X ALTERNATE  ·  LT / RT PANEL  ·  START ADVANCE  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-intro') {
-    return 'START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  LEFT STICK MOVE';
+    return 'LEFT STICK CURSOR  ·  A SELECT  ·  START FIGHT  ·  B BLACK MARKET';
   }
-  if (screenId === 'screen-menu') return 'LEFT STICK MOVE  ·  A SELECT';
-  return 'LEFT STICK MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
+  if (screenId === 'screen-menu') return 'LEFT STICK CURSOR  ·  A SELECT';
+  return 'LEFT STICK CURSOR  ·  A SELECT  ·  B BACK';
 }
 
 export class MenuNavigator {
@@ -78,12 +97,36 @@ export class MenuNavigator {
     this.lastCenter = null;
     this.lastScreen = null;
     this.panelMemory = new Map();
+    this.cursorEl = doc.getElementById?.('controller-cursor') || null;
+    if (!this.cursorEl && doc.createElement) {
+      this.cursorEl = doc.createElement('div');
+      this.cursorEl.id = 'controller-cursor';
+      this.cursorEl.setAttribute('aria-hidden', 'true');
+      this.cursorEl.innerHTML = '<i></i><b></b>';
+      doc.body.appendChild(this.cursorEl);
+    }
+    this.cursorX = 0;
+    this.cursorY = 0;
+    this.cursorInitialized = false;
+    this.cursorTarget = null;
+    this.cursorSnapped = null;
+    this.cursorSnapPoint = null;
+    this.cursorSnapPush = { x: 0, y: 0 };
+    this.cursorSnapIgnore = null;
+    this.cursorSnapCooldown = 0;
     const leaveControllerMode = () => {
-      doc.body.classList.remove('controller-mode');
+      doc.body.classList.remove('controller-mode', 'controller-menu-cursor');
+      this._setCursorTarget(null);
       this._updateHint();
     };
     doc.addEventListener('pointerdown', leaveControllerMode, { passive: true });
     doc.addEventListener('screenchange', () => {
+      doc.body.classList.remove('controller-menu-cursor');
+      this._setCursorTarget(null);
+      this.cursorInitialized = false;
+      this.cursorSnapped = null;
+      this.cursorSnapPoint = null;
+      this.cursorSnapIgnore = null;
       this.current = null;
       this.lastIdentity = null;
       this.lastCenter = null;
@@ -102,6 +145,13 @@ export class MenuNavigator {
     const root = this.doc.querySelector('.screen:not(.hidden)');
     if (!root) return false;
     this.activate();
+    this._showCursor(root);
+    if (action?.type === 'cursorMove') {
+      const handled = this._moveCursor(action, root);
+      this._updateHint();
+      return handled;
+    }
+    this._syncCursorTarget(root);
 
     if (action === 'back' && this.doc.body.classList.contains('controller-carrying')) {
       this.doc.dispatchEvent(new CustomEvent('controllercancel'));
@@ -157,6 +207,11 @@ export class MenuNavigator {
     if (action === 'previousPanel' || action === 'nextPanel') {
       this._updateHint();
       return false;
+    }
+    if (action === 'activate' && this.doc.body.classList.contains('controller-menu-cursor')) {
+      const handled = this._cursorActivate(root);
+      this._updateHint();
+      return handled;
     }
     const items = this._items(root);
     if (!items.length) return false;
@@ -222,6 +277,194 @@ export class MenuNavigator {
     return next >= 0;
   }
 
+  _showCursor(root) {
+    if (!this.cursorEl) return;
+    this.doc.body.classList.add('controller-menu-cursor');
+    if (!this.cursorInitialized) {
+      const view = this.doc.defaultView;
+      this.cursorX = (view?.innerWidth || 1280) / 2;
+      this.cursorY = (view?.innerHeight || 720) / 2;
+      this.cursorInitialized = true;
+    }
+    this._renderCursor();
+    this._syncCursorTarget(root);
+  }
+
+  _moveCursor({ x = 0, y = 0, magnitude = 0, dt = 0 }, root) {
+    if (!this.cursorEl) return false;
+    const view = this.doc.defaultView;
+    const width = view?.innerWidth || 1280;
+    const height = view?.innerHeight || 720;
+    const frame = Math.max(0, Math.min(0.05, dt));
+    const speed = Math.max(640, Math.min(1400, Math.min(width, height) * 1.55));
+    this.cursorSnapCooldown = Math.max(0, this.cursorSnapCooldown - frame);
+
+    if (this.cursorSnapped?.isConnected) {
+      const snapCenter = this.cursorSnapPoint || center(this.cursorSnapped.getBoundingClientRect());
+      this.cursorSnapPush.x += x * speed * frame;
+      this.cursorSnapPush.y += y * speed * frame;
+      const pushDistance = Math.hypot(this.cursorSnapPush.x, this.cursorSnapPush.y);
+      if (pushDistance < 14) {
+        this.cursorX = snapCenter.x;
+        this.cursorY = snapCenter.y;
+        this._setCursorTarget(this.cursorSnapped);
+        this._renderCursor();
+        return magnitude > 0;
+      }
+      const overflow = (pushDistance - 14) / pushDistance;
+      this.cursorX = snapCenter.x + this.cursorSnapPush.x * overflow;
+      this.cursorY = snapCenter.y + this.cursorSnapPush.y * overflow;
+      this.cursorSnapIgnore = this.cursorSnapped;
+      this.cursorSnapCooldown = 0.18;
+      this.cursorSnapped = null;
+      this.cursorSnapPoint = null;
+      this.cursorSnapPush = { x: 0, y: 0 };
+    } else {
+      this.cursorSnapped = null;
+      this.cursorSnapPoint = null;
+      this.cursorX += x * speed * frame;
+      this.cursorY += y * speed * frame;
+    }
+
+    this.cursorX = Math.max(10, Math.min(width - 10, this.cursorX));
+    this.cursorY = Math.max(10, Math.min(height - 10, this.cursorY));
+    this._edgeScroll(x, y, frame);
+
+    const magnet = this._magneticTarget(root);
+    if (magnet) {
+      const bounds = magnet.getBoundingClientRect();
+      const point = {
+        x: Math.max(bounds.left + 3, Math.min(bounds.left + bounds.width - 3, this.cursorX)),
+        y: Math.max(bounds.top + 3, Math.min(bounds.top + bounds.height - 3, this.cursorY)),
+      };
+      this.cursorX = point.x;
+      this.cursorY = point.y;
+      this.cursorSnapped = magnet;
+      this.cursorSnapPoint = point;
+      this.cursorSnapPush = { x: 0, y: 0 };
+    }
+    const hit = magnet || this._hitTarget(root);
+    this._setCursorTarget(hit);
+    this._renderCursor();
+    return magnitude > 0;
+  }
+
+  _renderCursor() {
+    if (!this.cursorEl) return;
+    this.cursorEl.style.transform = `translate3d(${this.cursorX}px, ${this.cursorY}px, 0)`;
+    this.cursorEl.classList.toggle('snapped', !!this.cursorSnapped);
+    this.cursorEl.classList.toggle('over-target', !!this.cursorTarget);
+  }
+
+  _cursorItems(root) {
+    const scope = this._dialog(root) || root;
+    const selector = this.doc.body.classList.contains('controller-carrying')
+      ? CARRY_TARGETS
+      : CURSOR_FOCUSABLE;
+    return [...scope.querySelectorAll(selector)].filter(el => this._visible(el));
+  }
+
+  _magneticTarget(root) {
+    const items = this._cursorItems(root);
+    const candidates = this.cursorSnapCooldown > 0 && this.cursorSnapIgnore
+      ? items.filter(item => item !== this.cursorSnapIgnore)
+      : items;
+    const index = cursorMagnetCandidate(
+      candidates.map(item => item.getBoundingClientRect()),
+      this.cursorX,
+      this.cursorY
+    );
+    return index >= 0 ? candidates[index] : null;
+  }
+
+  _hitTarget(root) {
+    const scope = this._dialog(root) || root;
+    const selector = this.doc.body.classList.contains('controller-carrying')
+      ? CARRY_TARGETS
+      : CURSOR_FOCUSABLE;
+    const stack = this.doc.elementsFromPoint?.(this.cursorX, this.cursorY) || [];
+    for (const element of stack) {
+      const target = element.closest?.(selector);
+      if (target && scope.contains(target) && this._visible(target)) return target;
+    }
+    return null;
+  }
+
+  _syncCursorTarget(root) {
+    if (!this.doc.body.classList.contains('controller-menu-cursor')) return this.current;
+    const target = this.cursorSnapped?.isConnected ? this.cursorSnapped : this._hitTarget(root);
+    this._setCursorTarget(target);
+    return target;
+  }
+
+  _setCursorTarget(target) {
+    if (this.cursorTarget === target) return;
+    this.cursorTarget?.classList?.remove('controller-cursor-target');
+    this.cursorTarget = target || null;
+    if (!target) {
+      this.current = null;
+      return;
+    }
+    target.classList?.add('controller-cursor-target');
+    this.current = target;
+    this.lastIdentity = controlIdentity(target);
+    this.lastCenter = center(target.getBoundingClientRect());
+    const root = this.doc.querySelector?.('.screen:not(.hidden)');
+    this.lastScreen = root?.id || null;
+    target.focus?.({ preventScroll: true });
+  }
+
+  _cursorActivate(root) {
+    const target = this._syncCursorTarget(root);
+    if (!target) return false;
+    if (target.matches?.('input[type="range"]')) {
+      const bounds = target.getBoundingClientRect();
+      const min = Number(target.min);
+      const max = Number(target.max);
+      const step = Number(target.step) || 1;
+      const ratio = Math.max(0, Math.min(1, (this.cursorX - bounds.left) / bounds.width));
+      const raw = min + (max - min) * ratio;
+      target.value = String(Math.round(raw / step) * step);
+      const EventClass = this.doc.defaultView?.Event || Event;
+      target.dispatchEvent(new EventClass('input', { bubbles: true }));
+      target.dispatchEvent(new EventClass('change', { bubbles: true }));
+      return true;
+    }
+    this._activate(target, root);
+    return true;
+  }
+
+  _edgeScroll(dx, dy, dt) {
+    const view = this.doc.defaultView;
+    if (!view?.getComputedStyle || !this.doc.elementsFromPoint) return;
+    const width = view.innerWidth;
+    const height = view.innerHeight;
+    const zone = 56;
+    const edgeX = this.cursorX < zone && dx < 0 ? -1
+      : this.cursorX > width - zone && dx > 0 ? 1 : 0;
+    const edgeY = this.cursorY < zone && dy < 0 ? -1
+      : this.cursorY > height - zone && dy > 0 ? 1 : 0;
+    if (!edgeX && !edgeY) return;
+    const stack = this.doc.elementsFromPoint(this.cursorX, this.cursorY);
+    let node = stack[0];
+    while (node && node !== this.doc.body) {
+      const style = view.getComputedStyle(node);
+      const canX = edgeX && node.scrollWidth > node.clientWidth
+        && /(auto|scroll)/.test(style.overflowX);
+      const canY = edgeY && node.scrollHeight > node.clientHeight
+        && /(auto|scroll)/.test(style.overflowY);
+      if (canX || canY) {
+        node.scrollBy({
+          left: canX ? edgeX * 720 * dt : 0,
+          top: canY ? edgeY * 720 * dt : 0,
+          behavior: 'auto',
+        });
+        return;
+      }
+      node = node.parentElement;
+    }
+  }
+
   _back(root) {
     const settings = this.doc.querySelector('#settings-overlay:not(.hidden)');
     const target = settings?.querySelector('#btn-settings-close')
@@ -245,8 +488,10 @@ export class MenuNavigator {
   _alternate(root) {
     if (root.id !== 'screen-shop') return false;
     const items = this._items(root);
-    const active = items.includes(this.current)
-      ? this.current
+    const active = this.doc.body?.classList?.contains('controller-menu-cursor')
+      ? this.cursorTarget
+      : items.includes(this.current)
+        ? this.current
       : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
     if (active?.matches?.('[data-controller-item][data-inventory="stash"]')) {
       return this._inventoryAction(active, root, 'controllerequip');
@@ -261,8 +506,10 @@ export class MenuNavigator {
   _sell(root) {
     if (root.id !== 'screen-shop') return false;
     const items = this._items(root);
-    const active = items.includes(this.current)
-      ? this.current
+    const active = this.doc.body?.classList?.contains('controller-menu-cursor')
+      ? this.cursorTarget
+      : items.includes(this.current)
+        ? this.current
       : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
     if (!active?.matches?.('[data-controller-item]')) return false;
     return this._inventoryAction(active, root, 'controllersell');
@@ -274,6 +521,13 @@ export class MenuNavigator {
     active.dispatchEvent(new EventClass(type, { bubbles: true }));
     const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
     if (!nextRoot || nextRoot.id !== root.id) return true;
+    if (this.doc.body?.classList?.contains('controller-menu-cursor')) {
+      this.cursorSnapped = null;
+      this.cursorSnapPoint = null;
+      this._syncCursorTarget(nextRoot);
+      this._renderCursor();
+      return true;
+    }
     const replacement = this._nearest(this._items(nextRoot), position);
     if (replacement) this._focus(replacement, nextRoot);
     return true;
@@ -302,6 +556,13 @@ export class MenuNavigator {
     target.click();
     const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
     if (!nextRoot || nextRoot.id !== root.id) return true;
+    if (this.doc.body?.classList?.contains('controller-menu-cursor')) {
+      this.cursorSnapped = null;
+      this.cursorSnapPoint = null;
+      this._syncCursorTarget(nextRoot);
+      this._renderCursor();
+      return true;
+    }
     if (!before) return true;
     const nextItems = this._items(nextRoot);
     const replacement = (beforeIdentity && nextItems.find(el => controlIdentity(el) === beforeIdentity))
@@ -314,9 +575,11 @@ export class MenuNavigator {
     const panels = [...root.querySelectorAll('[data-shop-panel]')].filter(el => this._visible(el));
     if (!panels.length) return false;
     const items = this._items(root);
-    const active = items.includes(this.current)
-      ? this.current
-      : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
+    const active = this.doc.body?.classList?.contains('controller-menu-cursor')
+      ? this.cursorTarget
+      : items.includes(this.current)
+        ? this.current
+        : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
     const currentPanel = active?.closest?.('[data-shop-panel]');
     const currentIndex = panels.indexOf(currentPanel);
     let targetIndex = currentIndex < 0 ? (direction > 0 ? 0 : panels.length - 1) : currentIndex + direction;
@@ -334,7 +597,18 @@ export class MenuNavigator {
     const sameHeight = this.lastCenter
       ? { x: targetRect.left + targetRect.width / 2, y: this.lastCenter.y }
       : null;
-    this._focus(remembered || this._nearest(targetItems, sameHeight) || targetItems[0], root);
+    const target = remembered || this._nearest(targetItems, sameHeight) || targetItems[0];
+    this._focus(target, root);
+    if (this.doc.body?.classList?.contains('controller-menu-cursor')) {
+      const point = center(target.getBoundingClientRect());
+      this.cursorX = point.x;
+      this.cursorY = point.y;
+      this.cursorSnapped = target;
+      this.cursorSnapPoint = point;
+      this.cursorSnapPush = { x: 0, y: 0 };
+      this._setCursorTarget(target);
+      this._renderCursor();
+    }
     return true;
   }
 
@@ -367,6 +641,13 @@ export class MenuNavigator {
     el.click();
     const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
     if (!nextRoot || nextRoot.id !== screenId) return;
+    if (this.doc.body.classList.contains('controller-menu-cursor')) {
+      this.cursorSnapped = null;
+      this.cursorSnapPoint = null;
+      this._syncCursorTarget(nextRoot);
+      this._renderCursor();
+      return;
+    }
     const items = this._items(nextRoot);
     const exact = identity && items.find(item => controlIdentity(item) === identity);
     const fallback = exact || this._nearest(items, position);
@@ -417,11 +698,14 @@ export class MenuNavigator {
     const active = this.current?.isConnected ? this.current : this.doc.activeElement;
     const inventoryItem = active?.matches?.('[data-controller-item]');
     const stashItem = active?.matches?.('[data-controller-item][data-inventory="stash"]');
-    hint.textContent = controllerHint(activeScreen?.id, {
+    const text = controllerHint(activeScreen?.id, {
       carrying: this.doc.body.classList.contains('controller-carrying'),
       adjusting,
       inventoryItem,
       stashItem,
     });
+    hint.textContent = text;
+    const shopGuide = this.doc.getElementById('shop-controller-guide');
+    if (shopGuide && activeScreen?.id === 'screen-shop') shopGuide.textContent = text;
   }
 }

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { controlIdentity, controllerHint, directionalCandidate, MenuNavigator } from '../src/ui-nav.js';
+import {
+  controlIdentity, controllerHint, cursorMagnetCandidate, directionalCandidate, MenuNavigator,
+} from '../src/ui-nav.js';
 
 const rect = (left, top, width = 80, height = 40) => ({ left, top, width, height });
 
@@ -25,13 +27,58 @@ test('directional UI navigation reports no candidate beyond an edge', () => {
   assert.equal(directionalCandidate([], -1, 'down'), -1);
 });
 
+test('analog cursor magnetism captures nearby controls without ordering them', () => {
+  const controls = [
+    rect(100, 100, 60, 60),
+    rect(240, 100, 60, 60),
+    rect(100, 240, 60, 60),
+  ];
+  assert.equal(cursorMagnetCandidate(controls, 128, 132), 0);
+  assert.equal(cursorMagnetCandidate(controls, 268, 128), 1);
+  assert.equal(cursorMagnetCandidate(controls, 180, 180), -1, 'free space remains free');
+});
+
+test('snapped analog cursor is sticky but breaks away under sustained input', () => {
+  const target = {
+    isConnected: true,
+    getBoundingClientRect: () => rect(100, 100, 60, 60),
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = { defaultView: { innerWidth: 1280, innerHeight: 720 } };
+  navigator.cursorEl = {
+    style: {},
+    classList: { toggle: () => {} },
+  };
+  navigator.cursorX = 130;
+  navigator.cursorY = 130;
+  navigator.cursorSnapped = target;
+  navigator.cursorSnapPush = { x: 0, y: 0 };
+  navigator.cursorSnapCooldown = 0;
+  navigator.cursorSnapIgnore = null;
+  navigator.cursorTarget = target;
+  navigator._setCursorTarget = () => {};
+  navigator._edgeScroll = () => {};
+  navigator._magneticTarget = () => null;
+  navigator._hitTarget = () => null;
+
+  navigator._moveCursor({ x: 1, y: 0, magnitude: 1, dt: 0.01 }, {});
+  assert.equal(navigator.cursorX, 130, 'small movement remains captured');
+  assert.equal(navigator.cursorSnapped, target);
+
+  navigator._moveCursor({ x: 1, y: 0, magnitude: 1, dt: 0.01 }, {});
+  assert.ok(navigator.cursorX > 130, 'continued movement breaks the capture');
+  assert.equal(navigator.cursorSnapped, null);
+  assert.equal(navigator.cursorSnapIgnore, target);
+});
+
 test('controller hints advertise context-sensitive market shortcuts', () => {
   const shop = controllerHint('screen-shop');
   assert.match(shop, /X ALTERNATE/);
   assert.match(shop, /START ADVANCE/);
   assert.match(shop, /D-PAD ↑ PATCH/);
   assert.doesNotMatch(shop, /Y PATCH/);
-  assert.match(shop, /LEFT STICK ← \/ → OR LT \/ RT PANEL/);
+  assert.match(shop, /LEFT STICK CURSOR/);
+  assert.match(shop, /LT \/ RT PANEL/);
   assert.match(controllerHint('screen-intro'), /START FIGHT/);
   assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);
   assert.match(controllerHint('screen-shop', { carrying: true }), /B CANCEL/);
@@ -109,16 +156,28 @@ test('panel shortcuts jump directly between market regions', () => {
     querySelectorAll: (selector) => selector === '[data-shop-panel]' ? [market, stash] : [],
   };
   const navigator = Object.create(MenuNavigator.prototype);
-  navigator.doc = { activeElement: marketControl };
+  navigator.doc = {
+    activeElement: marketControl,
+    body: { classList: { contains: (name) => name === 'controller-menu-cursor' } },
+  };
   navigator.current = marketControl;
+  navigator.cursorTarget = marketControl;
+  navigator.cursorX = 60;
+  navigator.cursorY = 220;
+  navigator.cursorSnapped = null;
+  navigator.cursorSnapPoint = null;
   navigator.lastCenter = { x: 60, y: 220 };
   navigator.panelMemory = new Map();
   navigator._visible = () => true;
   navigator._items = (scope) => scope === stash ? [stashControl] : scope === market ? [marketControl] : [marketControl, stashControl];
   navigator._focus = (el) => focusCalls.push(el.id);
+  navigator._setCursorTarget = (el) => { navigator.cursorTarget = el; };
+  navigator._renderCursor = () => {};
 
   assert.equal(navigator._jumpPanel(root, 1), true);
   assert.deepEqual(focusCalls, ['stash-item']);
+  assert.equal(navigator.cursorSnapped, stashControl);
+  assert.deepEqual(navigator.cursorSnapPoint, { x: 360, y: 230 });
 });
 
 test('horizontal stick navigation moves across grid tiles before crossing panels', () => {
@@ -251,6 +310,27 @@ test('held Y sells equipped and backpack inventory items too', () => {
 
   assert.equal(navigator._sell(root), true);
   assert.deepEqual(events, ['controllersell']);
+});
+
+test('cursor activation sets range values from the visible pointer position', () => {
+  const dispatched = [];
+  const slider = {
+    min: '0',
+    max: '1',
+    step: '0.05',
+    value: '0',
+    matches: (selector) => selector === 'input[type="range"]',
+    getBoundingClientRect: () => rect(100, 100, 400, 20),
+    dispatchEvent: (event) => dispatched.push(event.type),
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = { defaultView: { Event } };
+  navigator.cursorX = 400;
+  navigator._syncCursorTarget = () => slider;
+
+  assert.equal(navigator._cursorActivate({}), true);
+  assert.equal(slider.value, '0.75');
+  assert.deepEqual(dispatched, ['input', 'change']);
 });
 
 test('open hire dialog traps controller focus inside the contract cards', () => {
