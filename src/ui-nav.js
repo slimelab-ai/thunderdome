@@ -1,4 +1,4 @@
-const FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item]';
+const FOCUSABLE = 'button:not(:disabled):not([data-controller-skip]), input[type="range"]:not(:disabled), [data-controller-item]';
 const CARRY_TARGETS = '[data-controller-target]';
 const NAV_SCOPE_SELECTOR = '[data-shop-panel], [data-controller-panel]';
 const IDENTITY_ATTRIBUTES = [
@@ -50,13 +50,13 @@ export function directionalCandidate(rects, currentIndex, direction) {
 }
 
 export function controllerHint(screenId, { carrying = false, adjusting = false } = {}) {
-  if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LT / RT CHANGE PANEL';
+  if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LEFT / RIGHT OR LT / RT PANEL';
   if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  A SELECT';
   if (screenId === 'screen-shop') {
-    return 'LT / RT PANEL  ·  LB / RB FIGHTER  ·  X END TURN / NEXT FIGHT  ·  Y PATCH  ·  A SELECT';
+    return 'LEFT / RIGHT OR LT / RT PANEL  ·  A PRIMARY  ·  X ALTERNATE  ·  START ADVANCE  ·  Y PATCH';
   }
   if (screenId === 'screen-intro') {
-    return 'X START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  STICK / D-PAD MOVE';
+    return 'START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  STICK / D-PAD MOVE';
   }
   if (screenId === 'screen-menu') return 'STICK / D-PAD MOVE  ·  A SELECT';
   return 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
@@ -102,18 +102,23 @@ export class MenuNavigator {
     }
 
     const carrying = this.doc.body.classList.contains('controller-carrying');
-    const dialog = root.querySelector('#hire-overlay:not(.hidden)');
+    const dialog = this._dialog(root);
     if (!carrying && action === 'back') {
       const handled = this._back(root);
       this._updateHint();
       return handled;
     }
-    if (dialog && ['advance', 'patch', 'previousTab', 'nextTab', 'previousPanel', 'nextPanel'].includes(action)) {
+    if (dialog && ['advance', 'alternate', 'patch', 'previousTab', 'nextTab', 'previousPanel', 'nextPanel'].includes(action)) {
       this._updateHint();
       return false;
     }
     if (!carrying && action === 'advance') {
       const handled = this._advance(root);
+      this._updateHint();
+      return handled;
+    }
+    if (!carrying && action === 'alternate') {
+      const handled = this._alternate(root);
       this._updateHint();
       return handled;
     }
@@ -135,6 +140,11 @@ export class MenuNavigator {
     if (action === 'previousPanel' || action === 'nextPanel') {
       this._updateHint();
       return false;
+    }
+    if (root.id === 'screen-shop' && !dialog && (action === 'left' || action === 'right')) {
+      const handled = this._jumpPanel(root, action === 'right' ? 1 : -1, false);
+      this._updateHint();
+      return handled;
     }
 
     const items = this._items(root);
@@ -181,14 +191,23 @@ export class MenuNavigator {
         }
       }
     }
-    const next = directionalCandidate(navItems.map(el => el.getBoundingClientRect()), navIndex, action);
+    const linearShopMove = root.id === 'screen-shop' && (action === 'up' || action === 'down');
+    const next = linearShopMove
+      ? navIndex + (action === 'down' ? 1 : -1)
+      : directionalCandidate(navItems.map(el => el.getBoundingClientRect()), navIndex, action);
+    if (next < 0 || next >= navItems.length) {
+      this._updateHint();
+      return false;
+    }
     if (next >= 0) this._focus(navItems[next], root);
     this._updateHint();
     return next >= 0;
   }
 
   _back(root) {
-    const target = root.querySelector('#btn-hire-close:not(.hidden), #btn-intro-back, #btn-resume');
+    const settings = this.doc.querySelector('#settings-overlay:not(.hidden)');
+    const target = settings?.querySelector('#btn-settings-close')
+      || root.querySelector('#btn-hire-close:not(.hidden), #btn-intro-back, #btn-resume');
     if (!target || !this._visible(target)) return false;
     this._activate(target, root);
     return true;
@@ -201,6 +220,19 @@ export class MenuNavigator {
     if (!selector) return false;
     const target = [...root.querySelectorAll(selector)].find(el => this._visible(el));
     if (!target) return false;
+    this._activate(target, root);
+    return true;
+  }
+
+  _alternate(root) {
+    if (root.id !== 'screen-shop') return false;
+    const items = this._items(root);
+    const active = items.includes(this.current)
+      ? this.current
+      : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
+    const row = active?.closest?.('.market-row');
+    const target = row?.querySelector?.('[data-buy-to]:not(:disabled)');
+    if (!target || !this._visible(target)) return false;
     this._activate(target, root);
     return true;
   }
@@ -236,7 +268,7 @@ export class MenuNavigator {
     return true;
   }
 
-  _jumpPanel(root, direction) {
+  _jumpPanel(root, direction, wrap = true) {
     const panels = [...root.querySelectorAll('[data-shop-panel]')].filter(el => this._visible(el));
     if (!panels.length) return false;
     const items = this._items(root);
@@ -245,9 +277,9 @@ export class MenuNavigator {
       : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
     const currentPanel = active?.closest?.('[data-shop-panel]');
     const currentIndex = panels.indexOf(currentPanel);
-    const targetIndex = currentIndex < 0
-      ? (direction > 0 ? 0 : panels.length - 1)
-      : (currentIndex + direction + panels.length) % panels.length;
+    let targetIndex = currentIndex < 0 ? (direction > 0 ? 0 : panels.length - 1) : currentIndex + direction;
+    if (!wrap && (targetIndex < 0 || targetIndex >= panels.length)) return false;
+    targetIndex = (targetIndex + panels.length) % panels.length;
     const targetPanel = panels[targetIndex];
     const targetItems = this._items(targetPanel);
     if (!targetItems.length) return false;
@@ -268,8 +300,13 @@ export class MenuNavigator {
     const selector = this.doc.body.classList.contains('controller-carrying')
       ? `${FOCUSABLE}, ${CARRY_TARGETS}`
       : FOCUSABLE;
-    const dialog = root.id === 'screen-shop' ? root.querySelector('#hire-overlay:not(.hidden)') : null;
+    const dialog = this._dialog(root);
     return [...(dialog || root).querySelectorAll(selector)].filter(el => this._visible(el));
+  }
+
+  _dialog(root) {
+    return this.doc.querySelector('#settings-overlay:not(.hidden)')
+      || (root.id === 'screen-shop' ? root.querySelector('#hire-overlay:not(.hidden)') : null);
   }
 
   _visible(el) {

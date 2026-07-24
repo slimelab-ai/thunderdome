@@ -293,8 +293,8 @@ export class UI {
         return `<div class="market-row">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
           <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
-          <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button>
-          <button class="btn" data-buy-to="${t}" ${canBuy ? '' : 'disabled'} title="buy straight onto ${selName}">→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
+          <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}><span class="pad-key pad-a controller-only" aria-hidden="true">A</span>${soldOut ? 'OUT' : '$' + cost}</button>
+          <button class="btn" data-buy-to="${t}" data-controller-skip ${canBuy ? '' : 'disabled'} title="buy straight onto ${selName}"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span>→${selName === 'YOU' ? 'YOU' : selName.slice(0, 5).toUpperCase()}</button>
         </div>`;
       }).join('')).join('');
 

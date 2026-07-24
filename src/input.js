@@ -123,6 +123,7 @@ export class InputHub {
       if (edge(BTN.START)) {
         if (inMatch) this.onPause?.();
         else if (phase === 'paused') this.onResume?.();
+        else if (phase === 'shop' || phase === 'intro') this.onMenuInput?.('advance');
       }
 
       if (!inMatch) {
@@ -146,7 +147,7 @@ export class InputHub {
         }
         if (edge(BTN.A)) this.onMenuInput?.('activate');
         if (edge(BTN.B)) this.onMenuInput?.('back');
-        if (edge(BTN.X)) this.onMenuInput?.('advance');
+        if (edge(BTN.X)) this.onMenuInput?.('alternate');
         if (edge(BTN.Y)) this.onMenuInput?.('patch');
         if (edge(BTN.LB)) this.onMenuInput?.('previousTab');
         if (edge(BTN.RB)) this.onMenuInput?.('nextTab');

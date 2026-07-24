@@ -220,6 +220,7 @@ html, body {
 .pad-key.pad-b { border-color: #d05257; color: #ff777c; }
 .pad-key.pad-x { border-color: #458fd1; color: #70baff; }
 .pad-key.pad-y { border-color: #d4a62c; color: #ffd45f; }
+.pad-key.pad-start { min-width: 38px; padding: 0 7px; border-radius: 4px; font-size: 7px; }
 .controller-mode .screen :focus {
   outline: 3px solid var(--gold); outline-offset: 3px;
   border-color: var(--gold); box-shadow: 0 0 0 2px #08080b, 0 0 22px rgba(255,185,46,0.52);
@@ -254,7 +255,7 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 }
 .game-title span { color: var(--blood); text-shadow: 0 4px 0 #000, 0 0 40px rgba(227,36,43,0.8); }
 .menu-tagline { color: #b9b9c2; margin: 14px 0 30px; font-style: italic; }
-.menu-buttons { display: flex; gap: 14px; justify-content: center; margin-bottom: 18px; }
+.menu-buttons { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-bottom: 18px; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }
@@ -306,6 +307,27 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 #controller-curve-sample {
   position: absolute; right: 10px; top: 8px; color: var(--gold);
   font-size: 9px; font-weight: 900; letter-spacing: 1px;
+}
+.settings-overlay {
+  position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; padding: 18px;
+  background: rgba(3,3,6,0.84); backdrop-filter: blur(8px);
+}
+.settings-dialog {
+  width: min(920px, 96vw); max-height: min(760px, 94dvh); overflow: auto; padding: 18px;
+  border: 1px solid #565664; border-radius: 7px;
+  background: radial-gradient(circle at 50% 0, #252530, #0b0b10 68%);
+  box-shadow: 0 30px 90px #000;
+}
+.settings-dialog-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line);
+}
+.settings-dialog-head > div > span { color: var(--blood); font-size: 9px; font-weight: 900; letter-spacing: 2px; }
+.settings-dialog h2 { margin: 2px 0 0; font: 900 clamp(34px, 5vw, 56px)/1 Impact, sans-serif; letter-spacing: 3px; }
+.settings-dialog #controller-settings { max-width: none; margin-bottom: 0; }
+.settings-controller-guide {
+  width: 100%; justify-content: center; align-items: center; gap: 5px;
+  margin-top: 12px; color: #8c8c96; font-size: 9px; font-weight: 900;
 }
 
 @media (min-width: 1051px) and (max-height: 820px) {
@@ -1002,6 +1024,10 @@ body.touch-mode .spec-hint-touch { display: inline; }
   .hire-card-mark { grid-row: 1 / 5; height: 100%; min-height: 110px; margin: 0; font-size: 34px; }
   .hire-card p { min-height: 0; margin: 5px 0; }
   .hire-sign { grid-column: 1 / -1; margin-top: 8px; }
+  .settings-overlay { padding: 8px; }
+  .settings-dialog { width: 100%; max-height: 96dvh; padding: 12px; }
+  .settings-dialog-head { margin-bottom: 10px; }
+  .settings-dialog h2 { font-size: 34px; }
   .char-head { align-items: flex-start; }
   .char-body { gap: 8px; }
   .doll-slot { width: 54px; height: 54px; }

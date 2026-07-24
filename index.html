@@ -97,48 +97,9 @@
         <button id="btn-continue" class="btn btn-big hidden">CONTINUE CAREER</button>
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
+        <button id="btn-menu-settings" class="btn btn-big btn-ghost">SETTINGS</button>
       </div>
       <div class="menu-controller-guide controller-only">LEFT STICK / D-PAD MOVE · <span class="pad-key pad-a">A</span> SELECT</div>
-      <section id="controller-settings" aria-label="Controller aim calibration">
-        <div class="controller-settings-head">
-          <div>
-            <b>🎮 CONTROLLER AIM LAB</b>
-            <span>Move the right stick to test the response curve live.</span>
-          </div>
-          <button id="controller-settings-reset" class="btn btn-ghost">RESET</button>
-        </div>
-        <div class="controller-settings-body">
-          <div class="controller-sliders">
-            <label for="controller-sensitivity">
-              <span>LOOK SENSITIVITY <output id="controller-sensitivity-value">0.65×</output></span>
-              <input id="controller-sensitivity" type="range" min="0.3" max="1.5" step="0.05" value="0.65" />
-              <small>Maximum turn speed</small>
-            </label>
-            <label for="controller-exponent">
-              <span>RESPONSE EXPONENT <output id="controller-exponent-value">2.15</output></span>
-              <input id="controller-exponent" type="range" min="1.2" max="3" step="0.05" value="2.15" />
-              <small>Higher values soften small stick movements</small>
-            </label>
-            <label for="controller-aim-assist">
-              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
-              <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
-              <small>Narrow slowdown and micro-correction only</small>
-            </label>
-          </div>
-          <div class="controller-curve-wrap">
-            <svg id="controller-curve" viewBox="0 0 300 150" role="img" aria-label="Controller response curve">
-              <path class="curve-grid" d="M22 26V126H278 M22 101H278 M22 76H278 M22 51H278 M86 26V126 M150 26V126 M214 26V126" />
-              <path class="curve-linear" d="M22 126L278 26" />
-              <rect class="curve-deadzone" x="22" y="26" width="30.7" height="100" />
-              <path id="controller-curve-path" d="" />
-              <circle id="controller-curve-dot" cx="22" cy="126" r="5" />
-              <text x="22" y="143">STICK INPUT</text>
-              <text x="4" y="25">TURN</text>
-            </svg>
-            <div id="controller-curve-sample">STICK 0% → TURN 0%</div>
-          </div>
-        </div>
-      </section>
       <div class="menu-controls">
         <div><b>WASD</b> move &nbsp; <b>SHIFT</b> sprint &nbsp; <b>C</b> toggle crouch &nbsp; <b>SPACE</b> jump / clamber &nbsp; <b>Q</b>/<b>E</b> lean (tap toggles, hold holds)</div>
         <div><b>MOUSE</b> aim &nbsp; <b>LMB</b> fire / slash &nbsp; <b>RMB</b> aim down sights &nbsp; <b>R</b> reload &nbsp; <b>1–2</b> guns &nbsp; <b>3</b> knife</div>
@@ -159,7 +120,7 @@
       <div id="bet-row"></div>
       <div class="intro-actions">
         <button id="btn-intro-back" class="btn"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> ◀ BLACK MARKET</button>
-        <button id="btn-fight" class="btn btn-big btn-blood"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> ⚔ FIGHT</button>
+        <button id="btn-fight" class="btn btn-big btn-blood"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> ⚔ FIGHT</button>
       </div>
       <div class="intro-controller-guide controller-only">LEFT STICK / D-PAD MOVE · <span class="pad-key pad-a">A</span> SELECT</div>
       <div class="intro-hint">Click FIGHT to lock in — the game goes fullscreen. ESC pauses.</div>
@@ -200,13 +161,13 @@
       </div>
       <div class="shop-footer" data-controller-panel="actions">
         <div class="shop-controller-guide controller-only">
-          <span><i class="pad-key">RT</i> ◀ PANEL ▶ <i class="pad-key">LT</i></span>
+          <span>← / → OR <i class="pad-key">RT</i> ◀ PANEL ▶ <i class="pad-key">LT</i></span>
           <span><i class="pad-key">LB</i><i class="pad-key">RB</i> CHANGE FIGHTER</span>
           <span><i class="pad-key pad-a">A</i> SELECT / MOVE GEAR</span>
         </div>
         <div id="shop-turn-status" class="hidden"></div>
-        <button id="btn-end-turn" class="btn btn-big hidden"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> END TURN — LET THE RIVAL SHOP</button>
-        <button id="btn-next-fight" class="btn btn-big btn-blood"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> NEXT FIGHT ➤</button>
+        <button id="btn-end-turn" class="btn btn-big hidden"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> END TURN — LET THE RIVAL SHOP</button>
+        <button id="btn-next-fight" class="btn btn-big btn-blood"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> NEXT FIGHT ➤</button>
       </div>
     </div>
     <div id="hire-overlay" class="hire-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="hire-title">
@@ -265,7 +226,61 @@
       <h2>PAUSED</h2>
       <div class="pause-sub">The crowd is booing.</div>
       <button id="btn-resume" class="btn">RESUME</button>
+      <button id="btn-pause-settings" class="btn">SETTINGS</button>
       <button id="btn-abandon" class="btn btn-ghost">FORFEIT MATCH</button>
+    </div>
+  </div>
+
+  <div id="settings-overlay" class="settings-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="settings-dialog">
+      <div class="settings-dialog-head">
+        <div>
+          <span>THUNDERDOME CONFIGURATION</span>
+          <h2 id="settings-title">SETTINGS</h2>
+        </div>
+        <button id="btn-settings-close" class="btn btn-ghost"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> BACK</button>
+      </div>
+      <section id="controller-settings" aria-label="Controller aim calibration">
+        <div class="controller-settings-head">
+          <div>
+            <b>🎮 CONTROLLER AIM LAB</b>
+            <span>Move the right stick to test the response curve live.</span>
+          </div>
+          <button id="controller-settings-reset" class="btn btn-ghost">RESET</button>
+        </div>
+        <div class="controller-settings-body">
+          <div class="controller-sliders">
+            <label for="controller-sensitivity">
+              <span>LOOK SENSITIVITY <output id="controller-sensitivity-value">0.65×</output></span>
+              <input id="controller-sensitivity" type="range" min="0.3" max="1.5" step="0.05" value="0.65" />
+              <small>Maximum turn speed</small>
+            </label>
+            <label for="controller-exponent">
+              <span>RESPONSE EXPONENT <output id="controller-exponent-value">2.15</output></span>
+              <input id="controller-exponent" type="range" min="1.2" max="3" step="0.05" value="2.15" />
+              <small>Higher values soften small stick movements</small>
+            </label>
+            <label for="controller-aim-assist">
+              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
+              <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
+              <small>Narrow slowdown and micro-correction only</small>
+            </label>
+          </div>
+          <div class="controller-curve-wrap">
+            <svg id="controller-curve" viewBox="0 0 300 150" role="img" aria-label="Controller response curve">
+              <path class="curve-grid" d="M22 26V126H278 M22 101H278 M22 76H278 M22 51H278 M86 26V126 M150 26V126 M214 26V126" />
+              <path class="curve-linear" d="M22 126L278 26" />
+              <rect class="curve-deadzone" x="22" y="26" width="30.7" height="100" />
+              <path id="controller-curve-path" d="" />
+              <circle id="controller-curve-dot" cx="22" cy="126" r="5" />
+              <text x="22" y="143">STICK INPUT</text>
+              <text x="4" y="25">TURN</text>
+            </svg>
+            <div id="controller-curve-sample">STICK 0% → TURN 0%</div>
+          </div>
+        </div>
+      </section>
+      <div class="settings-controller-guide controller-only"><span class="pad-key pad-a">A</span> SELECT · <span class="pad-key pad-b">B</span> BACK</div>
     </div>
   </div>
 

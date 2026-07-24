@@ -253,7 +253,8 @@ const DEATH_LINES = [
 ];
 
 // ============================================================ match state
-let phase = 'menu'; // menu | intro | match | shop | dead | champion
+let phase = 'menu'; // menu | settings | intro | match | shop | dead | champion
+let settingsReturnPhase = 'menu';
 let locked = false;
 let match = null;
 
@@ -1680,6 +1681,18 @@ function resumeFromPause() {
   ui.showHUDOnly();
   enterCombatMode();
 }
+function openSettings() {
+  if (phase !== 'menu' && phase !== 'paused') return;
+  settingsReturnPhase = phase;
+  phase = 'settings';
+  document.getElementById('settings-overlay').classList.remove('hidden');
+}
+function closeSettings() {
+  if (phase !== 'settings') return;
+  document.getElementById('settings-overlay').classList.add('hidden');
+  phase = settingsReturnPhase;
+  document.dispatchEvent(new CustomEvent('screenchange', { detail: phase }));
+}
 
 // ============================================================ buttons
 const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.init(); audio.resume(); audio.uiClick(); fn(); });
@@ -1687,6 +1700,7 @@ const on = (id, fn) => document.getElementById(id).addEventListener('click', () 
 on('btn-new', () => { career = newCareer('circuits'); market = createMarket('circuits'); save(); showIntro(); });
 on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });
 on('btn-continue', () => { showIntro(); });
+on('btn-menu-settings', () => openSettings());
 on('btn-fight', () => startMatch());
 on('btn-next-fight', () => {
   if (!draftShopState().mustEndTurn) showIntro();
@@ -1711,6 +1725,11 @@ on('btn-executed-new', () => {
   else { career = newCareer(); save(); showIntro(); }
 });
 on('btn-resume', () => resumeFromPause());
+on('btn-pause-settings', () => openSettings());
+on('btn-settings-close', () => closeSettings());
+document.getElementById('settings-overlay').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeSettings();
+});
 on('btn-abandon', () => {
   if (career.bet > 0) {
     career.money += career.bet;

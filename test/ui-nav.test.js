@@ -27,11 +27,11 @@ test('directional UI navigation reports no candidate beyond an edge', () => {
 
 test('controller hints advertise context-sensitive market shortcuts', () => {
   const shop = controllerHint('screen-shop');
-  assert.match(shop, /X END TURN \/ NEXT FIGHT/);
+  assert.match(shop, /X ALTERNATE/);
+  assert.match(shop, /START ADVANCE/);
   assert.match(shop, /Y PATCH/);
-  assert.match(shop, /LB \/ RB FIGHTER/);
-  assert.match(shop, /LT \/ RT PANEL/);
-  assert.match(controllerHint('screen-intro'), /X START FIGHT/);
+  assert.match(shop, /LEFT \/ RIGHT OR LT \/ RT PANEL/);
+  assert.match(controllerHint('screen-intro'), /START FIGHT/);
   assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);
   assert.match(controllerHint('screen-shop', { carrying: true }), /B CANCEL/);
   assert.doesNotMatch(controllerHint('screen-menu'), /B BACK/);
@@ -115,6 +115,28 @@ test('panel shortcuts jump directly between market regions', () => {
   assert.deepEqual(focusCalls, ['stash-item']);
 });
 
+test('alternate market action buys the focused row directly to the selected fighter', () => {
+  let clicks = 0;
+  const buyTo = {
+    disabled: false,
+    closest: () => null,
+    getBoundingClientRect: () => rect(140, 100),
+    click: () => { clicks++; },
+  };
+  const row = { querySelector: () => buyTo };
+  const primary = {
+    closest: (selector) => selector === '.market-row' ? row : null,
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = { activeElement: primary };
+  navigator.current = primary;
+  navigator._items = () => [primary];
+  navigator._visible = () => true;
+  navigator._activate = (el) => el.click();
+  assert.equal(navigator._alternate({ id: 'screen-shop' }), true);
+  assert.equal(clicks, 1);
+});
+
 test('open hire dialog traps controller focus inside the contract cards', () => {
   const hireButton = { id: 'hire-enforcer' };
   const underlyingButton = { id: 'market-buy' };
@@ -125,7 +147,7 @@ test('open hire dialog traps controller focus inside the contract cards', () => 
     querySelectorAll: () => [underlyingButton],
   };
   const navigator = Object.create(MenuNavigator.prototype);
-  navigator.doc = { body: { classList: { contains: () => false } } };
+  navigator.doc = { body: { classList: { contains: () => false } }, querySelector: () => null };
   navigator._visible = () => true;
 
   assert.deepEqual(navigator._items(root), [hireButton]);
