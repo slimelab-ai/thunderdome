@@ -5,7 +5,8 @@ import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
   liquidationOdds, liquidationBetOptions, liquidationCreditLimit, canPlaceLiquidationBet,
-  recordLiquidationOutcome, liquidationReserveTarget, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  recordLiquidationOutcome, liquidationRiskModel, liquidationReserveTarget,
+  resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
 } from '../src/liquidation.js';
 
@@ -140,22 +141,37 @@ test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
   assert.ok(rivalBuys.some(entry => entry.type === 'splint'));
 });
 
-test('rival cash reserve ramps late in the draft and accounts for loss-streak exposure', () => {
+test('rival reserve responds to confidence, loss exposure, win income, and remaining draft income', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
   state.draft.fundedRounds = 9;
   state.enemyMoney = 2500;
-  assert.equal(liquidationReserveTarget(state), 1500);
+  const even = liquidationRiskModel(state, { opponentPower: 100, expectedStake: 250 });
+  assert.equal(even.confidence, 0.5);
+  assert.equal(even.remainingDraftIncome, 2000);
+  assert.equal(even.reserveTarget, 2100);
+  const favored = liquidationRiskModel(state, { opponentPower: 25, expectedStake: 250 });
+  const underdog = liquidationRiskModel(state, { opponentPower: 800, expectedStake: 250 });
+  assert.ok(favored.confidence > even.confidence);
+  assert.ok(favored.reserveTarget < even.reserveTarget);
+  assert.ok(underdog.confidence < even.confidence);
+  assert.ok(underdog.reserveTarget > even.reserveTarget);
+
   let decision;
-  for (let i = 0; i < 20; i++) decision = runLiquidationAI(state, market);
-  assert.ok(state.enemyMoney >= 1500);
+  for (let i = 0; i < 20; i++) decision = runLiquidationAI(state, market, {
+    opponentPower: 100, expectedStake: 250,
+  });
+  assert.ok(state.enemyMoney >= even.reserveTarget);
   assert.equal(decision.kind, 'hold');
-  assert.equal(decision.reserveTarget, 1500);
+  assert.equal(decision.reserveTarget, even.reserveTarget);
+  assert.deepEqual(decision.risk, liquidationRiskModel(state, {
+    opponentPower: 100, expectedStake: 250,
+  }));
 
   state.draft.fundedRounds = 10;
   state.draft.complete = true;
   state.enemyLossStreak = 2;
-  assert.equal(liquidationReserveTarget(state), 2250);
+  assert.equal(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }), 4400);
 });
 
 test('public market tape records both sides and separates rounds', () => {

@@ -374,9 +374,39 @@ function emitCareerEvent(type, payload = {}) {
   }
 }
 
+const READINESS_WEAPON_POWER = { knife: 0.55, pistol: 1, smg: 1.25, shotgun: 1.35, rifle: 1.6, dmr: 1.75 };
+
+function characterReadinessPower(ch, hp, type, progress, isPlayer = false) {
+  const profile = combatProfile(type, progress, isPlayer);
+  const currentHp = hp == null ? profile.maxHp : Math.max(0, hp);
+  const weapon = bestUsableGun(ch);
+  const armor = armorMits(ch);
+  const armorFactor = 1 + (armor.head + armor.body + armor.limbs) / 3;
+  const supplies = countInPack(ch, 'medkit') + countInPack(ch, 'grenade') * 0.6 + countInPack(ch, 'splint') * 0.35;
+  const skillFactor = profile.damageMult / Math.max(0.5, profile.damageTakenMult) *
+    Math.max(0.75, profile.speedMult);
+  return currentHp * (READINESS_WEAPON_POWER[weapon] || 1) * armorFactor * skillFactor * (1 + supplies * 0.04);
+}
+
+function playerSquadReadinessPower() {
+  let power = characterReadinessPower(
+    career.playerCh, career.playerHp, PLAYER_TYPE, career.playerProgress, true,
+  );
+  for (const member of career.crew
+    .filter(candidate => !candidate.benched && (candidate.hp == null || candidate.hp > 0))
+    .slice(0, DEPLOYED_CREW_CAP)) {
+    power += characterReadinessPower(member.ch, member.hp, member.type, member.progress);
+  }
+  return Math.round(power);
+}
+
 function runTrackedLiquidationAI(reason) {
   const before = careerSnapshot();
-  const signals = { hoarded9mm: market.info('ammo_9mm').pressure > 1.4 };
+  const signals = {
+    hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
+    opponentPower: playerSquadReadinessPower(),
+    expectedStake: Math.max(250, Math.floor(Math.max(0, career.money) * 0.1 / 50) * 50),
+  };
   const result = runLiquidationAI(career.liquidation, market, signals);
   emitCareerEvent('liquidation_ai_decision', {
     reason,

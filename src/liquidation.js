@@ -171,19 +171,62 @@ export function allocateRivalSupply(inventory, type, fighterIndex, rosterSize, c
   return Math.min(cap, evenShare + (fighterIndex < remainder ? 1 : 0));
 }
 
-export function liquidationReserveTarget(state) {
+const WEAPON_POWER = { knife: 0.55, pistol: 1, smg: 1.25, shotgun: 1.35, rifle: 1.6, dmr: 1.75 };
+
+export function liquidationRiskModel(state, playerSignals = {}) {
   const envelope = draftShare(state);
   const fundedRounds = state.draft?.fundedRounds || 0;
-  // Begin hunkering down after round six, reaching one full untouched envelope
-  // at the end of the draft. This is cash runway, not an accusation that reserve
-  // inventory is wasteful.
-  const lateDraftRamp = Math.max(0, Math.min(1, (fundedRounds - 6) / 4));
-  const lateDraftReserve = Math.round(envelope * lateDraftRamp / 50) * 50;
-  // Always retain the minimum stake. If another defeat would trigger a streak
-  // margin call, retain enough cash for that known liability too.
+  const rivalPower = Math.max(1, enemyRoster(state).reduce((total, fighter) => {
+    const weapon = WEAPON_POWER[fighter.w] || 1;
+    return total + fighter.hp * weapon * (1 + (fighter.ar || 0));
+  }, 0));
+  const opponentPower = Math.max(1, Number(playerSignals.opponentPower) || rivalPower);
+  // A small symmetric prior prevents one odd loadout snapshot from producing
+  // false certainty. Confidence is deliberately bounded: nobody is invincible.
+  const rawConfidence = (rivalPower + 100) / (rivalPower + opponentPower + 200);
+  const confidence = Math.max(0.12, Math.min(0.88, rawConfidence));
+  const expectedStake = Math.max(250, Number(playerSignals.expectedStake) || 250);
   const nextLossStreak = (state.enemyLossStreak || 0) + 1;
-  const lossRunway = 250 + liquidationStreakPenalty(state, nextLossStreak);
-  return Math.max(250, lateDraftReserve, lossRunway);
+  const streakPenalty = liquidationStreakPenalty(state, nextLossStreak);
+
+  // A loss must leave enough for its stake, known margin call, the next minimum
+  // stake, and a confidence-weighted recovery/retool budget.
+  const recoveryBudget = envelope * (1.5 - confidence);
+  const lossCost = expectedStake + streakPenalty + 250 + recoveryBudget;
+  const confidenceWeight = 1.2 - confidence * 0.4;
+  const expectedWinIncome = expectedStake * confidence;
+
+  // Future envelopes are guaranteed income, but distant envelopes cannot cure
+  // insolvency today. Discount the remaining total aggressively and never let
+  // it erase more than 80% of the loss runway.
+  const remainingEnvelopes = Math.max(0, LIQUIDATION_DRAFT_TURNS - fundedRounds);
+  const remainingDraftIncome = remainingEnvelopes * envelope;
+  const discountedDraftRelief = Math.min(
+    lossCost * 0.8,
+    remainingDraftIncome * 0.15 * (0.5 + confidence),
+  );
+  const reserveTarget = Math.max(250, Math.ceil(
+    (lossCost * confidenceWeight - expectedWinIncome - discountedDraftRelief) / 50,
+  ) * 50);
+
+  return {
+    reserveTarget,
+    confidence: +confidence.toFixed(3),
+    rivalPower: Math.round(rivalPower),
+    opponentPower: Math.round(opponentPower),
+    expectedStake: Math.round(expectedStake),
+    expectedLossCost: Math.round(lossCost),
+    expectedWinIncome: Math.round(expectedWinIncome),
+    recoveryBudget: Math.round(recoveryBudget),
+    streakPenalty,
+    remainingEnvelopes,
+    remainingDraftIncome,
+    discountedDraftRelief: Math.round(discountedDraftRelief),
+  };
+}
+
+export function liquidationReserveTarget(state, playerSignals = {}) {
+  return liquidationRiskModel(state, playerSignals).reserveTarget;
 }
 
 const STRATEGIES = {
@@ -207,7 +250,8 @@ const STRATEGIES = {
 
 export function runLiquidationAI(state, market, playerSignals = {}) {
   const inv = state.enemy.inventory;
-  const reserveTarget = liquidationReserveTarget(state);
+  const risk = liquidationRiskModel(state, playerSignals);
+  const reserveTarget = risk.reserveTarget;
   const spendable = Math.max(0, state.enemyMoney - reserveTarget);
   const price = t => market.quoteBuy(t);
   const pressure = t => market.info(t)?.pressure || 1;
@@ -237,7 +281,10 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
       recruits.push(recruit.type);
       const label = `${HIRE_TYPES[recruit.type].name} CONTRACT`;
       recordMarketTrade(state, 'rival', 'hire', null, cost, label);
-      return { kind: 'hire', type: recruit.type, cost, action: `${state.enemy.strategy.toUpperCase()}: hired ${label} for $${cost}` };
+      return {
+        kind: 'hire', type: recruit.type, cost, risk,
+        action: `${state.enemy.strategy.toUpperCase()}: hired ${label} for $${cost}`,
+      };
     }
   }
   // Establish a working weapon first, then deliberately stock combat supplies.
@@ -259,6 +306,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
       kind: 'hold',
       reason: spendable <= 0 ? 'cash_reserve' : 'no_purchase_inside_reserve',
       reserveTarget,
+      risk,
       cash: state.enemyMoney,
       spendable,
       action: `HOLD: keeping $${state.enemyMoney} cash (reserve target $${reserveTarget})`,
@@ -269,7 +317,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   inv[target] = owned(target) + 1;
   const action = `${state.enemy.strategy.toUpperCase()}: bought ${ITEM_TYPES[target].name} for $${cost}`;
   recordMarketTrade(state, 'rival', 'buy', target, cost);
-  return { kind: 'buy', type: target, cost, reserveTarget, action };
+  return { kind: 'buy', type: target, cost, reserveTarget, risk, action };
 }
 
 export function enemyRoster(state) {
