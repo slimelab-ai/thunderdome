@@ -6,6 +6,7 @@ import {
 import {
   PLAYER_TYPE, HIRE_TYPES, trainingTrees, trainingCost, combatProfile,
 } from './progression.js';
+import { CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP } from './roster.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,6 +16,10 @@ function healthColor(f) {
   const g = f > 0.5 ? 218 : Math.round(218 * f * 2);
   return `rgb(${r},${g},60)`;
 }
+
+const FIGHTER_MARKS = {
+  challenger: '◆', enforcer: '▰', rusher: '»', shield: '⬒', marksman: '⌖', medic: '✚',
+};
 
 // icon sheet is 6×4 cells
 function iconStyle(icon) {
@@ -374,22 +379,95 @@ export class UI {
     // ---- squad panel ----
     if (this.selChar === undefined) this.selChar = 'player';
     if (this.selChar !== 'player' && !career.crew[this.selChar]) this.selChar = 'player';
-    const deployed = career.crew.filter(c => !c.benched).length;
-    const tabs = [['player', 'YOU'], ...career.crew.map((m, i) => [i, m.name])];
-    $('char-tabs').innerHTML = tabs.map(([who, label]) => {
-      const benched = who !== 'player' && career.crew[who].benched;
-      const member = who === 'player' ? null : career.crew[who];
-      const profile = who === 'player'
-        ? combatProfile(PLAYER_TYPE, career.playerProgress, true)
-        : combatProfile(member.type, member.progress);
-      const hp = who === 'player'
-        ? (career.playerHp == null ? 1 : career.playerHp / profile.maxHp)
-        : (member.hp == null ? 1 : member.hp / profile.maxHp);
-      return `<button class="btn char-tab ${String(this.selChar) === String(who) ? 'char-tab-sel' : ''} ${benched ? 'char-tab-benched' : ''}" data-char="${who}">
-        ${label}${benched ? ' 🪑' : ''}<i class="tab-hp" style="width:${Math.max(2, hp * 100)}%;background:${healthColor(hp)}"></i></button>`;
-    }).join('') + (career.crew.length < 8
-      ? `<button class="btn btn-ghost char-tab" data-hire-menu="1">+ HIRE</button>` : '')
-      + `<span class="dim" style="align-self:center;font-size:10px">${deployed}/5 deploy</span>`;
+    const deployedCrew = career.crew.map((member, index) => ({ member, index })).filter(entry => !entry.member.benched);
+    const reserveCrew = career.crew.map((member, index) => ({ member, index })).filter(entry => entry.member.benched);
+    const deployed = deployedCrew.length;
+
+    const fighterView = (who) => {
+      const isPlayerView = who === 'player';
+      const member = isPlayerView ? null : career.crew[who];
+      const type = isPlayerView ? PLAYER_TYPE : member.type;
+      const typeDef = isPlayerView ? { name: 'CHALLENGER', desc: 'The contender calling the shots.' } : HIRE_TYPES[type];
+      const progress = isPlayerView ? career.playerProgress : member.progress;
+      const profile = combatProfile(type, progress, isPlayerView);
+      const hp = isPlayerView
+        ? (career.playerHp == null ? profile.maxHp : career.playerHp)
+        : (member.hp == null ? profile.maxHp : member.hp);
+      const limbs = isPlayerView ? career.playerLimbs : (member.limbs || { arm: 0, leg: 0 });
+      const character = isPlayerView ? career.playerCh : member.ch;
+      const gear = ['gun1', 'gun2', 'head', 'body'].map(slot => character.gear[slot]).filter(Boolean);
+      return {
+        who, member, type, typeDef, progress, profile, hp, limbs, character, gear,
+        name: isPlayerView ? 'YOU' : member.name,
+        kills: isPlayerView ? career.totals.kills : (member.kills || 0),
+        mark: FIGHTER_MARKS[type] || FIGHTER_MARKS.enforcer,
+      };
+    };
+
+    const fighterPopover = (view, status) => {
+      const hpFraction = Math.max(0, view.hp / view.profile.maxHp);
+      const tierCount = Object.values(view.progress.skills || {}).reduce((sum, level) => sum + level, 0);
+      const injury = view.limbs.arm > 0.05 || view.limbs.leg > 0.05;
+      const gear = view.gear.length
+        ? view.gear.map(item => {
+          const def = ITEM_TYPES[item.type];
+          return `<span class="fighter-tip-gear"><i style="${iconStyle(def.icon)}"></i>${def.name}</span>`;
+        }).join('')
+        : '<span class="fighter-tip-empty">SIDEARM ONLY</span>';
+      return `<div id="fighter-tip-${view.who}" class="fighter-popover" role="tooltip">
+        <div class="fighter-tip-banner">
+          <span class="fighter-tip-mark">${view.mark}</span>
+          <div><b>${view.name}</b><small>${view.typeDef.name} · ${status}</small></div>
+          <strong>${Math.round(view.hp)}/${view.profile.maxHp}</strong>
+        </div>
+        <div class="fighter-tip-hp"><i style="width:${hpFraction * 100}%;background:${healthColor(hpFraction)}"></i></div>
+        <p>${view.typeDef.desc}</p>
+        <div class="fighter-tip-stats">
+          <span><b>${view.kills}</b>KILLS</span><span><b>${view.progress.xp}</b>XP</span>
+          <span><b>${tierCount}</b>TRAINING</span><span><b>${Math.round(view.profile.speedMult * 100)}%</b>SPEED</span>
+        </div>
+        ${injury ? `<div class="fighter-tip-warning">⚠ ${view.limbs.arm > 0.05 ? 'ARM ' : ''}${view.limbs.leg > 0.05 ? 'LEG ' : ''}TRAUMA</div>` : ''}
+        <div class="fighter-tip-loadout">${gear}</div>
+      </div>`;
+    };
+
+    const rosterSlot = (view, status, reserve = false) => {
+      const hpFraction = Math.max(0, view.hp / view.profile.maxHp);
+      const selected = String(this.selChar) === String(view.who);
+      return `<div class="roster-slot-wrap ${reserve ? 'reserve-slot-wrap' : ''} ${selected ? 'roster-slot-selected' : ''}">
+        <button class="roster-slot ${reserve ? 'reserve-slot' : ''} ${selected ? 'char-tab-sel' : ''}" data-char="${view.who}"
+          aria-label="${view.name}, ${view.typeDef.name}, ${status}" aria-describedby="fighter-tip-${view.who}">
+          <span class="roster-slot-mark">${view.mark}</span>
+          <span class="roster-slot-copy"><b>${view.name}</b><small>${view.typeDef.name}</small></span>
+          <span class="roster-slot-hp"><i style="width:${Math.max(2, hpFraction * 100)}%;background:${healthColor(hpFraction)}"></i></span>
+        </button>
+        ${fighterPopover(view, status)}
+      </div>`;
+    };
+
+    const playerView = fighterView('player');
+    const deployedSlots = Array.from({ length: DEPLOYED_CREW_CAP }, (_, slot) => {
+      const entry = deployedCrew[slot];
+      if (entry) return rosterSlot(fighterView(entry.index), `DEPLOYED ${slot + 1}`);
+      const canHire = career.crew.length < CREW_CONTRACT_CAP;
+      return `<div class="roster-slot-wrap">
+        <button class="roster-slot roster-slot-empty" data-hire-menu="${slot}" ${canHire ? '' : 'disabled'}>
+          <span class="roster-slot-mark">+</span>
+          <span class="roster-slot-copy"><b>${canHire ? 'HIRE' : 'EMPTY'}</b><small>SLOT ${slot + 1}</small></span>
+        </button>
+      </div>`;
+    }).join('');
+    const reserveSlots = reserveCrew.length
+      ? reserveCrew.map(({ index }) => rosterSlot(fighterView(index), 'RESERVE', true)).join('')
+      : '<div class="reserve-empty">NO BENCHED FIGHTERS</div>';
+
+    $('char-tabs').innerHTML = `
+      <div class="roster-section-head"><span>CHALLENGER</span><b>ACTIVE</b></div>
+      <div class="player-roster-slot">${rosterSlot(playerView, 'CHALLENGER')}</div>
+      <div class="roster-section-head"><span>DEPLOYED SQUAD</span><b>${deployed}/${DEPLOYED_CREW_CAP}</b></div>
+      <div class="deployed-roster">${deployedSlots}</div>
+      <div class="roster-section-head reserve-head"><span>RESERVE LOCKER</span><b>${reserveCrew.length} BENCHED · ${career.crew.length}/${CREW_CONTRACT_CAP} CONTRACTS</b></div>
+      <div class="reserve-roster">${reserveSlots}</div>`;
 
     const who = this.selChar;
     const isPlayer = who === 'player';
@@ -461,15 +539,30 @@ export class UI {
       </div>
       <div class="training-head"><b>CHARACTER TRAINING</b><span>${progress.xp} XP AVAILABLE</span></div>
       ${trainingRows('COMMON TREE', trees.common)}
-      ${trainingRows(`${typeDef.name} TREE`, trees.role)}
-      ${this.hireOpen ? `<div class="hire-menu">${Object.entries(HIRE_TYPES).map(([id, t]) => {
+      ${trainingRows(`${typeDef.name} TREE`, trees.role)}`;
+
+    if (draftTurn.locked) this.hireOpen = false;
+    const hireOverlay = $('hire-overlay');
+    hireOverlay.classList.toggle('hidden', !this.hireOpen);
+    $('hire-options').innerHTML = !this.hireOpen ? '' : Object.entries(HIRE_TYPES).map(([id, t]) => {
         const cost = actions.recruitPrice(id);
         const soldOut = !Number.isFinite(cost);
         const mi = actions.recruitMarketInfo(id);
         const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
-        return `<div class="shop-item"><div class="si-info"><div class="si-name">${t.name.toUpperCase()}</div><div class="si-desc">${t.desc}${marketFlag}</div></div>
-        <button class="btn" data-hire="${id}" ${!soldOut && career.money >= cost && career.crew.length < 8 ? '' : 'disabled'}>${soldOut ? 'OUT' : '$' + cost}</button></div>`;
-      }).join('')}</div>` : ''}`;
+        const accuracy = Math.max(15, Math.min(100, 135 / t.spreadMult));
+        const speed = Math.max(15, Math.min(100, t.speedMult * 82));
+        return `<article class="hire-card">
+          <div class="hire-card-mark">${FIGHTER_MARKS[id]}</div>
+          <div class="hire-card-title"><b>${t.name}</b><span>${marketFlag}</span></div>
+          <p>${t.desc}</p>
+          <div class="hire-stat"><span>TOUGHNESS</span><i><b style="width:${Math.min(100, t.hp / 1.2)}%"></b></i><em>${t.hp}</em></div>
+          <div class="hire-stat"><span>ACCURACY</span><i><b style="width:${accuracy}%"></b></i><em>${Math.round(accuracy)}</em></div>
+          <div class="hire-stat"><span>MOBILITY</span><i><b style="width:${speed}%"></b></i><em>${Math.round(t.speedMult * 100)}%</em></div>
+          <button class="btn hire-sign" data-hire="${id}" ${!soldOut && career.money >= cost && career.crew.length < CREW_CONTRACT_CAP ? '' : 'disabled'}>
+            <span class="pad-key pad-a controller-only" aria-hidden="true">A</span>${soldOut ? 'SOLD OUT' : `SIGN · $${cost}`}
+          </button>
+        </article>`;
+      }).join('');
 
     // ---- wire buttons ----
     const wire = (sel, attr, fn) => {
@@ -486,11 +579,25 @@ export class UI {
       this.selChar = whoSel === 'player' ? 'player' : parseInt(whoSel);
       this.hireOpen = false;
       this.renderShop(...this._shopArgs);
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-char="${whoSel}"]`)?.focus({ preventScroll: true });
+      });
     });
     wire('[data-hire-menu]', 'data-hire-menu', () => {
-      this.hireOpen = !this.hireOpen;
+      this.hireOpen = true;
       this.renderShop(...this._shopArgs);
     });
+    $('btn-hire-close').onclick = () => {
+      audio.uiClick();
+      this.hireOpen = false;
+      this.renderShop(...this._shopArgs);
+    };
+    hireOverlay.onclick = (event) => {
+      if (event.target !== hireOverlay) return;
+      audio.uiClick();
+      this.hireOpen = false;
+      this.renderShop(...this._shopArgs);
+    };
 
     $('sell-bin').setAttribute('data-controller-target', 'sell');
     $('sell-bin').setAttribute('tabindex', '-1');

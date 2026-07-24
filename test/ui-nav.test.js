@@ -115,6 +115,22 @@ test('panel shortcuts jump directly between market regions', () => {
   assert.deepEqual(focusCalls, ['stash-item']);
 });
 
+test('open hire dialog traps controller focus inside the contract cards', () => {
+  const hireButton = { id: 'hire-enforcer' };
+  const underlyingButton = { id: 'market-buy' };
+  const dialog = { querySelectorAll: () => [hireButton] };
+  const root = {
+    id: 'screen-shop',
+    querySelector: (selector) => selector === '#hire-overlay:not(.hidden)' ? dialog : null,
+    querySelectorAll: () => [underlyingButton],
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = { body: { classList: { contains: () => false } } };
+  navigator._visible = () => true;
+
+  assert.deepEqual(navigator._items(root), [hireButton]);
+});
+
 test('back shortcut immediately returns from the fight intro without requiring focus first', () => {
   let clicks = 0;
   const back = {

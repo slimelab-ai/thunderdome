@@ -150,8 +150,8 @@ export class InputHub {
         if (edge(BTN.Y)) this.onMenuInput?.('patch');
         if (edge(BTN.LB)) this.onMenuInput?.('previousTab');
         if (edge(BTN.RB)) this.onMenuInput?.('nextTab');
-        if (edge(BTN.LT)) this.onMenuInput?.('previousPanel');
-        if (edge(BTN.RT)) this.onMenuInput?.('nextPanel');
+        if (edge(BTN.LT)) this.onMenuInput?.('nextPanel');
+        if (edge(BTN.RT)) this.onMenuInput?.('previousPanel');
       } else {
         this.navHeld = null;
       }

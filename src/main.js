@@ -28,6 +28,10 @@ import {
   PLAYER_TYPE, HIRE_TYPES, createProgression, normalizeProgression, buyTraining,
   combatProfile, emptyXpStats, calculateXp, grantXp,
 } from './progression.js';
+import {
+  CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP, deployedCrewCount,
+  normalizeCrewDeployment, shouldBenchNewHire,
+} from './roster.js';
 
 // ============================================================ setup
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -157,6 +161,7 @@ function load() {
           }
           delete m.tier;
         }
+        normalizeCrewDeployment(c.crew);
         c.mode ||= c.liquidation ? 'liquidation' : 'circuits'; c.liquidation ||= null;
         c.analyticsId ||= crypto.randomUUID();
         if (c.liquidation) {
@@ -420,7 +425,7 @@ function startMatch() {
     : SQUADS[career.rank];
 
   // spawn crew — deployed, breathing, and carrying exactly what you stocked them with
-  career.crew.filter(cm => !cm.benched && (cm.hp == null || cm.hp > 0)).slice(0, 5).forEach((cm, i) => {
+  career.crew.filter(cm => !cm.benched && (cm.hp == null || cm.hp > 0)).slice(0, DEPLOYED_CREW_CAP).forEach((cm, i) => {
     const stats = combatProfile(cm.type, cm.progress);
     const mits = armorMits(cm.ch);
     const c = new Combatant({
@@ -1497,7 +1502,7 @@ function renderShop(earnings) {
       if (draftShopState().locked) return;
       const t = HIRE_TYPES[typeId];
       const quoted = market.quoteRecruit(typeId);
-      if (t && Number.isFinite(quoted) && career.money >= quoted && career.crew.length < 8) {
+      if (t && Number.isFinite(quoted) && career.money >= quoted && career.crew.length < CREW_CONTRACT_CAP) {
         const cost = market.buyRecruit(typeId);
         career.money -= cost;
         const ch = makeCharacter();
@@ -1506,7 +1511,9 @@ function renderShop(earnings) {
         const name = nextCrewName();
         career.crew.push({
           name, type: typeId, progress: createProgression(), kills: 0,
-          hp: null, limbs: { arm: 0, leg: 0 }, benched: false, ch,
+          hp: null, limbs: { arm: 0, leg: 0 },
+          benched: shouldBenchNewHire(career.crew),
+          ch,
         });
         if (career.mode === 'liquidation') {
           recordPlayerMarket('hire', null, cost, `${t.name} · ${name}`);
@@ -1519,8 +1526,8 @@ function renderShop(earnings) {
       const m = career.crew[idx];
       if (!m) return;
       // deploy cap: 5 in the pit at once
-      const deployed = career.crew.filter(c => !c.benched).length;
-      if (m.benched && deployed >= 5) return;
+      const deployed = deployedCrewCount(career.crew);
+      if (m.benched && deployed >= DEPLOYED_CREW_CAP) return;
       m.benched = !m.benched;
       audio.uiClick(); save(); renderShop(earnings);
     },

@@ -102,10 +102,15 @@ export class MenuNavigator {
     }
 
     const carrying = this.doc.body.classList.contains('controller-carrying');
+    const dialog = root.querySelector('#hire-overlay:not(.hidden)');
     if (!carrying && action === 'back') {
       const handled = this._back(root);
       this._updateHint();
       return handled;
+    }
+    if (dialog && ['advance', 'patch', 'previousTab', 'nextTab', 'previousPanel', 'nextPanel'].includes(action)) {
+      this._updateHint();
+      return false;
     }
     if (!carrying && action === 'advance') {
       const handled = this._advance(root);
@@ -183,7 +188,7 @@ export class MenuNavigator {
   }
 
   _back(root) {
-    const target = root.querySelector('#btn-intro-back, #btn-resume');
+    const target = root.querySelector('#btn-hire-close:not(.hidden), #btn-intro-back, #btn-resume');
     if (!target || !this._visible(target)) return false;
     this._activate(target, root);
     return true;
@@ -263,7 +268,8 @@ export class MenuNavigator {
     const selector = this.doc.body.classList.contains('controller-carrying')
       ? `${FOCUSABLE}, ${CARRY_TARGETS}`
       : FOCUSABLE;
-    return [...root.querySelectorAll(selector)].filter(el => this._visible(el));
+    const dialog = root.id === 'screen-shop' ? root.querySelector('#hire-overlay:not(.hidden)') : null;
+    return [...(dialog || root).querySelectorAll(selector)].filter(el => this._visible(el));
   }
 
   _visible(el) {

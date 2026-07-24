@@ -243,7 +243,7 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
   hub.update(1 / 60, 'menu');
   for (const [index, action] of [
     [0, 'activate'], [1, 'back'], [2, 'advance'], [3, 'patch'],
-    [4, 'previousTab'], [5, 'nextTab'], [6, 'previousPanel'], [7, 'nextPanel'],
+    [4, 'previousTab'], [5, 'nextTab'], [6, 'nextPanel'], [7, 'previousPanel'],
   ]) {
     buttons[index].pressed = true;
     buttons[index].value = 1;

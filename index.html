@@ -200,13 +200,26 @@
       </div>
       <div class="shop-footer" data-controller-panel="actions">
         <div class="shop-controller-guide controller-only">
-          <span><i class="pad-key">LT</i><i class="pad-key">RT</i> CHANGE PANEL</span>
+          <span><i class="pad-key">RT</i> ◀ PANEL ▶ <i class="pad-key">LT</i></span>
           <span><i class="pad-key">LB</i><i class="pad-key">RB</i> CHANGE FIGHTER</span>
           <span><i class="pad-key pad-a">A</i> SELECT / MOVE GEAR</span>
         </div>
         <div id="shop-turn-status" class="hidden"></div>
         <button id="btn-end-turn" class="btn btn-big hidden"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> END TURN — LET THE RIVAL SHOP</button>
         <button id="btn-next-fight" class="btn btn-big btn-blood"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> NEXT FIGHT ➤</button>
+      </div>
+    </div>
+    <div id="hire-overlay" class="hire-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="hire-title">
+      <div class="hire-dialog">
+        <div class="hire-dialog-head">
+          <div>
+            <span class="hire-kicker">CONTRACT MARKET</span>
+            <h2 id="hire-title">HIRE A FIGHTER</h2>
+          </div>
+          <button id="btn-hire-close" class="btn btn-ghost"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> CLOSE</button>
+        </div>
+        <div id="hire-options" class="hire-options"></div>
+        <div class="hire-dialog-hint controller-only"><span class="pad-key pad-a">A</span> SIGN CONTRACT · <span class="pad-key pad-b">B</span> CANCEL</div>
       </div>
     </div>
   </div>
