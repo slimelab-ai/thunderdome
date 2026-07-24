@@ -298,7 +298,8 @@ export class Combatant {
     this.deathT = 0;
     this.tag.visible = false;
     if (this.laser) this.laser.visible = false;
-    if (this.bountyLight) { this.group.remove(this.bountyLight); this.bountyLight = null; }
+    if (this.bountyMarker) { this.group.remove(this.bountyMarker); this.bountyMarker = null; }
+    this.bountyRevealed = false;
     // remove hitboxes
     world.hitMeshes = world.hitMeshes.filter(m => m.userData.combatant !== this);
     audio.hurt();

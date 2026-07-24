@@ -850,6 +850,25 @@ function randomFloorSpot(margin = 5) {
   };
 }
 
+function makeBountyMarker() {
+  const marker = new THREE.Group();
+  const gold = new THREE.MeshBasicMaterial({
+    color: 0xffb92e,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: true,
+    depthWrite: false,
+  });
+  const diamond = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), gold);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.025, 6, 18), gold);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = -0.24;
+  marker.add(diamond, ring);
+  marker.position.y = 2.25;
+  marker.visible = false;
+  return marker;
+}
+
 const EVENTS = ['lightsout', 'gas', 'frenzy', 'airdrop', 'molotov', 'bounty', 'bloodrules'];
 // liquidation has no kill payouts, so the money-themed spectacles would announce cash that never arrives
 const LIQUIDATION_EVENTS = ['lightsout', 'gas', 'airdrop', 'molotov', 'bloodrules'];
@@ -862,9 +881,10 @@ function fireEvent() {
     const marks = match.enemies.filter(c => c.alive && !c.boss);
     const mark = marks[(Math.random() * marks.length) | 0];
     mark.bountyT = 22;
-    mark.bountyLight = new THREE.PointLight(0xffb92e, 30, 7, 1.5);
-    mark.bountyLight.position.y = 2.3;
-    mark.group.add(mark.bountyLight);
+    mark.bountyRevealed = mark.hadLoS || mark.sinceHit < 0.75 || mark.shotsFired > 0;
+    mark.bountyMarker = makeBountyMarker();
+    mark.bountyMarker.visible = mark.bountyRevealed;
+    mark.group.add(mark.bountyMarker);
     ui.eventBanner('BOUNTY POSTED', `${mark.name} is worth TRIPLE for 20 seconds`, 'var(--gold)');
     announcer.say('bounty', { victim: mark.name }, { force: true });
     return;
@@ -928,10 +948,16 @@ function updateEvents(dt) {
   for (const c of match.enemies) {
     if (c.bountyT > 0) {
       c.bountyT -= dt;
-      if (c.bountyLight) c.bountyLight.intensity = 22 + Math.sin(match.time * 8) * 14;
-      if ((c.bountyT <= 0 || !c.alive) && c.bountyLight) {
-        c.group.remove(c.bountyLight);
-        c.bountyLight = null;
+      if (c.bountyMarker) {
+        if (c.hadLoS || c.sinceHit < 0.75 || c.shotsFired > 0) c.bountyRevealed = true;
+        c.bountyMarker.visible = c.bountyRevealed;
+        const pulse = 1 + Math.sin(match.time * 7) * 0.12;
+        c.bountyMarker.scale.setScalar(pulse);
+      }
+      if ((c.bountyT <= 0 || !c.alive) && c.bountyMarker) {
+        c.group.remove(c.bountyMarker);
+        c.bountyMarker = null;
+        c.bountyRevealed = false;
       }
     }
   }
