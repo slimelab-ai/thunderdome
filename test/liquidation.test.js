@@ -5,7 +5,7 @@ import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
   liquidationOdds, liquidationBetOptions, liquidationCreditLimit, canPlaceLiquidationBet,
-  recordLiquidationOutcome, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  recordLiquidationOutcome, liquidationReserveTarget, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
 } from '../src/liquidation.js';
 
@@ -138,6 +138,24 @@ test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
   const rivalBuys = state.marketLog.filter(entry => entry.kind === 'trade' && entry.side === 'rival');
   assert.ok(rivalBuys.some(entry => entry.type === 'grenade'));
   assert.ok(rivalBuys.some(entry => entry.type === 'splint'));
+});
+
+test('rival cash reserve ramps late in the draft and accounts for loss-streak exposure', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.draft.fundedRounds = 9;
+  state.enemyMoney = 2500;
+  assert.equal(liquidationReserveTarget(state), 1500);
+  let decision;
+  for (let i = 0; i < 20; i++) decision = runLiquidationAI(state, market);
+  assert.ok(state.enemyMoney >= 1500);
+  assert.equal(decision.kind, 'hold');
+  assert.equal(decision.reserveTarget, 1500);
+
+  state.draft.fundedRounds = 10;
+  state.draft.complete = true;
+  state.enemyLossStreak = 2;
+  assert.equal(liquidationReserveTarget(state), 2250);
 });
 
 test('public market tape records both sides and separates rounds', () => {

@@ -171,6 +171,21 @@ export function allocateRivalSupply(inventory, type, fighterIndex, rosterSize, c
   return Math.min(cap, evenShare + (fighterIndex < remainder ? 1 : 0));
 }
 
+export function liquidationReserveTarget(state) {
+  const envelope = draftShare(state);
+  const fundedRounds = state.draft?.fundedRounds || 0;
+  // Begin hunkering down after round six, reaching one full untouched envelope
+  // at the end of the draft. This is cash runway, not an accusation that reserve
+  // inventory is wasteful.
+  const lateDraftRamp = Math.max(0, Math.min(1, (fundedRounds - 6) / 4));
+  const lateDraftReserve = Math.round(envelope * lateDraftRamp / 50) * 50;
+  // Always retain the minimum stake. If another defeat would trigger a streak
+  // margin call, retain enough cash for that known liability too.
+  const nextLossStreak = (state.enemyLossStreak || 0) + 1;
+  const lossRunway = 250 + liquidationStreakPenalty(state, nextLossStreak);
+  return Math.max(250, lateDraftReserve, lossRunway);
+}
+
 const STRATEGIES = {
   swarm: {
     guns: ['smg', 'pistol'], ammo: ['ammo_9mm'], armor: ['vest1', 'pads1'],
@@ -192,9 +207,11 @@ const STRATEGIES = {
 
 export function runLiquidationAI(state, market, playerSignals = {}) {
   const inv = state.enemy.inventory;
+  const reserveTarget = liquidationReserveTarget(state);
+  const spendable = Math.max(0, state.enemyMoney - reserveTarget);
   const price = t => market.quoteBuy(t);
   const pressure = t => market.info(t)?.pressure || 1;
-  const affordable = t => Number.isFinite(price(t)) && price(t) <= state.enemyMoney;
+  const affordable = t => Number.isFinite(price(t)) && price(t) <= spendable;
   const alternatives = ['ammo_9mm', 'ammo_762', 'ammo_buck', 'ammo_308'].sort((a, b) => pressure(a) - pressure(b));
 
   if (playerSignals.hoarded9mm || pressure('ammo_9mm') > 1.5) state.enemy.strategy = 'rifle';
@@ -211,7 +228,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   if (recruits.length < desiredRoster) {
     const candidates = plan.recruits
       .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
-      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= state.enemyMoney)
+      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= spendable)
       .sort((a, b) => a.order - b.order || a.cost - b.cost);
     const recruit = candidates[recruits.length - 1] || candidates[0];
     if (recruit) {
@@ -237,13 +254,22 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   if (!target) target = plan.guns.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.ammo.find(t => owned(t) < 4 && affordable(t));
   if (!target) target = alternatives.find(t => affordable(t));
-  if (!target) return null;
+  if (!target) {
+    return {
+      kind: 'hold',
+      reason: spendable <= 0 ? 'cash_reserve' : 'no_purchase_inside_reserve',
+      reserveTarget,
+      cash: state.enemyMoney,
+      spendable,
+      action: `HOLD: keeping $${state.enemyMoney} cash (reserve target $${reserveTarget})`,
+    };
+  }
   const cost = market.buy(target);
   state.enemyMoney -= cost;
   inv[target] = owned(target) + 1;
   const action = `${state.enemy.strategy.toUpperCase()}: bought ${ITEM_TYPES[target].name} for $${cost}`;
   recordMarketTrade(state, 'rival', 'buy', target, cost);
-  return { type: target, cost, action };
+  return { kind: 'buy', type: target, cost, reserveTarget, action };
 }
 
 export function enemyRoster(state) {
