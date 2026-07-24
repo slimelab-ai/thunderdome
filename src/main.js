@@ -91,6 +91,7 @@ const input = new InputHub(player, world, camera, {
   onResume: () => resumeFromPause(),
   onCycleSpectator,
   onMenuInput: (action) => menuNavigator.handle(action),
+  onControllerActive: () => menuNavigator.activate(),
 });
 const controllerSettingsPanel = new ControllerSettingsPanel(input);
 

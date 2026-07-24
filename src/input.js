@@ -55,7 +55,7 @@ const BTN = {
 // bypass this entirely (and get no assist).
 export class InputHub {
   constructor(player, world, camera, {
-    touch = null, onPause, onResume, onCycleSpectator, onMenuInput, onControllerSample,
+    touch = null, onPause, onResume, onCycleSpectator, onMenuInput, onControllerActive, onControllerSample,
     controllerSettings = DEFAULT_CONTROLLER_SETTINGS,
   } = {}) {
     this.player = player;
@@ -66,6 +66,7 @@ export class InputHub {
     this.onResume = onResume;
     this.onCycleSpectator = onCycleSpectator;
     this.onMenuInput = onMenuInput;
+    this.onControllerActive = onControllerActive;
     this.onControllerSample = onControllerSample;
     this.controllerSettings = { ...DEFAULT_CONTROLLER_SETTINGS, ...controllerSettings };
     this.prevButtons = [];
@@ -105,8 +106,10 @@ export class InputHub {
       const pressed = (i) => val(i) > STICK.triggerAt;
       const edge = (i) => pressed(i) && !this.prevButtons[i];
 
-      if (pad.buttons.some((b) => b.pressed) || pad.axes.some((a) => Math.abs(a) > STICK.deadzone)) {
+      if (pad.buttons.some((b) => b.pressed || (b.value || 0) > STICK.triggerAt)
+        || pad.axes.some((a) => Math.abs(a) > STICK.deadzone)) {
         this.gamepadActiveAt = now;
+        this.onControllerActive?.();
       }
       padLook = stickCurve(
         pad.axes[2] || 0, pad.axes[3] || 0,
@@ -147,6 +150,8 @@ export class InputHub {
         if (edge(BTN.Y)) this.onMenuInput?.('patch');
         if (edge(BTN.LB)) this.onMenuInput?.('previousTab');
         if (edge(BTN.RB)) this.onMenuInput?.('nextTab');
+        if (edge(BTN.LT)) this.onMenuInput?.('previousPanel');
+        if (edge(BTN.RT)) this.onMenuInput?.('nextPanel');
       } else {
         this.navHeld = null;
       }

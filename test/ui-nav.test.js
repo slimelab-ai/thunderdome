@@ -29,7 +29,8 @@ test('controller hints advertise context-sensitive market shortcuts', () => {
   const shop = controllerHint('screen-shop');
   assert.match(shop, /X END TURN \/ NEXT FIGHT/);
   assert.match(shop, /Y PATCH/);
-  assert.match(shop, /LB \/ RB SQUAD/);
+  assert.match(shop, /LB \/ RB FIGHTER/);
+  assert.match(shop, /LT \/ RT PANEL/);
   assert.match(controllerHint('screen-intro'), /X START FIGHT/);
   assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);
   assert.match(controllerHint('screen-shop', { carrying: true }), /B CANCEL/);
@@ -43,6 +44,7 @@ test('market shortcuts advance, patch, and cycle the selected squad member', () 
     classList: { contains: (name) => name === 'char-tab-sel' && selected },
     getAttribute: (name) => attributes[name] ?? null,
     hasAttribute: (name) => Object.hasOwn(attributes, name),
+    getBoundingClientRect: () => rect(500, 200),
     click: () => calls.push(id || attributes['data-char'] || `patch:${attributes['data-patch']}`),
   });
   const endTurn = control('btn-end-turn');
@@ -61,10 +63,12 @@ test('market shortcuts advance, patch, and cycle the selected squad member', () 
     },
   };
   const navigator = Object.create(MenuNavigator.prototype);
-  navigator.doc = { querySelector: () => root };
+  navigator.doc = { querySelector: () => root, activeElement: null };
   navigator._visible = (el) => el !== nextFight || advance.length === 1;
   navigator._activate = (el) => el.click();
-  navigator._focus = (el) => calls.push(`focus:${el.getAttribute('data-char')}`);
+  navigator._items = () => [patch, playerTab, crewTab];
+  navigator.current = patch;
+  navigator._focus = (el) => calls.push(`focus:${controlIdentity(el)}`);
 
   assert.equal(navigator._advance(root), true);
   advance = [nextFight];
@@ -72,8 +76,43 @@ test('market shortcuts advance, patch, and cycle the selected squad member', () 
   assert.equal(navigator._patch(root), true);
   assert.equal(navigator._cycleSquad(root, 1), true);
   assert.deepEqual(calls, [
-    'btn-end-turn', 'btn-next-fight', 'patch:player', '0', 'focus:0',
+    'btn-end-turn', 'btn-next-fight', 'patch:player', '0', 'focus:data-patch:player',
   ]);
+});
+
+test('panel shortcuts jump directly between market regions', () => {
+  const focusCalls = [];
+  const panel = (name, left) => ({
+    getAttribute: (attr) => attr === 'data-shop-panel' ? name : null,
+    getBoundingClientRect: () => rect(left, 0, 280, 700),
+    closest: () => null,
+  });
+  const market = panel('market', 0);
+  const stash = panel('stash', 300);
+  const marketControl = {
+    id: 'market-buy',
+    closest: () => market,
+    getBoundingClientRect: () => rect(20, 200),
+  };
+  const stashControl = {
+    id: 'stash-item',
+    closest: () => stash,
+    getBoundingClientRect: () => rect(320, 210),
+  };
+  const root = {
+    querySelectorAll: (selector) => selector === '[data-shop-panel]' ? [market, stash] : [],
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = { activeElement: marketControl };
+  navigator.current = marketControl;
+  navigator.lastCenter = { x: 60, y: 220 };
+  navigator.panelMemory = new Map();
+  navigator._visible = () => true;
+  navigator._items = (scope) => scope === stash ? [stashControl] : scope === market ? [marketControl] : [marketControl, stashControl];
+  navigator._focus = (el) => focusCalls.push(el.id);
+
+  assert.equal(navigator._jumpPanel(root, 1), true);
+  assert.deepEqual(focusCalls, ['stash-item']);
 });
 
 test('back shortcut immediately returns from the fight intro without requiring focus first', () => {

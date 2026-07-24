@@ -225,7 +225,9 @@ test('while dead, d-pad and bumpers cycle spectator targets instead of gameplay 
 test('outside combat, controller inputs drive UI navigation with held-stick repeat', () => {
   const { hub } = makeHub();
   const actions = [];
+  let controllerActivations = 0;
   hub.onMenuInput = (action) => actions.push(action);
+  hub.onControllerActive = () => controllerActivations++;
   const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
   const pad = { connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons };
   hub._pad = () => pad;
@@ -241,7 +243,7 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
   hub.update(1 / 60, 'menu');
   for (const [index, action] of [
     [0, 'activate'], [1, 'back'], [2, 'advance'], [3, 'patch'],
-    [4, 'previousTab'], [5, 'nextTab'],
+    [4, 'previousTab'], [5, 'nextTab'], [6, 'previousPanel'], [7, 'nextPanel'],
   ]) {
     buttons[index].pressed = true;
     buttons[index].value = 1;
@@ -251,4 +253,5 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
     hub.update(1 / 60, 'shop');
     assert.equal(actions.at(-1), action);
   }
+  assert.ok(controllerActivations > 0, 'using the pad should reveal controller-only prompts');
 });

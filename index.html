@@ -98,6 +98,7 @@
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
       </div>
+      <div class="menu-controller-guide controller-only">LEFT STICK / D-PAD MOVE · <span class="pad-key pad-a">A</span> SELECT</div>
       <section id="controller-settings" aria-label="Controller aim calibration">
         <div class="controller-settings-head">
           <div>
@@ -157,9 +158,10 @@
       <div id="intro-status"></div>
       <div id="bet-row"></div>
       <div class="intro-actions">
-        <button id="btn-intro-back" class="btn">◀ BLACK MARKET</button>
-        <button id="btn-fight" class="btn btn-big btn-blood">⚔ FIGHT</button>
+        <button id="btn-intro-back" class="btn"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> ◀ BLACK MARKET</button>
+        <button id="btn-fight" class="btn btn-big btn-blood"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> ⚔ FIGHT</button>
       </div>
+      <div class="intro-controller-guide controller-only">LEFT STICK / D-PAD MOVE · <span class="pad-key pad-a">A</span> SELECT</div>
       <div class="intro-hint">Click FIGHT to lock in — the game goes fullscreen. ESC pauses.</div>
     </div>
   </div>
@@ -196,10 +198,15 @@
           <div id="char-panel"></div>
         </div>
       </div>
-      <div class="shop-footer">
+      <div class="shop-footer" data-controller-panel="actions">
+        <div class="shop-controller-guide controller-only">
+          <span><i class="pad-key">LT</i><i class="pad-key">RT</i> CHANGE PANEL</span>
+          <span><i class="pad-key">LB</i><i class="pad-key">RB</i> CHANGE FIGHTER</span>
+          <span><i class="pad-key pad-a">A</i> SELECT / MOVE GEAR</span>
+        </div>
         <div id="shop-turn-status" class="hidden"></div>
-        <button id="btn-end-turn" class="btn btn-big hidden">END TURN — LET THE RIVAL SHOP</button>
-        <button id="btn-next-fight" class="btn btn-big btn-blood">NEXT FIGHT ➤</button>
+        <button id="btn-end-turn" class="btn btn-big hidden"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> END TURN — LET THE RIVAL SHOP</button>
+        <button id="btn-next-fight" class="btn btn-big btn-blood"><span class="pad-key pad-x controller-only" aria-hidden="true">X</span> NEXT FIGHT ➤</button>
       </div>
     </div>
   </div>

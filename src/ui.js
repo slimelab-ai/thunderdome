@@ -455,7 +455,7 @@ export class UI {
         </div>
       </div>
       <div class="char-actions">
-        ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}>🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
+        ${patchCost > 0 ? `<button class="btn" data-patch="${who}" ${career.money > 0 ? '' : 'disabled'}><span class="pad-key pad-y controller-only" aria-hidden="true">Y</span> 🏥 PATCH $${Math.min(patchCost, career.money)}${career.money < patchCost ? ' ⚠' : ''}</button>` : '<span class="si-owned">FIGHTING FIT</span>'}
         ${!isPlayer ? `<button class="btn" data-bench="${who}">${m.benched ? '▶ DEPLOY' : '🪑 BENCH'}</button>` : ''}
         ${!isPlayer ? `<button class="btn btn-ghost" data-sell-crew="${who}">RELEASE +$${releaseValue}</button>` : ''}
       </div>

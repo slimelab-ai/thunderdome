@@ -1,5 +1,6 @@
 const FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item]';
 const CARRY_TARGETS = '[data-controller-target]';
+const NAV_SCOPE_SELECTOR = '[data-shop-panel], [data-controller-panel]';
 const IDENTITY_ATTRIBUTES = [
   'data-char', 'data-buy-item', 'data-buy-to', 'data-hire-menu', 'data-patch',
   'data-bench', 'data-train', 'data-sell-crew', 'data-hire',
@@ -49,10 +50,10 @@ export function directionalCandidate(rects, currentIndex, direction) {
 }
 
 export function controllerHint(screenId, { carrying = false, adjusting = false } = {}) {
-  if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LB / RB JUMP COLUMN';
-  if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  B BACK';
+  if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LT / RT CHANGE PANEL';
+  if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  A SELECT';
   if (screenId === 'screen-shop') {
-    return 'X END TURN / NEXT FIGHT  ·  Y PATCH  ·  LB / RB SQUAD  ·  A SELECT  ·  STICK / D-PAD MOVE';
+    return 'LT / RT PANEL  ·  LB / RB FIGHTER  ·  X END TURN / NEXT FIGHT  ·  Y PATCH  ·  A SELECT';
   }
   if (screenId === 'screen-intro') {
     return 'X START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  STICK / D-PAD MOVE';
@@ -68,6 +69,7 @@ export class MenuNavigator {
     this.lastIdentity = null;
     this.lastCenter = null;
     this.lastScreen = null;
+    this.panelMemory = new Map();
     const leaveControllerMode = () => {
       doc.body.classList.remove('controller-mode');
       this._updateHint();
@@ -83,10 +85,15 @@ export class MenuNavigator {
     doc.addEventListener('controllercarrychange', () => this._updateHint());
   }
 
+  activate() {
+    this.doc.body.classList.add('controller-mode');
+    this._updateHint();
+  }
+
   handle(action) {
     const root = this.doc.querySelector('.screen:not(.hidden)');
     if (!root) return false;
-    this.doc.body.classList.add('controller-mode');
+    this.activate();
 
     if (action === 'back' && this.doc.body.classList.contains('controller-carrying')) {
       this.doc.dispatchEvent(new CustomEvent('controllercancel'));
@@ -114,6 +121,15 @@ export class MenuNavigator {
       const handled = this._cycleSquad(root, action === 'nextTab' ? 1 : -1);
       this._updateHint();
       return handled;
+    }
+    if (root.id === 'screen-shop' && (action === 'previousPanel' || action === 'nextPanel')) {
+      const handled = this._jumpPanel(root, action === 'nextPanel' ? 1 : -1);
+      this._updateHint();
+      return handled;
+    }
+    if (action === 'previousPanel' || action === 'nextPanel') {
+      this._updateHint();
+      return false;
     }
 
     const items = this._items(root);
@@ -145,20 +161,23 @@ export class MenuNavigator {
       this._updateHint();
       return true;
     }
-    if (action === 'previousTab' || action === 'nextTab') {
-      const tabs = [...root.querySelectorAll('[data-shop-view]')].filter(el => this._visible(el));
-      if (tabs.length) {
-        const selected = Math.max(0, tabs.findIndex(el => el.classList.contains('shop-mobile-tab-active')));
-        tabs[(selected + (action === 'nextTab' ? 1 : tabs.length - 1)) % tabs.length].click();
-        this.current = null;
-        this._focus(this._items(root)[0], root);
-        return true;
-      }
-      action = action === 'nextTab' ? 'right' : 'left';
-    }
+    if (action === 'previousTab' || action === 'nextTab') action = action === 'nextTab' ? 'right' : 'left';
 
-    const next = directionalCandidate(items.map(el => el.getBoundingClientRect()), index, action);
-    if (next >= 0) this._focus(items[next], root);
+    let navItems = items;
+    let navIndex = index;
+    if (root.id === 'screen-shop') {
+      const scope = active.closest?.(NAV_SCOPE_SELECTOR);
+      if (scope) {
+        const scoped = this._items(scope);
+        const scopedIndex = scoped.indexOf(active);
+        if (scopedIndex >= 0) {
+          navItems = scoped;
+          navIndex = scopedIndex;
+        }
+      }
+    }
+    const next = directionalCandidate(navItems.map(el => el.getBoundingClientRect()), navIndex, action);
+    if (next >= 0) this._focus(navItems[next], root);
     this._updateHint();
     return next >= 0;
   }
@@ -192,17 +211,51 @@ export class MenuNavigator {
   _cycleSquad(root, direction) {
     const tabs = [...root.querySelectorAll('[data-char]')].filter(el => this._visible(el));
     if (!tabs.length) return false;
+    const beforeItems = this._items(root);
+    const before = beforeItems.includes(this.current)
+      ? this.current
+      : beforeItems.includes(this.doc.activeElement) ? this.doc.activeElement : null;
+    const beforeIdentity = controlIdentity(before);
+    const beforePosition = before ? center(before.getBoundingClientRect()) : null;
     const selected = tabs.findIndex(el => el.classList.contains('char-tab-sel'));
     const current = selected >= 0 ? selected : 0;
     const target = tabs[(current + direction + tabs.length) % tabs.length];
-    const identity = controlIdentity(target);
     target.click();
     const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
     if (!nextRoot || nextRoot.id !== root.id) return true;
-    const replacement = [...nextRoot.querySelectorAll('[data-char]')]
-      .filter(el => this._visible(el))
-      .find(el => controlIdentity(el) === identity);
+    if (!before) return true;
+    const nextItems = this._items(nextRoot);
+    const replacement = (beforeIdentity && nextItems.find(el => controlIdentity(el) === beforeIdentity))
+      || this._nearest(nextItems, beforePosition);
     if (replacement) this._focus(replacement, nextRoot);
+    return true;
+  }
+
+  _jumpPanel(root, direction) {
+    const panels = [...root.querySelectorAll('[data-shop-panel]')].filter(el => this._visible(el));
+    if (!panels.length) return false;
+    const items = this._items(root);
+    const active = items.includes(this.current)
+      ? this.current
+      : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
+    const currentPanel = active?.closest?.('[data-shop-panel]');
+    const currentIndex = panels.indexOf(currentPanel);
+    const targetIndex = currentIndex < 0
+      ? (direction > 0 ? 0 : panels.length - 1)
+      : (currentIndex + direction + panels.length) % panels.length;
+    const targetPanel = panels[targetIndex];
+    const targetItems = this._items(targetPanel);
+    if (!targetItems.length) return false;
+    const key = targetPanel.getAttribute('data-shop-panel');
+    const rememberedIdentity = this.panelMemory.get(key);
+    const remembered = rememberedIdentity
+      ? targetItems.find(el => controlIdentity(el) === rememberedIdentity)
+      : null;
+    const targetRect = targetPanel.getBoundingClientRect();
+    const sameHeight = this.lastCenter
+      ? { x: targetRect.left + targetRect.width / 2, y: this.lastCenter.y }
+      : null;
+    this._focus(remembered || this._nearest(targetItems, sameHeight) || targetItems[0], root);
     return true;
   }
 
@@ -260,6 +313,10 @@ export class MenuNavigator {
     this.lastIdentity = controlIdentity(el);
     this.lastCenter = center(el.getBoundingClientRect());
     this.lastScreen = root?.id || null;
+    const panel = el.closest?.('[data-shop-panel]');
+    const panelKey = panel?.getAttribute('data-shop-panel');
+    const identity = controlIdentity(el);
+    if (panelKey && identity) this.panelMemory.set(panelKey, identity);
     el.focus({ preventScroll: true });
     el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
   }

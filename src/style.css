@@ -207,6 +207,19 @@ html, body {
 .btn-blood:hover { background: var(--blood); box-shadow: 0 0 24px rgba(227,36,43,0.5); }
 .btn-ghost { background: transparent; border-color: #333; color: #888; }
 .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+.controller-only { display: none !important; }
+.controller-mode .controller-only { display: inline-flex !important; }
+.pad-key {
+  min-width: 20px; height: 20px; padding: 0 4px; align-items: center; justify-content: center;
+  border: 1px solid #777784; border-radius: 10px; background: #101016; color: #f4f4f6;
+  font: 900 10px/1 Arial, sans-serif; letter-spacing: 0; font-style: normal;
+  box-shadow: inset 0 0 0 1px #050507, 0 1px 4px rgba(0,0,0,0.55);
+}
+.btn > .pad-key { margin-right: 6px; vertical-align: middle; }
+.pad-key.pad-a { border-color: #55ba63; color: #79e487; }
+.pad-key.pad-b { border-color: #d05257; color: #ff777c; }
+.pad-key.pad-x { border-color: #458fd1; color: #70baff; }
+.pad-key.pad-y { border-color: #d4a62c; color: #ffd45f; }
 .controller-mode .screen :focus {
   outline: 3px solid var(--gold); outline-offset: 3px;
   border-color: var(--gold); box-shadow: 0 0 0 2px #08080b, 0 0 22px rgba(255,185,46,0.52);
@@ -223,6 +236,8 @@ html, body {
 #controller-hint[data-screen="screen-shop"] {
   bottom: max(58px, calc(env(safe-area-inset-bottom) + 58px));
 }
+.controller-mode #controller-hint[data-screen="screen-shop"],
+.controller-mode #controller-hint[data-screen="screen-intro"] { display: none; }
 .controller-held-item {
   border-color: var(--acid) !important;
   box-shadow: inset 0 0 0 2px var(--acid), 0 0 18px rgba(134,255,60,0.5) !important;
@@ -408,6 +423,19 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
   flex: none; margin-top: 14px; text-align: center;
   display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px;
 }
+.shop-controller-guide {
+  flex-basis: 100%; justify-content: center; align-items: center; flex-wrap: wrap; gap: 7px 20px;
+  color: #a7a7b0; font-size: 9px; font-weight: 900; letter-spacing: 1.1px;
+}
+.shop-controller-guide > span,
+.intro-controller-guide,
+.menu-controller-guide { align-items: center; gap: 4px; }
+.intro-controller-guide,
+.menu-controller-guide {
+  justify-content: center; margin-top: 12px; color: #9b9ba5;
+  font-size: 10px; font-weight: 900; letter-spacing: 1.2px;
+}
+.menu-controller-guide { margin: -6px 0 12px; }
 .shop-turn-status {
   flex-basis: 100%; font-size: 10px; font-weight: 900; letter-spacing: 1.8px;
 }
@@ -744,6 +772,8 @@ body.touch-mode .spec-hint-touch { display: inline; }
     margin: 0 -12px; padding: 10px 12px max(10px, env(safe-area-inset-bottom));
     background: rgba(9,9,13,0.97); border-top: 1px solid rgba(255,255,255,0.14);
   }
+  .shop-controller-guide { gap: 5px 10px; font-size: 8px; letter-spacing: 0.7px; }
+  .shop-controller-guide .pad-key { min-width: 18px; height: 18px; font-size: 9px; }
   .shop-footer .btn { min-height: 48px; font-size: clamp(13px, 3.5vw, 17px); padding: 10px 16px; }
 
   .menu-inner, .intro-inner, .death-inner, .executed-inner, .pause-inner {
@@ -826,6 +856,8 @@ body.touch-mode .spec-hint-touch { display: inline; }
     position: static; margin: 4px 0 0; padding: 4px 0 max(2px, env(safe-area-inset-bottom));
     background: transparent; border-top: 1px solid var(--line); gap: 5px;
   }
+  .shop-controller-guide { gap: 3px 9px; font-size: 7px; letter-spacing: 0.5px; }
+  .shop-controller-guide .pad-key { min-width: 16px; height: 16px; padding: 0 3px; font-size: 8px; }
   .shop-footer .btn { min-height: 36px; width: auto; padding: 6px 13px; font-size: 11px; }
   .shop-turn-status { font-size: 8px; letter-spacing: 0.8px; }
 }
