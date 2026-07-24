@@ -629,7 +629,6 @@ export class UI {
         actions.equipStashItem(el.getAttribute('data-item'), this.selChar);
       });
       el.addEventListener('controllersell', () => {
-        if (el.getAttribute('data-inventory') !== 'stash') return;
         actions.moveItem(el.getAttribute('data-item'), { kind: 'sell' });
       });
     });

@@ -133,10 +133,10 @@ export class InputHub {
         const ax = pad.axes[0] || 0;
         const ay = pad.axes[1] || 0;
         let nav = null;
-        if (pressed(BTN.DUP) || ay < -0.55) nav = 'up';
-        else if (pressed(BTN.DDOWN) || ay > 0.55) nav = 'down';
-        else if (pressed(BTN.DLEFT) || ax < -0.55) nav = 'left';
-        else if (pressed(BTN.DRIGHT) || ax > 0.55) nav = 'right';
+        if (ay < -0.55) nav = 'up';
+        else if (ay > 0.55) nav = 'down';
+        else if (ax < -0.55) nav = 'left';
+        else if (ax > 0.55) nav = 'right';
         if (nav !== this.navHeld) {
           this.navHeld = nav;
           this.navRepeat = 0.34;
@@ -162,10 +162,10 @@ export class InputHub {
             this.onMenuInput?.('sell');
           }
         } else if (this.prevButtons[BTN.Y]) {
-          if (!this.menuYHoldFired) this.onMenuInput?.('patch');
           this.menuYHeldFor = 0;
           this.menuYHoldFired = false;
         }
+        if (edge(BTN.DUP)) this.onMenuInput?.('patch');
         if (edge(BTN.LB)) this.onMenuInput?.('previousTab');
         if (edge(BTN.RB)) this.onMenuInput?.('nextTab');
         if (edge(BTN.LT)) this.onMenuInput?.('nextPanel');

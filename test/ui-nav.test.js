@@ -29,13 +29,17 @@ test('controller hints advertise context-sensitive market shortcuts', () => {
   const shop = controllerHint('screen-shop');
   assert.match(shop, /X ALTERNATE/);
   assert.match(shop, /START ADVANCE/);
-  assert.match(shop, /Y PATCH/);
-  assert.match(shop, /LEFT \/ RIGHT OR LT \/ RT PANEL/);
+  assert.match(shop, /D-PAD ↑ PATCH/);
+  assert.doesNotMatch(shop, /Y PATCH/);
+  assert.match(shop, /LEFT STICK ← \/ → OR LT \/ RT PANEL/);
   assert.match(controllerHint('screen-intro'), /START FIGHT/);
   assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);
   assert.match(controllerHint('screen-shop', { carrying: true }), /B CANCEL/);
   assert.match(controllerHint('screen-shop', { stashItem: true }), /X EQUIP TO SELECTED/);
   assert.match(controllerHint('screen-shop', { stashItem: true }), /HOLD Y SELL/);
+  assert.match(controllerHint('screen-shop', { stashItem: true }), /D-PAD ↑ PATCH/);
+  assert.match(controllerHint('screen-shop', { inventoryItem: true }), /HOLD Y SELL/);
+  assert.doesNotMatch(controllerHint('screen-menu'), /D-PAD/);
   assert.doesNotMatch(controllerHint('screen-menu'), /B BACK/);
 });
 
@@ -143,7 +147,10 @@ test('stash shortcuts equip with X and sell with held Y', () => {
   const events = [];
   const stashItem = {
     isConnected: true,
-    matches: (selector) => selector === '[data-controller-item][data-inventory="stash"]',
+    matches: (selector) => [
+      '[data-controller-item]',
+      '[data-controller-item][data-inventory="stash"]',
+    ].includes(selector),
     getBoundingClientRect: () => rect(320, 180),
     dispatchEvent: (event) => events.push(event.type),
   };
@@ -161,6 +168,28 @@ test('stash shortcuts equip with X and sell with held Y', () => {
   assert.equal(navigator._alternate(root), true);
   assert.equal(navigator._sell(root), true);
   assert.deepEqual(events, ['controllerequip', 'controllersell']);
+});
+
+test('held Y sells equipped and backpack inventory items too', () => {
+  const events = [];
+  const equippedItem = {
+    matches: (selector) => selector === '[data-controller-item]',
+    getBoundingClientRect: () => rect(780, 260),
+    dispatchEvent: (event) => events.push(event.type),
+  };
+  const root = { id: 'screen-shop' };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    activeElement: equippedItem,
+    defaultView: { Event },
+    querySelector: () => root,
+  };
+  navigator.current = equippedItem;
+  navigator._items = () => [equippedItem];
+  navigator._nearest = () => null;
+
+  assert.equal(navigator._sell(root), true);
+  assert.deepEqual(events, ['controllersell']);
 });
 
 test('open hire dialog traps controller focus inside the contract cards', () => {

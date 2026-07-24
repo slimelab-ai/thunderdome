@@ -49,20 +49,25 @@ export function directionalCandidate(rects, currentIndex, direction) {
   return best;
 }
 
-export function controllerHint(screenId, { carrying = false, adjusting = false, stashItem = false } = {}) {
+export function controllerHint(screenId, {
+  carrying = false, adjusting = false, inventoryItem = false, stashItem = false,
+} = {}) {
   if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LEFT / RIGHT OR LT / RT PANEL';
   if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  A SELECT';
   if (screenId === 'screen-shop' && stashItem) {
-    return 'A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  LEFT / RIGHT OR LT / RT PANEL';
+    return 'A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
+  }
+  if (screenId === 'screen-shop' && inventoryItem) {
+    return 'A MOVE  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH  ·  LEFT STICK MOVE';
   }
   if (screenId === 'screen-shop') {
-    return 'LEFT / RIGHT OR LT / RT PANEL  ·  A PRIMARY  ·  X ALTERNATE  ·  START ADVANCE  ·  Y PATCH';
+    return 'LEFT STICK ← / → OR LT / RT PANEL  ·  A PRIMARY  ·  X ALTERNATE  ·  START ADVANCE  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-intro') {
-    return 'START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  STICK / D-PAD MOVE';
+    return 'START FIGHT  ·  B BLACK MARKET  ·  A SELECT  ·  LEFT STICK MOVE';
   }
-  if (screenId === 'screen-menu') return 'STICK / D-PAD MOVE  ·  A SELECT';
-  return 'STICK / D-PAD MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
+  if (screenId === 'screen-menu') return 'LEFT STICK MOVE  ·  A SELECT';
+  return 'LEFT STICK MOVE  ·  A SELECT  ·  B BACK  ·  LB / RB JUMP COLUMN';
 }
 
 export class MenuNavigator {
@@ -258,7 +263,7 @@ export class MenuNavigator {
     const active = items.includes(this.current)
       ? this.current
       : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
-    if (!active?.matches?.('[data-controller-item][data-inventory="stash"]')) return false;
+    if (!active?.matches?.('[data-controller-item]')) return false;
     return this._inventoryAction(active, root, 'controllersell');
   }
 
@@ -409,10 +414,12 @@ export class MenuNavigator {
     hint.dataset.screen = activeScreen?.id || '';
     const adjusting = this.doc.activeElement?.matches?.('input[type="range"]');
     const active = this.current?.isConnected ? this.current : this.doc.activeElement;
+    const inventoryItem = active?.matches?.('[data-controller-item]');
     const stashItem = active?.matches?.('[data-controller-item][data-inventory="stash"]');
     hint.textContent = controllerHint(activeScreen?.id, {
       carrying: this.doc.body.classList.contains('controller-carrying'),
       adjusting,
+      inventoryItem,
       stashItem,
     });
   }

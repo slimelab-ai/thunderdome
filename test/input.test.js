@@ -261,7 +261,7 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
   buttons[3].pressed = false;
   buttons[3].value = 0;
   hub.update(1 / 60, 'shop');
-  assert.equal(actions.at(-1), 'patch', 'tapping Y patches');
+  assert.notEqual(actions.at(-1), 'patch', 'tapping Y is intentionally unbound');
 
   buttons[3].pressed = true;
   buttons[3].value = 1;
@@ -275,5 +275,24 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
   buttons[3].value = 0;
   hub.update(1 / 60, 'shop');
   assert.equal(actions.at(-1), 'sell', 'releasing after a hold does not patch');
+
+  buttons[12].pressed = true;
+  buttons[12].value = 1;
+  hub.update(1 / 60, 'shop');
+  assert.equal(actions.at(-1), 'patch', 'D-pad Up patches in the market');
+  buttons[12].pressed = false;
+  buttons[12].value = 0;
+  hub.update(1 / 60, 'shop');
+
+  const actionCount = actions.length;
+  for (const index of [13, 14, 15]) {
+    buttons[index].pressed = true;
+    buttons[index].value = 1;
+    hub.update(1 / 60, 'shop');
+    buttons[index].pressed = false;
+    buttons[index].value = 0;
+    hub.update(1 / 60, 'shop');
+  }
+  assert.equal(actions.length, actionCount, 'the rest of the D-pad is inert in menus');
   assert.ok(controllerActivations > 0, 'using the pad should reveal controller-only prompts');
 });
