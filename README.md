@@ -111,8 +111,10 @@ receipt time and a salted source hash, then writes one NDJSON file per UTC day t
 the `analytics-data` volume. Core events cover Liquidation AI decisions and market
 actions, draft funding, match entry/exit squad states, and kills.
 
-Set a private `ANALYTICS_IP_SALT` in the deployment environment. To inspect a day
-without copying it out of the volume:
+The collector creates a private source-hash salt on first boot and retains it in
+the analytics volume. Set `ANALYTICS_IP_SALT` only to override that value. Daily
+files older than `ANALYTICS_RETENTION_DAYS` (90 by default) are removed automatically.
+To inspect a day without copying it out of the volume:
 
 ```sh
 docker exec thunderdome_analytics sh -c 'tail -n 20 /data/events-$(date -u +%F).ndjson'

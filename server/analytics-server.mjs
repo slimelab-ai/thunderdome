@@ -1,14 +1,54 @@
 import { createServer } from 'node:http';
-import { createHash, randomUUID } from 'node:crypto';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
+import { access, appendFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const port = Number(process.env.PORT || 8080);
 const dataDir = process.env.ANALYTICS_DATA_DIR || '/data';
-const salt = process.env.ANALYTICS_IP_SALT || randomUUID();
 const maxBytes = Number(process.env.ANALYTICS_MAX_BODY_BYTES || 1_000_000);
+const retentionDays = Math.max(1, Number(process.env.ANALYTICS_RETENTION_DAYS || 90));
+const saltPath = join(dataDir, '.source-salt');
 
 await mkdir(dataDir, { recursive: true });
+await access(dataDir, constants.R_OK | constants.W_OK);
+
+async function loadOrCreateSalt() {
+  if (process.env.ANALYTICS_IP_SALT) return process.env.ANALYTICS_IP_SALT;
+  try {
+    return (await readFile(saltPath, 'utf8')).trim();
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const generated = randomBytes(32).toString('hex');
+  try {
+    await writeFile(saltPath, generated, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    return generated;
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    return (await readFile(saltPath, 'utf8')).trim();
+  }
+}
+
+async function pruneExpiredFiles() {
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const names = await readdir(dataDir);
+  let removed = 0;
+  for (const name of names) {
+    const match = /^events-(\d{4}-\d{2}-\d{2})\.ndjson$/.exec(name);
+    if (!match || Date.parse(`${match[1]}T00:00:00Z`) >= cutoff) continue;
+    await unlink(join(dataDir, name));
+    removed++;
+  }
+  if (removed) console.log(`analytics retention removed ${removed} expired file(s)`);
+}
+
+const salt = await loadOrCreateSalt();
+await pruneExpiredFiles();
+const pruneTimer = setInterval(() => pruneExpiredFiles().catch(error => {
+  console.error('analytics retention failed', error);
+}), 6 * 60 * 60 * 1000);
+pruneTimer.unref();
 
 function reply(res, status, body = '') {
   res.writeHead(status, {
@@ -45,7 +85,14 @@ function validEvent(event) {
 }
 
 const server = createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return reply(res, 200, { ok: true });
+  if (req.method === 'GET' && req.url === '/health') {
+    try {
+      await access(dataDir, constants.R_OK | constants.W_OK);
+      return reply(res, 200, { ok: true, storage: 'writable', retention_days: retentionDays });
+    } catch {
+      return reply(res, 503, { ok: false, storage: 'unavailable' });
+    }
+  }
   if (req.method !== 'POST' || req.url !== '/events') return reply(res, 404, { error: 'not found' });
   try {
     const body = JSON.parse(await readBody(req));

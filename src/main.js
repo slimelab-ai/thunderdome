@@ -317,12 +317,13 @@ function careerSnapshot() {
 
 function fighterSnapshot(fighter) {
   if (fighter?.isPlayer && fighter !== player) return fighterSnapshot(player);
+  const isPlayer = fighter === player || fighter?.isPlayer;
   const pos = fighter?.pos || { x: 0, y: 0, z: 0 };
   const armDmg = Number(fighter?.armDmg || 0);
   const legDmg = Number(fighter?.legDmg || 0);
   return {
-    name: fighter?.isPlayer ? 'YOU' : fighter?.name || 'UNKNOWN',
-    team: fighter?.team || null,
+    name: isPlayer ? 'YOU' : fighter?.name || 'UNKNOWN',
+    team: isPlayer ? 'player' : fighter?.team || null,
     alive: fighter?.alive ?? null,
     hp: Number.isFinite(fighter?.hp) ? Math.round(fighter.hp) : null,
     maxHp: Number.isFinite(fighter?.maxHp) ? Math.round(fighter.maxHp) : null,
