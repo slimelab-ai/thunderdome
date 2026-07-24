@@ -1740,6 +1740,17 @@ window.addEventListener('beforeunload', (e) => {
     e.returnValue = '';
   }
 });
+window.addEventListener('pagehide', () => {
+  if (phase === 'match' || phase === 'paused') {
+    emitCareerEvent('match_abandoned', {
+      reason: 'pagehide',
+      phase,
+      duration: match ? +match.time.toFixed(3) : null,
+      squads: match ? matchSnapshot() : null,
+    });
+    analytics.flush(true);
+  }
+});
 
 // if focus ever leaves (browser dialog, alt-tab, lock loss), drop all held keys so we never get stuck walking
 window.addEventListener('blur', () => player.clearInput());
@@ -1834,6 +1845,12 @@ document.getElementById('settings-overlay').addEventListener('click', (event) =>
   if (event.target === event.currentTarget) closeSettings();
 });
 on('btn-abandon', () => {
+  emitCareerEvent('match_abandoned', {
+    reason: 'player_abandon',
+    phase,
+    duration: match ? +match.time.toFixed(3) : null,
+    squads: match ? matchSnapshot() : null,
+  });
   if (career.bet > 0) {
     career.money += career.bet;
     if (career.mode === 'liquidation') career.liquidation.enemyMoney += career.bet;

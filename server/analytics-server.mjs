@@ -45,6 +45,16 @@ async function pruneExpiredFiles() {
 
 const salt = await loadOrCreateSalt();
 await pruneExpiredFiles();
+const recentEventIds = new Set();
+const recentEventOrder = [];
+const metrics = { accepted: 0, duplicates: 0, rejected: 0, last_received_at: null };
+function rememberEventId(id) {
+  if (recentEventIds.has(id)) return false;
+  recentEventIds.add(id);
+  recentEventOrder.push(id);
+  if (recentEventOrder.length > 50000) recentEventIds.delete(recentEventOrder.shift());
+  return true;
+}
 const pruneTimer = setInterval(() => pruneExpiredFiles().catch(error => {
   console.error('analytics retention failed', error);
 }), 6 * 60 * 60 * 1000);
@@ -88,7 +98,12 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     try {
       await access(dataDir, constants.R_OK | constants.W_OK);
-      return reply(res, 200, { ok: true, storage: 'writable', retention_days: retentionDays });
+      return reply(res, 200, {
+        ok: true,
+        storage: 'writable',
+        retention_days: retentionDays,
+        delivery: metrics,
+      });
     } catch {
       return reply(res, 503, { ok: false, storage: 'unavailable' });
     }
@@ -97,21 +112,35 @@ const server = createServer(async (req, res) => {
   try {
     const body = JSON.parse(await readBody(req));
     if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > 100) {
+      metrics.rejected++;
       return reply(res, 400, { error: 'events must contain 1-100 records' });
     }
-    if (!body.events.every(validEvent)) return reply(res, 400, { error: 'invalid event' });
+    if (!body.events.every(validEvent)) {
+      metrics.rejected++;
+      return reply(res, 400, { error: 'invalid event' });
+    }
     const receivedAt = new Date().toISOString();
     const forwarded = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     const sourceHash = createHash('sha256').update(`${salt}:${forwarded}`).digest('hex').slice(0, 24);
-    const lines = body.events.map(event => JSON.stringify({
+    const uniqueEvents = body.events.filter(event => {
+      const unique = rememberEventId(event.event_id);
+      if (!unique) metrics.duplicates++;
+      return unique;
+    });
+    const lines = uniqueEvents.map(event => JSON.stringify({
       ...event,
       received_at: receivedAt,
       source_hash: sourceHash,
     })).join('\n') + '\n';
     const day = receivedAt.slice(0, 10);
-    await appendFile(join(dataDir, `events-${day}.ndjson`), lines, { encoding: 'utf8', mode: 0o640 });
-    return reply(res, 202, { accepted: body.events.length });
+    if (uniqueEvents.length) {
+      await appendFile(join(dataDir, `events-${day}.ndjson`), lines, { encoding: 'utf8', mode: 0o640 });
+    }
+    metrics.accepted += uniqueEvents.length;
+    metrics.last_received_at = receivedAt;
+    return reply(res, 202, { accepted: uniqueEvents.length, duplicates: body.events.length - uniqueEvents.length });
   } catch (error) {
+    metrics.rejected++;
     return reply(res, error.message === 'body too large' ? 413 : 400, { error: error.message });
   }
 });
