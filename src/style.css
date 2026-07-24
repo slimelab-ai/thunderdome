@@ -662,6 +662,9 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 /* ============ INVENTORY ============ */
 #market-list { overflow: visible; }
 .market-row { display: flex; align-items: center; gap: 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; margin-bottom: 6px; }
+.controller-menu-cursor .market-row.controller-cursor-target {
+  background: linear-gradient(90deg, rgba(255,185,46,0.12), rgba(29,29,38,0.96));
+}
 .mk-icon { width: clamp(32px, 2.4vw, 42px); height: clamp(32px, 2.4vw, 42px); background-repeat: no-repeat; flex: none; }
 .mk-name { flex: 1; min-width: 0; font-size: clamp(13px, 0.9vw, 16px); font-weight: 700; }
 .mk-w { color: #777; font-size: 11px; margin-left: 6px; font-weight: 400; }

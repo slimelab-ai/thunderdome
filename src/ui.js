@@ -290,7 +290,7 @@ export class UI {
         const mi = actions.marketInfo?.(t);
         const marketFlag = mi ? `<span class="market-pressure ${mi.scarce ? 'market-scarce' : mi.surplus ? 'market-surplus' : ''}">${soldOut ? 'DRAINED' : mi.scarce ? 'SHORTAGE' : mi.surplus ? 'SURPLUS' : 'LIQUID'} · ${mi.units.toFixed(1)} left</span>` : '';
         const canBuy = !draftTurn.locked && !soldOut && career.money >= cost;
-        return `<div class="market-row">
+        return `<div class="market-row" data-controller-market-row="${t}" tabindex="-1" role="group" aria-label="${def.name}">
           <span class="mk-icon" style="${iconStyle(def.icon)}"></span>
           <span class="mk-name">${def.name}${ammoChip(t)}<span class="mk-w">${def.weight}kg</span>${marketFlag}</span>
           <button class="btn" data-buy-item="${t}" ${canBuy ? '' : 'disabled'}><span class="pad-key pad-a controller-only" aria-hidden="true">A</span>${soldOut ? 'OUT' : '$' + cost}</button>

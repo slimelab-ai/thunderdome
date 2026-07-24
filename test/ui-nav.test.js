@@ -141,6 +141,8 @@ test('controller hints advertise context-sensitive market shortcuts', () => {
   assert.match(controllerHint('screen-shop', { stashItem: true }), /HOLD Y SELL/);
   assert.match(controllerHint('screen-shop', { stashItem: true }), /D-PAD ↑ PATCH/);
   assert.match(controllerHint('screen-shop', { inventoryItem: true }), /HOLD Y SELL/);
+  assert.match(controllerHint('screen-shop', { marketRow: true }), /A BUY TO STASH/);
+  assert.match(controllerHint('screen-shop', { marketRow: true }), /X EQUIP TO SELECTED/);
   assert.doesNotMatch(controllerHint('screen-menu'), /D-PAD/);
   assert.doesNotMatch(controllerHint('screen-menu'), /B BACK/);
 });
@@ -316,6 +318,31 @@ test('alternate market action buys the focused row directly to the selected figh
   navigator._activate = (el) => el.click();
   assert.equal(navigator._alternate({ id: 'screen-shop' }), true);
   assert.equal(clicks, 1);
+});
+
+test('controller cursor treats a market row as one A/X purchase target', () => {
+  const calls = [];
+  const primary = { disabled: false };
+  const direct = { disabled: false };
+  const row = {
+    matches: (selector) => selector === '[data-controller-market-row]',
+    closest: (selector) => selector === '.market-row' ? row : null,
+    querySelector: (selector) => selector.includes('data-buy-item') ? primary : direct,
+  };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    body: { classList: { contains: () => true } },
+    activeElement: null,
+  };
+  navigator.cursorTarget = row;
+  navigator._items = () => [];
+  navigator._visible = () => true;
+  navigator._syncCursorTarget = () => row;
+  navigator._activate = (target) => calls.push(target === primary ? 'stash' : 'equip');
+
+  assert.equal(navigator._cursorActivate({ id: 'screen-shop' }), true);
+  assert.equal(navigator._alternate({ id: 'screen-shop' }), true);
+  assert.deepEqual(calls, ['stash', 'equip']);
 });
 
 test('stash shortcuts equip with X and sell with held Y', () => {

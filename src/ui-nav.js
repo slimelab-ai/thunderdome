@@ -1,10 +1,10 @@
 const FOCUSABLE = 'button:not(:disabled):not([data-controller-skip]), input[type="range"]:not(:disabled), [data-controller-item]';
-const CURSOR_FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item]';
+const CURSOR_FOCUSABLE = 'button:not(:disabled), input[type="range"]:not(:disabled), [data-controller-item], [data-controller-market-row]';
 const CARRY_TARGETS = '[data-controller-target]';
 const NAV_SCOPE_SELECTOR = '[data-shop-panel], [data-controller-panel]';
 const IDENTITY_ATTRIBUTES = [
   'data-char', 'data-buy-item', 'data-buy-to', 'data-hire-menu', 'data-patch',
-  'data-bench', 'data-train', 'data-sell-crew', 'data-hire',
+  'data-bench', 'data-train', 'data-sell-crew', 'data-hire', 'data-controller-market-row',
 ];
 
 export function controlIdentity(el) {
@@ -69,7 +69,7 @@ export function cursorMagnetCandidate(rects, x, y) {
 }
 
 export function controllerHint(screenId, {
-  carrying = false, adjusting = false, inventoryItem = false, stashItem = false,
+  carrying = false, adjusting = false, inventoryItem = false, stashItem = false, marketRow = false,
 } = {}) {
   if (carrying) return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A PLACE / SELL  ·  B CANCEL  ·  LT / RT PANEL';
   if (adjusting) return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A SET VALUE  ·  B BACK';
@@ -78,6 +78,9 @@ export function controllerHint(screenId, {
   }
   if (screenId === 'screen-shop' && inventoryItem) {
     return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A MOVE  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
+  }
+  if (screenId === 'screen-shop' && marketRow) {
+    return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A BUY TO STASH  ·  X EQUIP TO SELECTED  ·  LT / RT PANEL';
   }
   if (screenId === 'screen-shop') {
     return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A SELECT  ·  X ALTERNATE  ·  LT / RT PANEL  ·  START ADVANCE  ·  D-PAD ↑ PATCH';
@@ -370,7 +373,10 @@ export class MenuNavigator {
     const selector = this.doc.body.classList.contains('controller-carrying')
       ? CARRY_TARGETS
       : CURSOR_FOCUSABLE;
-    return [...scope.querySelectorAll(selector)].filter(el => this._visible(el));
+    return [...scope.querySelectorAll(selector)].filter(el => {
+      if (!this._visible(el)) return false;
+      return !el.matches?.('button') || !el.closest?.('[data-controller-market-row]');
+    });
   }
 
   _magneticTarget(root) {
@@ -401,7 +407,8 @@ export class MenuNavigator {
       : CURSOR_FOCUSABLE;
     const stack = this.doc.elementsFromPoint?.(this.cursorX, this.cursorY) || [];
     for (const element of stack) {
-      const target = element.closest?.(selector);
+      const hit = element.closest?.(selector);
+      const target = hit?.closest?.('[data-controller-market-row]') || hit;
       if (target && scope.contains(target) && this._visible(target)) return target;
     }
     return null;
@@ -434,6 +441,12 @@ export class MenuNavigator {
   _cursorActivate(root) {
     const target = this._syncCursorTarget(root);
     if (!target) return false;
+    if (target.matches?.('[data-controller-market-row]')) {
+      const primary = target.querySelector?.('[data-buy-item]:not(:disabled)');
+      if (!primary || !this._visible(primary)) return false;
+      this._activate(primary, root);
+      return true;
+    }
     if (target.matches?.('input[type="range"]')) {
       const bounds = target.getBoundingClientRect();
       const min = Number(target.min);
@@ -749,11 +762,13 @@ export class MenuNavigator {
     const active = this.current?.isConnected ? this.current : this.doc.activeElement;
     const inventoryItem = active?.matches?.('[data-controller-item]');
     const stashItem = active?.matches?.('[data-controller-item][data-inventory="stash"]');
+    const marketRow = active?.matches?.('[data-controller-market-row]');
     const text = controllerHint(activeScreen?.id, {
       carrying: this.doc.body.classList.contains('controller-carrying'),
       adjusting,
       inventoryItem,
       stashItem,
+      marketRow,
     });
     hint.textContent = text;
     const shopGuide = this.doc.getElementById('shop-controller-guide');
