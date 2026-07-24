@@ -11,43 +11,97 @@ const MAX_EVENT_BYTES = 40_000;
 const MAX_OUTBOX_BYTES = 3_500_000;
 
 const jsonBytes = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+const protectedLifecycleEvent = event =>
+  event?.event_type === 'match_enter' || event?.event_type === 'match_terminal';
 
-function stableId(key) {
+function compactOversizedEvent(event) {
   try {
-    let value = localStorage.getItem(key);
-    if (!value) {
-      value = crypto.randomUUID();
-      localStorage.setItem(key, value);
-    }
-    return value;
+    if (jsonBytes(event) <= MAX_EVENT_BYTES) return event;
+    return {
+      ...event,
+      payload: {
+        payload_omitted: true,
+        original_bytes: jsonBytes(event),
+        reason: 'event_exceeded_client_limit',
+      },
+    };
   } catch {
-    return crypto.randomUUID();
+    return null;
   }
 }
 
-function loadOutbox() {
+function validQueuedEvent(event) {
+  return event && typeof event === 'object' &&
+    typeof event.event_id === 'string' &&
+    typeof event.event_type === 'string' &&
+    event.schema_version === SCHEMA_VERSION;
+}
+
+function stableId(key, storage, randomUUID) {
   try {
-    const parsed = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
+    let value = storage.getItem(key);
+    if (!value) {
+      value = randomUUID();
+      storage.setItem(key, value);
+    }
+    return value;
+  } catch {
+    return randomUUID();
+  }
+}
+
+function loadOutbox(storage) {
+  try {
+    const parsed = JSON.parse(storage.getItem(OUTBOX_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(validQueuedEvent).map(compactOversizedEvent).filter(Boolean);
   } catch {
     return [];
   }
 }
 
 export class Analytics {
-  constructor() {
-    this.installationId = stableId('thunderdome_analytics_installation_id');
-    this.sessionId = crypto.randomUUID();
-    this.queue = loadOutbox();
+  constructor({
+    storage = globalThis.localStorage,
+    randomUUID = () => globalThis.crypto.randomUUID(),
+    fetchImpl = (...args) => globalThis.fetch(...args),
+    navigatorImpl = globalThis.navigator,
+    now = () => new Date(),
+    autoStart = true,
+  } = {}) {
+    this.storage = storage;
+    this.randomUUID = randomUUID;
+    this.fetchImpl = fetchImpl;
+    this.navigator = navigatorImpl;
+    this.now = now;
+    this.installationId = stableId('thunderdome_analytics_installation_id', storage, randomUUID);
+    this.sessionId = randomUUID();
+    this.queue = loadOutbox(storage);
     this.context = {};
     this.flushing = false;
     this.deliveryFailures = 0;
+    this.storageFailures = 0;
+    this.acknowledgedEvents = 0;
+    this.lastSuccessfulFlushAt = null;
+    if (!autoStart) return;
     this.timer = setInterval(() => this.flush(), FLUSH_MS);
-    this.heartbeat = setInterval(() => this.emit('analytics_client_heartbeat', {
-      queued_events: this.queue.length,
-      delivery_failures: this.deliveryFailures,
-      visibility: document.visibilityState,
-    }), HEARTBEAT_MS);
+    this.heartbeat = setInterval(() => {
+      const oldest = this.queue[0];
+      const oldestTime = oldest ? Date.parse(oldest.client_time) : NaN;
+      this.emit('analytics_client_heartbeat', {
+        queued_events: this.queue.length,
+        delivery_failures: this.deliveryFailures,
+        storage_failures: this.storageFailures,
+        acknowledged_events: this.acknowledgedEvents,
+        last_successful_flush_at: this.lastSuccessfulFlushAt,
+        oldest_queued_event_id: oldest?.event_id || null,
+        oldest_queued_event_type: oldest?.event_type || null,
+        oldest_queued_event_age_seconds: Number.isFinite(oldestTime)
+          ? Math.max(0, Math.round((Date.now() - oldestTime) / 1000))
+          : null,
+        visibility: document.visibilityState,
+      });
+    }, HEARTBEAT_MS);
     addEventListener('pagehide', () => {
       this.persist();
       this.flush(true);
@@ -78,42 +132,53 @@ export class Analytics {
     this.context = { ...this.context, ...context };
   }
 
-  emit(type, payload = {}) {
+  emit(type, payload = {}, { eventId = null, context = null } = {}) {
+    const id = eventId || this.randomUUID();
+    if (this.queue.some(event => event.event_id === id)) return id;
     let event = {
       schema_version: SCHEMA_VERSION,
-      event_id: crypto.randomUUID(),
-      event_type: type,
-      client_time: new Date().toISOString(),
+      client_time: this.now().toISOString(),
       installation_id: this.installationId,
       session_id: this.sessionId,
       trust: 'client_unverified',
-      build: import.meta.env.VITE_BUILD_SHA || 'dev',
+      build: import.meta.env?.VITE_BUILD_SHA || 'dev',
       ...this.context,
+      ...(context || {}),
+      event_id: id,
+      event_type: type,
       payload,
     };
-    const originalBytes = jsonBytes(event);
-    if (originalBytes > MAX_EVENT_BYTES) {
-      event = {
-        ...event,
-        payload: {
-          payload_omitted: true,
-          original_bytes: originalBytes,
-          reason: 'event_exceeded_client_limit',
-        },
-      };
-    }
+    event = compactOversizedEvent(event);
+    if (!event) return id;
     this.queue.push(event);
     this.persist();
     if (this.queue.length >= MAX_BATCH_EVENTS) this.flush();
-    return event.event_id;
+    return id;
   }
 
   persist() {
     try {
-      while (this.queue.length > 1 && jsonBytes(this.queue) > MAX_OUTBOX_BYTES) this.queue.shift();
-      localStorage.setItem(OUTBOX_KEY, JSON.stringify(this.queue));
+      while (this.queue.length > 1 && jsonBytes(this.queue) > MAX_OUTBOX_BYTES) {
+        const expendable = this.queue.findIndex(event => !protectedLifecycleEvent(event));
+        if (expendable < 0) break;
+        this.queue.splice(expendable, 1);
+      }
+      this.storage.setItem(OUTBOX_KEY, JSON.stringify(this.queue));
+      return true;
     } catch {
-      // Storage can be disabled or full. The live in-memory queue still retries.
+      this.storageFailures++;
+      // The live in-memory queue still retries, and the next heartbeat exposes
+      // that persistence was unavailable once storage starts working again.
+      return false;
+    }
+  }
+
+  isDurablyQueued(eventId) {
+    try {
+      const parsed = JSON.parse(this.storage.getItem(OUTBOX_KEY) || '[]');
+      return Array.isArray(parsed) && parsed.some(event => event?.event_id === eventId);
+    } catch {
+      return false;
     }
   }
 
@@ -122,6 +187,7 @@ export class Analytics {
     let bytes = 20;
     for (const event of this.queue) {
       const eventBytes = jsonBytes(event) + 1;
+      if (eventBytes > MAX_BATCH_BYTES) continue;
       if (events.length && (events.length >= MAX_BATCH_EVENTS || bytes + eventBytes > MAX_BATCH_BYTES)) break;
       events.push(event);
       bytes += eventBytes;
@@ -134,7 +200,7 @@ export class Analytics {
     const events = this.nextBatch();
     if (!events.length) return;
     const body = JSON.stringify({ events });
-    if (beacon && navigator.sendBeacon?.(ENDPOINT, new Blob([body], { type: 'application/json' }))) {
+    if (beacon && this.navigator?.sendBeacon?.(ENDPOINT, new Blob([body], { type: 'application/json' }))) {
       // Keep beaconed records in the persistent outbox until a later acknowledged
       // fetch removes them. Duplicate event_ids are safer than silent data loss.
       return;
@@ -142,16 +208,26 @@ export class Analytics {
     this.flushing = true;
     let delivered = false;
     try {
-      const response = await fetch(ENDPOINT, {
+      const response = await this.fetchImpl(ENDPOINT, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body,
         keepalive: true,
       });
       if (!response.ok) throw new Error(`analytics HTTP ${response.status}`);
+      const acknowledgement = await response.json();
+      const accepted = Number(acknowledgement?.accepted);
+      const duplicates = Number(acknowledgement?.duplicates);
+      if (!Number.isInteger(accepted) || accepted < 0 ||
+          !Number.isInteger(duplicates) || duplicates < 0 ||
+          accepted + duplicates !== events.length) {
+        throw new Error('analytics acknowledgement did not cover the batch');
+      }
       const sentIds = new Set(events.map(event => event.event_id));
       this.queue = this.queue.filter(event => !sentIds.has(event.event_id));
       this.deliveryFailures = 0;
+      this.acknowledgedEvents += events.length;
+      this.lastSuccessfulFlushAt = this.now().toISOString();
       this.persist();
       delivered = true;
     } catch {
@@ -164,4 +240,4 @@ export class Analytics {
   }
 }
 
-export const analytics = new Analytics();
+export const analytics = typeof window === 'undefined' ? null : new Analytics();

@@ -19,6 +19,7 @@ import { TouchControls, isTouchDevice } from './touch.js';
 import { MenuNavigator } from './ui-nav.js';
 import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
+import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -99,6 +100,7 @@ const input = new InputHub(player, world, camera, {
   onControllerActive: () => menuNavigator.activate(),
 });
 const controllerSettingsPanel = new ControllerSettingsPanel(input);
+const matchLifecycle = new MatchLifecycle({ analytics });
 
 // ============================================================ career / save
 // v2: unified grid inventory — old v1 saves are a different economy entirely, no migration
@@ -359,6 +361,81 @@ function matchSnapshot() {
   };
 }
 
+function terminalSquadSnapshot() {
+  const fighter = candidate => ({
+    name: candidate?.isPlayer ? 'YOU' : candidate?.name || 'UNKNOWN',
+    team: candidate?.isPlayer ? 'player' : candidate?.team || null,
+    alive: candidate?.alive ?? null,
+    hp: Number.isFinite(candidate?.hp) ? Math.round(candidate.hp) : null,
+    maxHp: Number.isFinite(candidate?.maxHp) ? Math.round(candidate.maxHp) : null,
+  });
+  return {
+    player: fighter(player),
+    crew: (match?.crew || []).map(fighter),
+    enemies: (match?.enemies || []).map(fighter),
+  };
+}
+
+function preSettlementEconomySnapshot() {
+  const liquidation = career?.liquidation;
+  return {
+    player_money: Number.isFinite(career?.money) ? career.money : null,
+    stake: Number.isFinite(career?.bet) ? career.bet : null,
+    rival_money: Number.isFinite(liquidation?.enemyMoney) ? liquidation.enemyMoney : null,
+    player_wins: Number.isFinite(liquidation?.playerWins) ? liquidation.playerWins : null,
+    rival_wins: Number.isFinite(liquidation?.enemyWins) ? liquidation.enemyWins : null,
+    player_loss_streak: Number.isFinite(liquidation?.playerLossStreak) ? liquidation.playerLossStreak : null,
+    rival_loss_streak: Number.isFinite(liquidation?.enemyLossStreak) ? liquidation.enemyLossStreak : null,
+  };
+}
+
+function journalMatchEnter() {
+  const metadata = {
+    matchId: match.analyticsId,
+    careerId: career.analyticsId,
+    warId: career.mode === 'liquidation' ? career.analyticsId : null,
+    mode: career.mode,
+    round: career.liquidation?.round || null,
+  };
+  let payload = {};
+  try {
+    payload = {
+      game_mode: career.mode,
+      opening_plays: {
+        player: match.crew.map(c => ({ name: c.name, role: c.role, goal: c.openingGoal?.toArray() })),
+        enemy: match.enemies.map(c => ({ name: c.name, role: c.role, goal: c.openingGoal?.toArray() })),
+      },
+      career: careerSnapshot(),
+      squads: matchSnapshot(),
+    };
+  } catch (error) {
+    console.warn('analytics match_enter snapshot omitted', error);
+  }
+  try {
+    matchLifecycle.begin(metadata, payload);
+  } catch (error) {
+    console.warn('analytics match_enter dropped', error);
+  }
+}
+
+function journalTerminal(reason, winner = null) {
+  try {
+    const terminal = matchLifecycle.finalize(reason, () => ({
+      winner,
+      duration: Number.isFinite(match?.time) ? +match.time.toFixed(3) : null,
+      kills: Number.isFinite(match?.kills) ? match.kills : 0,
+      headshots: Number.isFinite(match?.headshots) ? match.headshots : 0,
+      final_squad: terminalSquadSnapshot(),
+      pre_settlement_economy: preSettlementEconomySnapshot(),
+    }));
+    if (match && terminal?.event_id) match.terminalEventId = terminal.event_id;
+    return terminal;
+  } catch (error) {
+    console.warn('analytics terminal journal failed', error);
+    return null;
+  }
+}
+
 function emitCareerEvent(type, payload = {}) {
   try {
     analytics.setContext({
@@ -421,6 +498,7 @@ function runTrackedLiquidationAI(reason) {
 function makeMatch() {
   return {
     analyticsId: crypto.randomUUID(),
+    terminalEventId: null,
     mode: career.mode,
     crew: [], enemies: [],
     frenzy: false, frenzyT: 0,
@@ -565,15 +643,7 @@ function startMatch() {
 
   assignRoles();
   assignOpeningPlays();
-  emitCareerEvent('match_enter', {
-    game_mode: career.mode,
-    opening_plays: {
-      player: match.crew.map(c => ({ name: c.name, role: c.role, goal: c.openingGoal?.toArray() })),
-      enemy: match.enemies.map(c => ({ name: c.name, role: c.role, goal: c.openingGoal?.toArray() })),
-    },
-    career: careerSnapshot(),
-    squads: matchSnapshot(),
-  });
+  journalMatchEnter();
 
   match.campAnchor.x = player.pos.x;
   match.campAnchor.z = player.pos.z;
@@ -631,10 +701,8 @@ function livingCrew() {
 }
 
 function endPlayerTeamLoss() {
-  if (match.ended) return;
-  match.ended = true;
-  match.won = false;
-  match.endTimer = 2.2;
+  if (!markKnownOutcome(match, { won: false, endDelay: 2.2 },
+    () => journalTerminal('player_loss', 'rival'))) return;
   announcer.say('lose', {}, { force: true });
   audio.crowdRoar(1);
 }
@@ -657,20 +725,53 @@ function handlePlayerDeath() {
   if (match.playerDeathHandled) return;
   match.playerDeathHandled = true;
   career.totals.deaths++;
+  const crewContinues = livingCrew().length > 0;
+  if (!crewContinues) endPlayerTeamLoss();
   player.clearInput();
   player.vmRoot.visible = false;
-  if (livingCrew().length) {
+  if (crewContinues) {
     match.spectating = true;
     cycleSpectator(1);
     ui.eventBanner('YOU ARE DOWN', 'Your squad is still fighting', 'var(--gold)');
-  } else {
-    endPlayerTeamLoss();
   }
 }
 
 function handleKill(killer, victim, part) {
   const headshot = part === 'head';
   const killerName = killer.isPlayer ? 'YOU' : killer.name;
+  const enemyVictim = victim.team === 'enemy';
+  let wonNow = false;
+
+  // Commit gameplay accounting and any newly-known outcome before presentation,
+  // payout, or non-terminal telemetry can fail.
+  if (enemyVictim) {
+    match.enemiesAlive--;
+    match.kills++;
+    if (headshot) match.headshots++;
+    const xpStats = killer.isPlayer ? match.playerXp : killer.matchXp;
+    if (killer.team === 'player' && xpStats) {
+      xpStats.kills++;
+      if (headshot) xpStats.headshots++;
+    }
+    if (killer.isPlayer) {
+      player.stats.matchKills++;
+      career.totals.kills++;
+      if (headshot) {
+        player.stats.matchHeadshots++;
+        career.totals.headshots++;
+      }
+    } else if (killer.careerRef) {
+      killer.careerRef.kills = (killer.careerRef.kills || 0) + 1;
+    }
+    wonNow = match.enemiesAlive <= 0 && !match.ended;
+    if (wonNow) {
+      markKnownOutcome(match, { won: true, endDelay: 2.0 },
+        () => journalTerminal('player_win', 'player'));
+    }
+  } else if (victim.careerRef) {
+    career.totals.crewLost++;
+  }
+
   ui.killfeed(killerName, victim.name, headshot, killer.team === 'player');
   audio.crowdRoar(headshot ? 1 : 0.6);
   emitCareerEvent('combat_kill', {
@@ -686,25 +787,13 @@ function handleKill(killer, victim, part) {
     announcer.say('firstBlood', {}, { force: true });
   }
 
-  if (victim.team === 'enemy') {
-    match.enemiesAlive--;
-    match.kills++;
-    if (headshot) match.headshots++;
-    const xpStats = killer.isPlayer ? match.playerXp : killer.matchXp;
-    if (killer.team === 'player' && xpStats) {
-      xpStats.kills++;
-      if (headshot) xpStats.headshots++;
-    }
-
+  if (enemyVictim) {
     let base = 140 + (15 - career.rank) * 20;
     if (victim.bountyT > 0) {
       base *= 3;
       ui.eventBanner('BOUNTY COLLECTED', `${victim.name} was worth triple`, 'var(--gold)');
     }
     if (killer.isPlayer) {
-      player.stats.matchKills++;
-      career.totals.kills++;
-      if (headshot) { player.stats.matchHeadshots++; career.totals.headshots++; }
       const amt = payout(base + (headshot ? 100 : 0));
       match.killMoney += base;
       if (headshot) match.hsMoney += 100;
@@ -716,19 +805,16 @@ function handleKill(killer, victim, part) {
       const amt = payout(Math.round(base * 0.5));
       match.killMoney += Math.round(base * 0.5);
       if (amt > 0) ui.moneyPop(amt);
-      if (killer.careerRef) killer.careerRef.kills = (killer.careerRef.kills || 0) + 1;
       announcer.say('allyKill', { killer: killer.name, victim: victim.name });
     }
 
     if (match.enemiesAlive === 1) announcer.say('lastEnemy', {}, { minGap: 30 });
-    if (match.enemiesAlive <= 0 && !match.ended) {
-      match.ended = true; match.won = true; match.endTimer = 2.0;
+    if (wonNow) {
       announcer.say(victim.boss ? 'champWin' : 'win', {}, { force: true });
       audio.crowdRoar(1); audio.crowdRoar(1);
     }
   } else {
     // crew member went down — they're bruised, not buried; gear stays theirs
-    if (victim.careerRef) career.totals.crewLost++;
     if (killer && killer.isPlayer) announcer.say('teamkill', { victim: victim.name }, { force: true });
     else announcer.say('enemyKillsAlly', { killer: killerName, victim: victim.name });
     if (!player.alive) cycleSpectator(1);
@@ -1139,6 +1225,9 @@ function finishMatch() {
         ui.eventBanner('DEFEAT STREAK', `${side} margin-called $${outcome.penalty.toLocaleString()}`, 'var(--blood)');
       }
       emitCareerEvent('liquidation_match_settlement', {
+        match_id: match.analyticsId,
+        terminal_event_id: match.terminalEventId,
+        lifecycle_sequence: 3,
         won: match.won,
         stake: career.bet,
         winnings: match.won ? winnings : 0,
@@ -1165,14 +1254,6 @@ function finishMatch() {
     career.money -= 25; // the house medic's "you live" fee, non-negotiable
   }
   career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
-  emitCareerEvent('match_exit', {
-    won: match.won,
-    duration: +match.time.toFixed(3),
-    kills: match.kills,
-    headshots: match.headshots,
-    squads: matchSnapshot(),
-    career_before_settlement: careerSnapshot(),
-  });
   clearCombatants();
 
   if (match.mode === 'liquidation') {
@@ -1742,12 +1823,7 @@ window.addEventListener('beforeunload', (e) => {
 });
 window.addEventListener('pagehide', () => {
   if (phase === 'match' || phase === 'paused') {
-    emitCareerEvent('match_abandoned', {
-      reason: 'pagehide',
-      phase,
-      duration: match ? +match.time.toFixed(3) : null,
-      squads: match ? matchSnapshot() : null,
-    });
+    journalTerminal('pagehide');
     analytics.flush(true);
   }
 });
@@ -1845,12 +1921,7 @@ document.getElementById('settings-overlay').addEventListener('click', (event) =>
   if (event.target === event.currentTarget) closeSettings();
 });
 on('btn-abandon', () => {
-  emitCareerEvent('match_abandoned', {
-    reason: 'player_abandon',
-    phase,
-    duration: match ? +match.time.toFixed(3) : null,
-    squads: match ? matchSnapshot() : null,
-  });
+  journalTerminal('player_abandon');
   if (career.bet > 0) {
     career.money += career.bet;
     if (career.mode === 'liquidation') career.liquidation.enemyMoney += career.bet;
@@ -1871,6 +1942,7 @@ if (saved) {
   career = newCareer();
 }
 market = createMarket(career.mode, career.liquidation?.market);
+matchLifecycle.recoverIncomplete();
 ui.showScreen('menu');
 
 // idle backdrop camera for menu
