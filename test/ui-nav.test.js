@@ -34,6 +34,8 @@ test('controller hints advertise context-sensitive market shortcuts', () => {
   assert.match(controllerHint('screen-intro'), /START FIGHT/);
   assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);
   assert.match(controllerHint('screen-shop', { carrying: true }), /B CANCEL/);
+  assert.match(controllerHint('screen-shop', { stashItem: true }), /X EQUIP TO SELECTED/);
+  assert.match(controllerHint('screen-shop', { stashItem: true }), /HOLD Y SELL/);
   assert.doesNotMatch(controllerHint('screen-menu'), /B BACK/);
 });
 
@@ -135,6 +137,30 @@ test('alternate market action buys the focused row directly to the selected figh
   navigator._activate = (el) => el.click();
   assert.equal(navigator._alternate({ id: 'screen-shop' }), true);
   assert.equal(clicks, 1);
+});
+
+test('stash shortcuts equip with X and sell with held Y', () => {
+  const events = [];
+  const stashItem = {
+    isConnected: true,
+    matches: (selector) => selector === '[data-controller-item][data-inventory="stash"]',
+    getBoundingClientRect: () => rect(320, 180),
+    dispatchEvent: (event) => events.push(event.type),
+  };
+  const root = { id: 'screen-shop' };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    activeElement: stashItem,
+    defaultView: { Event },
+    querySelector: () => root,
+  };
+  navigator.current = stashItem;
+  navigator._items = () => [stashItem];
+  navigator._nearest = () => null;
+
+  assert.equal(navigator._alternate(root), true);
+  assert.equal(navigator._sell(root), true);
+  assert.deepEqual(events, ['controllerequip', 'controllersell']);
 });
 
 test('open hire dialog traps controller focus inside the contract cards', () => {

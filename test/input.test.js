@@ -242,7 +242,7 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
   pad.axes[1] = 0;
   hub.update(1 / 60, 'menu');
   for (const [index, action] of [
-    [0, 'activate'], [1, 'back'], [2, 'alternate'], [3, 'patch'],
+    [0, 'activate'], [1, 'back'], [2, 'alternate'],
     [4, 'previousTab'], [5, 'nextTab'], [6, 'nextPanel'], [7, 'previousPanel'],
     [9, 'advance'],
   ]) {
@@ -254,5 +254,26 @@ test('outside combat, controller inputs drive UI navigation with held-stick repe
     hub.update(1 / 60, 'shop');
     assert.equal(actions.at(-1), action);
   }
+
+  buttons[3].pressed = true;
+  buttons[3].value = 1;
+  hub.update(0.2, 'shop');
+  buttons[3].pressed = false;
+  buttons[3].value = 0;
+  hub.update(1 / 60, 'shop');
+  assert.equal(actions.at(-1), 'patch', 'tapping Y patches');
+
+  buttons[3].pressed = true;
+  buttons[3].value = 1;
+  hub.update(0.3, 'shop');
+  hub.update(0.3, 'shop');
+  assert.equal(actions.at(-1), 'sell', 'holding Y sells once');
+  const sellCount = actions.filter(action => action === 'sell').length;
+  hub.update(0.6, 'shop');
+  assert.equal(actions.filter(action => action === 'sell').length, sellCount, 'continued hold does not repeat');
+  buttons[3].pressed = false;
+  buttons[3].value = 0;
+  hub.update(1 / 60, 'shop');
+  assert.equal(actions.at(-1), 'sell', 'releasing after a hold does not patch');
   assert.ok(controllerActivations > 0, 'using the pad should reveal controller-only prompts');
 });

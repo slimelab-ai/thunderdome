@@ -49,9 +49,12 @@ export function directionalCandidate(rects, currentIndex, direction) {
   return best;
 }
 
-export function controllerHint(screenId, { carrying = false, adjusting = false } = {}) {
+export function controllerHint(screenId, { carrying = false, adjusting = false, stashItem = false } = {}) {
   if (carrying) return 'A PLACE / SELL  ·  B CANCEL  ·  LEFT / RIGHT OR LT / RT PANEL';
   if (adjusting) return 'LEFT / RIGHT ADJUST  ·  UP / DOWN MOVE  ·  A SELECT';
+  if (screenId === 'screen-shop' && stashItem) {
+    return 'A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  LEFT / RIGHT OR LT / RT PANEL';
+  }
   if (screenId === 'screen-shop') {
     return 'LEFT / RIGHT OR LT / RT PANEL  ·  A PRIMARY  ·  X ALTERNATE  ·  START ADVANCE  ·  Y PATCH';
   }
@@ -108,7 +111,11 @@ export class MenuNavigator {
       this._updateHint();
       return handled;
     }
-    if (dialog && ['advance', 'alternate', 'patch', 'previousTab', 'nextTab', 'previousPanel', 'nextPanel'].includes(action)) {
+    if (dialog && ['advance', 'alternate', 'patch', 'sell', 'previousTab', 'nextTab', 'previousPanel', 'nextPanel'].includes(action)) {
+      this._updateHint();
+      return false;
+    }
+    if (carrying && ['advance', 'alternate', 'patch', 'sell', 'previousTab', 'nextTab'].includes(action)) {
       this._updateHint();
       return false;
     }
@@ -124,6 +131,11 @@ export class MenuNavigator {
     }
     if (!carrying && action === 'patch') {
       const handled = this._patch(root);
+      this._updateHint();
+      return handled;
+    }
+    if (!carrying && action === 'sell') {
+      const handled = this._sell(root);
       this._updateHint();
       return handled;
     }
@@ -230,10 +242,34 @@ export class MenuNavigator {
     const active = items.includes(this.current)
       ? this.current
       : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
+    if (active?.matches?.('[data-controller-item][data-inventory="stash"]')) {
+      return this._inventoryAction(active, root, 'controllerequip');
+    }
     const row = active?.closest?.('.market-row');
     const target = row?.querySelector?.('[data-buy-to]:not(:disabled)');
     if (!target || !this._visible(target)) return false;
     this._activate(target, root);
+    return true;
+  }
+
+  _sell(root) {
+    if (root.id !== 'screen-shop') return false;
+    const items = this._items(root);
+    const active = items.includes(this.current)
+      ? this.current
+      : items.includes(this.doc.activeElement) ? this.doc.activeElement : null;
+    if (!active?.matches?.('[data-controller-item][data-inventory="stash"]')) return false;
+    return this._inventoryAction(active, root, 'controllersell');
+  }
+
+  _inventoryAction(active, root, type) {
+    const position = center(active.getBoundingClientRect());
+    const EventClass = this.doc.defaultView?.Event || Event;
+    active.dispatchEvent(new EventClass(type, { bubbles: true }));
+    const nextRoot = this.doc.querySelector('.screen:not(.hidden)');
+    if (!nextRoot || nextRoot.id !== root.id) return true;
+    const replacement = this._nearest(this._items(nextRoot), position);
+    if (replacement) this._focus(replacement, nextRoot);
     return true;
   }
 
@@ -372,9 +408,12 @@ export class MenuNavigator {
     hint.classList.toggle('hidden', !show);
     hint.dataset.screen = activeScreen?.id || '';
     const adjusting = this.doc.activeElement?.matches?.('input[type="range"]');
+    const active = this.current?.isConnected ? this.current : this.doc.activeElement;
+    const stashItem = active?.matches?.('[data-controller-item][data-inventory="stash"]');
     hint.textContent = controllerHint(activeScreen?.id, {
       carrying: this.doc.body.classList.contains('controller-carrying'),
       adjusting,
+      stashItem,
     });
   }
 }

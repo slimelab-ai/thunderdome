@@ -366,7 +366,7 @@ export class UI {
         style="--cell:${CELL}px;width:${grid.cols * CELL}px;height:${rows * CELL}px;">`;
       for (const e of grid.items) {
         const def = ITEM_TYPES[e.it.type];
-        html += `<div class="inv-item" data-item="${e.it.uid}" data-controller-item tabindex="0" role="button" aria-label="Move ${def.name}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
+        html += `<div class="inv-item" data-item="${e.it.uid}" data-controller-item data-inventory="${dropName}" tabindex="0" role="button" aria-label="Move ${def.name}" title="${def.name} · ${def.weight}kg — drag to move, drop on SELL to liquidate"
           style="left:${e.x * CELL}px;top:${e.y * CELL}px;width:${def.w * CELL}px;height:${def.h * CELL}px;">
           <span class="inv-ico" style="${iconStyle(def.icon)}"></span>
           ${e.it.rounds != null ? `<span class="inv-count">${e.it.rounds}</span>` : ''}
@@ -624,6 +624,14 @@ export class UI {
         });
         document.dispatchEvent(new CustomEvent('controllercarrychange'));
       };
+      el.addEventListener('controllerequip', () => {
+        if (el.getAttribute('data-inventory') !== 'stash') return;
+        actions.equipStashItem(el.getAttribute('data-item'), this.selChar);
+      });
+      el.addEventListener('controllersell', () => {
+        if (el.getAttribute('data-inventory') !== 'stash') return;
+        actions.moveItem(el.getAttribute('data-item'), { kind: 'sell' });
+      });
     });
     document.querySelectorAll('[data-controller-target]').forEach(el => {
       el.onclick = (event) => {

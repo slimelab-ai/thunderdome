@@ -1308,6 +1308,23 @@ function moveItem(uid, to) {
   return false;
 }
 
+function equipStashItem(uid, who) {
+  const found = findItem(uid);
+  if (!found || found.loc.kind !== 'stash') return false;
+  const ch = getChar(who);
+  const def = ITEM_TYPES[found.it.type];
+  if (!ch || !def) return false;
+  if (def.kind === 'gun') {
+    const slot = !ch.gear.gun1 ? 'gun1' : !ch.gear.gun2 ? 'gun2' : 'gun2';
+    return moveItem(uid, { kind: 'slot', who, slot });
+  }
+  if (def.kind === 'armor') return moveItem(uid, { kind: 'slot', who, slot: def.slot });
+  if (def.kind === 'consumable' || def.kind === 'ammo') {
+    return moveItem(uid, { kind: 'pack', who });
+  }
+  return false;
+}
+
 // combat roles: rolled per match so squads spread instead of blob-rushing together.
 // Crew always includes a shadow (your bodyguard) and support (overwatch); the rest
 // split pointman/flanker. Enemy archetypes imply their roles.
@@ -1433,6 +1450,11 @@ function renderShop(earnings) {
     moveItem: (uid, to) => {
       if (draftShopState().locked) return;
       if (moveItem(uid, to)) { audio.uiClick(); save(); }
+      renderShop(earnings);
+    },
+    equipStashItem: (uid, who) => {
+      if (draftShopState().locked) return;
+      if (equipStashItem(uid, who)) { audio.uiClick(); save(); }
       renderShop(earnings);
     },
     patchPlayer: () => {

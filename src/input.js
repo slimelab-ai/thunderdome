@@ -50,6 +50,7 @@ const BTN = {
   A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7,
   BACK: 8, START: 9, L3: 10, R3: 11, DUP: 12, DDOWN: 13, DLEFT: 14, DRIGHT: 15,
 };
+const MENU_HOLD_SECONDS = 0.55;
 
 // Gamepad + touch → player, with aim assist applied to both. Mouse/keyboard
 // bypass this entirely (and get no assist).
@@ -72,6 +73,8 @@ export class InputHub {
     this.prevButtons = [];
     this.navHeld = null;
     this.navRepeat = 0;
+    this.menuYHeldFor = 0;
+    this.menuYHoldFired = false;
     this.gamepadActiveAt = -10;
     this.sprintLatch = false;   // L3 arms it; easing off the stick clears it
     this.rtHeld = false;
@@ -148,13 +151,29 @@ export class InputHub {
         if (edge(BTN.A)) this.onMenuInput?.('activate');
         if (edge(BTN.B)) this.onMenuInput?.('back');
         if (edge(BTN.X)) this.onMenuInput?.('alternate');
-        if (edge(BTN.Y)) this.onMenuInput?.('patch');
+        if (pressed(BTN.Y)) {
+          if (!this.prevButtons[BTN.Y]) {
+            this.menuYHeldFor = 0;
+            this.menuYHoldFired = false;
+          }
+          this.menuYHeldFor += dt;
+          if (!this.menuYHoldFired && this.menuYHeldFor >= MENU_HOLD_SECONDS) {
+            this.menuYHoldFired = true;
+            this.onMenuInput?.('sell');
+          }
+        } else if (this.prevButtons[BTN.Y]) {
+          if (!this.menuYHoldFired) this.onMenuInput?.('patch');
+          this.menuYHeldFor = 0;
+          this.menuYHoldFired = false;
+        }
         if (edge(BTN.LB)) this.onMenuInput?.('previousTab');
         if (edge(BTN.RB)) this.onMenuInput?.('nextTab');
         if (edge(BTN.LT)) this.onMenuInput?.('nextPanel');
         if (edge(BTN.RT)) this.onMenuInput?.('previousPanel');
       } else {
         this.navHeld = null;
+        this.menuYHeldFor = 0;
+        this.menuYHoldFired = false;
       }
 
       if (inMatch && p.alive) {
