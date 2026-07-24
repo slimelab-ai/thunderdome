@@ -81,7 +81,9 @@ export class MatchLifecycle {
     this.storage = storage;
     this.now = now;
     this.randomUUID = randomUUID;
-    this.active = null;
+    this.matches = new Map();
+    this.currentMatchId = null;
+    this.loaded = false;
   }
 
   context(active) {
@@ -94,30 +96,59 @@ export class MatchLifecycle {
     };
   }
 
-  readActive() {
-    if (this.active) return this.active;
+  loadMarkers() {
+    if (this.loaded) return;
+    this.loaded = true;
     try {
       const parsed = JSON.parse(this.storage?.getItem(ACTIVE_MATCH_KEY) || 'null');
       if (parsed?.version === 1 && parsed.match_id && parsed.terminal_event_id) {
-        this.active = parsed;
+        this.matches.set(parsed.match_id, parsed);
+        this.currentMatchId = parsed.match_id;
+      } else if (parsed?.version === 2 && Array.isArray(parsed.matches)) {
+        for (const marker of parsed.matches) {
+          if (marker?.match_id && marker?.terminal_event_id) {
+            this.matches.set(marker.match_id, marker);
+          }
+        }
+        if (this.matches.has(parsed.current_match_id)) {
+          this.currentMatchId = parsed.current_match_id;
+        }
       }
     } catch {
       // Gameplay and recovery remain available when browser storage is disabled.
     }
-    return this.active;
   }
 
-  writeActive(active) {
-    this.active = active;
+  persistMarkers() {
     try {
-      this.storage?.setItem(ACTIVE_MATCH_KEY, JSON.stringify(active));
+      if (!this.matches.size) {
+        this.storage?.removeItem(ACTIVE_MATCH_KEY);
+        return true;
+      }
+      this.storage?.setItem(ACTIVE_MATCH_KEY, JSON.stringify({
+        version: 2,
+        current_match_id: this.currentMatchId,
+        matches: [...this.matches.values()],
+      }));
       return true;
     } catch {
       return false;
     }
   }
 
-  clearIfDurable(eventId) {
+  readActive(matchId = this.currentMatchId) {
+    this.loadMarkers();
+    return matchId ? this.matches.get(matchId) || null : null;
+  }
+
+  writeActive(active) {
+    this.loadMarkers();
+    this.matches.set(active.match_id, active);
+    this.currentMatchId = active.match_id;
+    return this.persistMarkers();
+  }
+
+  clearIfDurable(matchId, eventId) {
     let durable = false;
     try {
       durable = this.analytics?.isDurablyQueued?.(eventId) === true;
@@ -125,17 +156,40 @@ export class MatchLifecycle {
       durable = false;
     }
     if (!durable) return false;
-    try {
-      this.storage?.removeItem(ACTIVE_MATCH_KEY);
-      this.active = null;
-      return true;
-    } catch {
-      return false;
+    const marker = this.matches.get(matchId);
+    const previousCurrent = this.currentMatchId;
+    this.matches.delete(matchId);
+    if (this.currentMatchId === matchId) this.currentMatchId = null;
+    if (this.persistMarkers()) return true;
+    if (marker) this.matches.set(matchId, marker);
+    this.currentMatchId = previousCurrent;
+    return false;
+  }
+
+  recoverIncomplete() {
+    this.loadMarkers();
+    const results = [];
+    for (const active of [...this.matches.values()]) {
+      const result = active.terminal_payload
+        ? this.finalize(active.terminal_reason || 'recovered_incomplete', undefined, {
+          matchId: active.match_id,
+        })
+        : this.finalize('recovered_incomplete', () => ({
+          winner: null,
+          duration: null,
+          kills: 0,
+          headshots: 0,
+          final_squad: null,
+          pre_settlement_economy: null,
+        }), { matchId: active.match_id });
+      if (result) results.push(result);
     }
+    if (results.length <= 1) return results[0] || null;
+    return results;
   }
 
   begin({ matchId, careerId, warId = null, mode, round = null }, enterPayload = {}) {
-    if (this.readActive()) this.recoverIncomplete();
+    this.recoverIncomplete();
     const active = {
       version: 1,
       match_id: matchId,
@@ -148,7 +202,10 @@ export class MatchLifecycle {
       terminal_event_id: this.randomUUID(),
       lifecycle_sequence: 1,
     };
-    this.writeActive(active);
+    const markerStored = this.writeActive(active);
+    // Never journal an enter that cannot be paired after a reload. Gameplay is
+    // still allowed to start; telemetry remains fail-open.
+    if (!markerStored) return active;
     try {
       this.analytics?.emit('match_enter', {
         ...enterPayload,
@@ -164,8 +221,9 @@ export class MatchLifecycle {
     return active;
   }
 
-  finalize(reason, detailsFactory = () => ({})) {
-    const active = this.readActive();
+  finalize(reason, detailsFactory = () => ({}), { matchId = null } = {}) {
+    this.loadMarkers();
+    const active = this.readActive(matchId || this.currentMatchId);
     if (!active) return null;
 
     let payload = active.terminal_payload;
@@ -193,23 +251,7 @@ export class MatchLifecycle {
     } catch {
       // The persisted marker lets the next startup retry the same terminal ID.
     }
-    this.clearIfDurable(active.terminal_event_id);
+    this.clearIfDurable(active.match_id, active.terminal_event_id);
     return { event_id: active.terminal_event_id, payload };
-  }
-
-  recoverIncomplete() {
-    const active = this.readActive();
-    if (!active) return null;
-    if (active.terminal_payload) {
-      return this.finalize(active.terminal_reason || 'recovered_incomplete');
-    }
-    return this.finalize('recovered_incomplete', () => ({
-      winner: null,
-      duration: null,
-      kills: 0,
-      headshots: 0,
-      final_squad: null,
-      pre_settlement_economy: null,
-    }));
   }
 }

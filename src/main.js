@@ -427,7 +427,7 @@ function journalTerminal(reason, winner = null) {
       headshots: Number.isFinite(match?.headshots) ? match.headshots : 0,
       final_squad: terminalSquadSnapshot(),
       pre_settlement_economy: preSettlementEconomySnapshot(),
-    }));
+    }), { matchId: match?.analyticsId });
     if (match && terminal?.event_id) match.terminalEventId = terminal.event_id;
     return terminal;
   } catch (error) {

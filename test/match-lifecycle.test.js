@@ -167,6 +167,61 @@ test('interrupted terminal journal survives reload with its immutable outcome', 
   assert.equal(storage.getItem(ACTIVE_MATCH_KEY), null);
 });
 
+test('a new match cannot overwrite an older terminal marker awaiting durable queueing', () => {
+  const storage = new MemoryStorage();
+  const interruptedAnalytics = new FakeAnalytics({ durable: false });
+  const first = harness({ storage, analytics: interruptedAnalytics });
+  first.lifecycle.begin({
+    matchId: 'match-2',
+    careerId: 'career-1',
+    mode: 'circuits',
+  });
+
+  const ledger = JSON.parse(storage.getItem(ACTIVE_MATCH_KEY));
+  assert.equal(ledger.version, 2);
+  assert.deepEqual(
+    ledger.matches.map(marker => marker.match_id).sort(),
+    ['match-1', 'match-2'],
+  );
+  const firstMarker = ledger.matches.find(marker => marker.match_id === 'match-1');
+  assert.equal(firstMarker.terminal_reason, 'recovered_incomplete');
+
+  const recoveredAnalytics = new FakeAnalytics();
+  const recovered = new MatchLifecycle({
+    analytics: recoveredAnalytics,
+    storage,
+    now: () => '2026-07-24T06:02:00.000Z',
+  });
+  recovered.recoverIncomplete();
+
+  const terminals = recoveredAnalytics.events.filter(event => event.type === 'match_terminal');
+  assert.equal(terminals.length, 2);
+  assert.deepEqual(
+    terminals.map(event => event.payload.match_id).sort(),
+    ['match-1', 'match-2'],
+  );
+  assert.equal(storage.getItem(ACTIVE_MATCH_KEY), null);
+});
+
+test('match_enter is suppressed when its recovery marker cannot be persisted', () => {
+  const storage = new MemoryStorage();
+  storage.setItem = () => { throw new Error('storage unavailable'); };
+  const analytics = new FakeAnalytics();
+  const lifecycle = new MatchLifecycle({
+    analytics,
+    storage,
+    now: () => '2026-07-24T06:00:00.000Z',
+    randomUUID: () => 'event-id',
+  });
+
+  assert.doesNotThrow(() => lifecycle.begin({
+    matchId: 'unrecoverable-match',
+    careerId: 'career-1',
+    mode: 'circuits',
+  }));
+  assert.equal(analytics.events.length, 0);
+});
+
 test('terminal snapshot stays compact when optional detail is oversized', () => {
   const { lifecycle, analytics } = harness();
   const hugeFighter = {

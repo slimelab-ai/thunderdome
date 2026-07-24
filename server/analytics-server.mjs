@@ -48,6 +48,7 @@ await pruneExpiredFiles();
 const recentEventIds = new Set();
 const recentEventOrder = [];
 const metrics = { accepted: 0, duplicates: 0, rejected: 0, last_received_at: null };
+let ingestionTail = Promise.resolve();
 function rememberEventId(id) {
   if (recentEventIds.has(id)) return false;
   recentEventIds.add(id);
@@ -55,6 +56,37 @@ function rememberEventId(id) {
   if (recentEventOrder.length > 50000) recentEventIds.delete(recentEventOrder.shift());
   return true;
 }
+
+async function restoreRecentEventIds() {
+  const names = (await readdir(dataDir))
+    .filter(name => /^events-\d{4}-\d{2}-\d{2}\.ndjson$/.test(name))
+    .sort()
+    .reverse();
+  const restored = [];
+  for (const name of names) {
+    const lines = (await readFile(join(dataDir, name), 'utf8')).trim().split('\n').reverse();
+    for (const line of lines) {
+      if (!line) continue;
+      try {
+        const eventId = JSON.parse(line)?.event_id;
+        if (typeof eventId === 'string') restored.push(eventId);
+      } catch {
+        // One malformed historical line must not prevent collector startup.
+      }
+      if (restored.length >= 50000) break;
+    }
+    if (restored.length >= 50000) break;
+  }
+  for (const eventId of restored.reverse()) rememberEventId(eventId);
+}
+
+function serializeIngestion(task) {
+  const result = ingestionTail.then(task, task);
+  ingestionTail = result.catch(() => {});
+  return result;
+}
+
+await restoreRecentEventIds();
 const pruneTimer = setInterval(() => pruneExpiredFiles().catch(error => {
   console.error('analytics retention failed', error);
 }), 6 * 60 * 60 * 1000);
@@ -122,23 +154,30 @@ const server = createServer(async (req, res) => {
     const receivedAt = new Date().toISOString();
     const forwarded = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     const sourceHash = createHash('sha256').update(`${salt}:${forwarded}`).digest('hex').slice(0, 24);
-    const uniqueEvents = body.events.filter(event => {
-      const unique = rememberEventId(event.event_id);
-      if (!unique) metrics.duplicates++;
-      return unique;
+    const result = await serializeIngestion(async () => {
+      const batchEventIds = new Set();
+      const uniqueEvents = body.events.filter(event => {
+        if (recentEventIds.has(event.event_id) || batchEventIds.has(event.event_id)) return false;
+        batchEventIds.add(event.event_id);
+        return true;
+      });
+      const duplicates = body.events.length - uniqueEvents.length;
+      const lines = uniqueEvents.map(event => JSON.stringify({
+        ...event,
+        received_at: receivedAt,
+        source_hash: sourceHash,
+      })).join('\n') + '\n';
+      const day = receivedAt.slice(0, 10);
+      if (uniqueEvents.length) {
+        await appendFile(join(dataDir, `events-${day}.ndjson`), lines, { encoding: 'utf8', mode: 0o640 });
+        for (const event of uniqueEvents) rememberEventId(event.event_id);
+      }
+      metrics.accepted += uniqueEvents.length;
+      metrics.duplicates += duplicates;
+      metrics.last_received_at = receivedAt;
+      return { accepted: uniqueEvents.length, duplicates };
     });
-    const lines = uniqueEvents.map(event => JSON.stringify({
-      ...event,
-      received_at: receivedAt,
-      source_hash: sourceHash,
-    })).join('\n') + '\n';
-    const day = receivedAt.slice(0, 10);
-    if (uniqueEvents.length) {
-      await appendFile(join(dataDir, `events-${day}.ndjson`), lines, { encoding: 'utf8', mode: 0o640 });
-    }
-    metrics.accepted += uniqueEvents.length;
-    metrics.last_received_at = receivedAt;
-    return reply(res, 202, { accepted: uniqueEvents.length, duplicates: body.events.length - uniqueEvents.length });
+    return reply(res, 202, result);
   } catch (error) {
     metrics.rejected++;
     return reply(res, error.message === 'body too large' ? 413 : 400, { error: error.message });
