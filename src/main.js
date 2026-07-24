@@ -309,19 +309,31 @@ function careerSnapshot() {
 }
 
 function fighterSnapshot(fighter) {
+  if (fighter?.isPlayer && fighter !== player) return fighterSnapshot(player);
+  const pos = fighter?.pos || { x: 0, y: 0, z: 0 };
+  const armDmg = Number(fighter?.armDmg || 0);
+  const legDmg = Number(fighter?.legDmg || 0);
   return {
-    name: fighter.isPlayer ? 'YOU' : fighter.name,
-    team: fighter.team,
-    alive: fighter.alive,
-    hp: Math.round(fighter.hp),
-    maxHp: Math.round(fighter.maxHp),
-    limbs: { arm: +fighter.armDmg.toFixed(2), leg: +fighter.legDmg.toFixed(2) },
-    position: { x: +fighter.pos.x.toFixed(2), y: +fighter.pos.y.toFixed(2), z: +fighter.pos.z.toFixed(2) },
-    weapon: fighter.weapon?.id || fighter.weaponId || null,
-    role: fighter.role || null,
-    ammo: fighter.ammoPools ? { ...fighter.ammoPools } : null,
-    supplies: { medkit: fighter.healKits || 0, splint: fighter.splints || 0, grenade: fighter.nades || 0 },
-    inventory: characterSnapshot(fighter.character),
+    name: fighter?.isPlayer ? 'YOU' : fighter?.name || 'UNKNOWN',
+    team: fighter?.team || null,
+    alive: fighter?.alive ?? null,
+    hp: Number.isFinite(fighter?.hp) ? Math.round(fighter.hp) : null,
+    maxHp: Number.isFinite(fighter?.maxHp) ? Math.round(fighter.maxHp) : null,
+    limbs: { arm: +armDmg.toFixed(2), leg: +legDmg.toFixed(2) },
+    position: {
+      x: +(Number(pos.x) || 0).toFixed(2),
+      y: +(Number(pos.y) || 0).toFixed(2),
+      z: +(Number(pos.z) || 0).toFixed(2),
+    },
+    weapon: fighter?.weapon?.id || fighter?.weaponId || null,
+    role: fighter?.role || null,
+    ammo: fighter?.ammoPools ? { ...fighter.ammoPools } : null,
+    supplies: {
+      medkit: fighter?.healKits || 0,
+      splint: fighter?.splints || 0,
+      grenade: fighter?.nades || 0,
+    },
+    inventory: characterSnapshot(fighter?.character),
   };
 }
 
@@ -335,14 +347,18 @@ function matchSnapshot() {
 }
 
 function emitCareerEvent(type, payload = {}) {
-  analytics.setContext({
-    career_id: career.analyticsId,
-    war_id: career.mode === 'liquidation' ? career.analyticsId : null,
-    mode: career.mode,
-    round: career.liquidation?.round || null,
-    match_id: match?.analyticsId || null,
-  });
-  analytics.emit(type, payload);
+  try {
+    analytics.setContext({
+      career_id: career.analyticsId,
+      war_id: career.mode === 'liquidation' ? career.analyticsId : null,
+      mode: career.mode,
+      round: career.liquidation?.round || null,
+      match_id: match?.analyticsId || null,
+    });
+    analytics.emit(type, payload);
+  } catch (error) {
+    console.warn('analytics event dropped', type, error);
+  }
 }
 
 function runTrackedLiquidationAI(reason) {
