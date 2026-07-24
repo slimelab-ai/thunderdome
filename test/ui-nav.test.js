@@ -69,6 +69,60 @@ test('snapped analog cursor is sticky but breaks away under sustained input', ()
   assert.ok(navigator.cursorX > 130, 'continued movement breaks the capture');
   assert.equal(navigator.cursorSnapped, null);
   assert.equal(navigator.cursorSnapIgnore, target);
+  assert.deepEqual(navigator.cursorMagnetLockoutPoint, {
+    x: navigator.cursorX,
+    y: navigator.cursorY,
+  });
+});
+
+test('magnetism cannot ping-pong between adjacent slots during breakaway', () => {
+  const candidate = { getBoundingClientRect: () => rect(25, -10, 20, 20) };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.cursorX = 20;
+  navigator.cursorY = 0;
+  navigator.cursorMagnetLockoutPoint = { x: 0, y: 0 };
+  navigator.cursorSnapCooldown = 0;
+  navigator.cursorSnapIgnore = null;
+  navigator._cursorItems = () => [candidate];
+
+  assert.equal(navigator._magneticTarget({}), null, 'nearby slots cannot recapture immediately');
+  navigator.cursorX = 31;
+  assert.equal(navigator._magneticTarget({}), candidate, 'capture returns after clearing the slot boundary');
+  assert.equal(navigator.cursorMagnetLockoutPoint, null);
+});
+
+test('right-stick scrolling targets the scroll region beneath the cursor', () => {
+  let delta = null;
+  const body = {};
+  const scroller = {
+    parentElement: body,
+    scrollWidth: 300,
+    clientWidth: 300,
+    scrollLeft: 0,
+    scrollHeight: 900,
+    clientHeight: 300,
+    scrollTop: 0,
+    scrollBy: (value) => { delta = value; },
+  };
+  const child = { parentElement: scroller };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    body,
+    defaultView: { getComputedStyle: () => ({ overflowX: 'hidden', overflowY: 'auto' }) },
+    elementsFromPoint: () => [child],
+  };
+  navigator.cursorEl = {};
+  navigator.cursorX = 200;
+  navigator.cursorY = 180;
+  navigator.cursorSnapped = { id: 'old-slot' };
+  navigator.cursorSnapPoint = { x: 200, y: 180 };
+  navigator.cursorSnapPush = { x: 4, y: 2 };
+  navigator._syncCursorTarget = () => {};
+  navigator._renderCursor = () => {};
+
+  assert.equal(navigator._scrollCursorPanel({ y: 0.75, magnitude: 0.75, dt: 0.05 }, {}), true);
+  assert.deepEqual(delta, { left: 0, top: 33.75, behavior: 'auto' });
+  assert.equal(navigator.cursorSnapped, null);
 });
 
 test('controller hints advertise context-sensitive market shortcuts', () => {
@@ -78,6 +132,7 @@ test('controller hints advertise context-sensitive market shortcuts', () => {
   assert.match(shop, /D-PAD ↑ PATCH/);
   assert.doesNotMatch(shop, /Y PATCH/);
   assert.match(shop, /LEFT STICK CURSOR/);
+  assert.match(shop, /RIGHT STICK SCROLL/);
   assert.match(shop, /LT \/ RT PANEL/);
   assert.match(controllerHint('screen-intro'), /START FIGHT/);
   assert.match(controllerHint('screen-intro'), /B BLACK MARKET/);

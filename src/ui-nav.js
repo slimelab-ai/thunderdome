@@ -71,16 +71,16 @@ export function cursorMagnetCandidate(rects, x, y) {
 export function controllerHint(screenId, {
   carrying = false, adjusting = false, inventoryItem = false, stashItem = false,
 } = {}) {
-  if (carrying) return 'LEFT STICK CURSOR  ·  A PLACE / SELL  ·  B CANCEL  ·  LT / RT PANEL';
-  if (adjusting) return 'LEFT STICK CURSOR  ·  A SET VALUE  ·  B BACK';
+  if (carrying) return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A PLACE / SELL  ·  B CANCEL  ·  LT / RT PANEL';
+  if (adjusting) return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A SET VALUE  ·  B BACK';
   if (screenId === 'screen-shop' && stashItem) {
-    return 'LEFT STICK CURSOR  ·  A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
+    return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A MOVE  ·  X EQUIP TO SELECTED  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-shop' && inventoryItem) {
-    return 'LEFT STICK CURSOR  ·  A MOVE  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
+    return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A MOVE  ·  HOLD Y SELL  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-shop') {
-    return 'LEFT STICK CURSOR  ·  A SELECT  ·  X ALTERNATE  ·  LT / RT PANEL  ·  START ADVANCE  ·  D-PAD ↑ PATCH';
+    return 'LEFT STICK CURSOR  ·  RIGHT STICK SCROLL  ·  A SELECT  ·  X ALTERNATE  ·  LT / RT PANEL  ·  START ADVANCE  ·  D-PAD ↑ PATCH';
   }
   if (screenId === 'screen-intro') {
     return 'LEFT STICK CURSOR  ·  A SELECT  ·  START FIGHT  ·  B BLACK MARKET';
@@ -114,6 +114,7 @@ export class MenuNavigator {
     this.cursorSnapPush = { x: 0, y: 0 };
     this.cursorSnapIgnore = null;
     this.cursorSnapCooldown = 0;
+    this.cursorMagnetLockoutPoint = null;
     const leaveControllerMode = () => {
       doc.body.classList.remove('controller-mode', 'controller-menu-cursor');
       this._setCursorTarget(null);
@@ -127,6 +128,7 @@ export class MenuNavigator {
       this.cursorSnapped = null;
       this.cursorSnapPoint = null;
       this.cursorSnapIgnore = null;
+      this.cursorMagnetLockoutPoint = null;
       this.current = null;
       this.lastIdentity = null;
       this.lastCenter = null;
@@ -148,6 +150,11 @@ export class MenuNavigator {
     this._showCursor(root);
     if (action?.type === 'cursorMove') {
       const handled = this._moveCursor(action, root);
+      this._updateHint();
+      return handled;
+    }
+    if (action?.type === 'cursorScroll') {
+      const handled = this._scrollCursorPanel(action, root);
       this._updateHint();
       return handled;
     }
@@ -319,6 +326,7 @@ export class MenuNavigator {
       this.cursorSnapped = null;
       this.cursorSnapPoint = null;
       this.cursorSnapPush = { x: 0, y: 0 };
+      this.cursorMagnetLockoutPoint = { x: this.cursorX, y: this.cursorY };
     } else {
       this.cursorSnapped = null;
       this.cursorSnapPoint = null;
@@ -342,6 +350,7 @@ export class MenuNavigator {
       this.cursorSnapped = magnet;
       this.cursorSnapPoint = point;
       this.cursorSnapPush = { x: 0, y: 0 };
+      this.cursorMagnetLockoutPoint = null;
     }
     const hit = magnet || this._hitTarget(root);
     this._setCursorTarget(hit);
@@ -365,6 +374,14 @@ export class MenuNavigator {
   }
 
   _magneticTarget(root) {
+    if (this.cursorMagnetLockoutPoint) {
+      const cleared = Math.hypot(
+        this.cursorX - this.cursorMagnetLockoutPoint.x,
+        this.cursorY - this.cursorMagnetLockoutPoint.y
+      ) >= 30;
+      if (!cleared) return null;
+      this.cursorMagnetLockoutPoint = null;
+    }
     const items = this._cursorItems(root);
     const candidates = this.cursorSnapCooldown > 0 && this.cursorSnapIgnore
       ? items.filter(item => item !== this.cursorSnapIgnore)
@@ -445,24 +462,57 @@ export class MenuNavigator {
     const edgeY = this.cursorY < zone && dy < 0 ? -1
       : this.cursorY > height - zone && dy > 0 ? 1 : 0;
     if (!edgeX && !edgeY) return;
+    const scroller = this._scrollContainerAt(edgeX, edgeY);
+    if (!scroller) return;
+    scroller.scrollBy({
+      left: edgeX * 720 * dt,
+      top: edgeY * 720 * dt,
+      behavior: 'auto',
+    });
+  }
+
+  _scrollCursorPanel({ x = 0, y = 0, magnitude = 0, dt = 0 }, root) {
+    if (!this.cursorEl || magnitude <= 0) return false;
+    const horizontal = Math.abs(x) > Math.abs(y);
+    const scrollX = horizontal ? x : 0;
+    const scrollY = horizontal ? 0 : y;
+    const scroller = this._scrollContainerAt(scrollX, scrollY);
+    if (!scroller) return false;
+    const frame = Math.max(0, Math.min(0.05, dt));
+    scroller.scrollBy({
+      left: scrollX * 900 * frame,
+      top: scrollY * 900 * frame,
+      behavior: 'auto',
+    });
+    this.cursorSnapped = null;
+    this.cursorSnapPoint = null;
+    this.cursorSnapPush = { x: 0, y: 0 };
+    this._syncCursorTarget(root);
+    this._renderCursor();
+    return true;
+  }
+
+  _scrollContainerAt(dx, dy) {
+    const view = this.doc.defaultView;
+    if (!view?.getComputedStyle || !this.doc.elementsFromPoint) return null;
     const stack = this.doc.elementsFromPoint(this.cursorX, this.cursorY);
-    let node = stack[0];
-    while (node && node !== this.doc.body) {
-      const style = view.getComputedStyle(node);
-      const canX = edgeX && node.scrollWidth > node.clientWidth
-        && /(auto|scroll)/.test(style.overflowX);
-      const canY = edgeY && node.scrollHeight > node.clientHeight
-        && /(auto|scroll)/.test(style.overflowY);
-      if (canX || canY) {
-        node.scrollBy({
-          left: canX ? edgeX * 720 * dt : 0,
-          top: canY ? edgeY * 720 * dt : 0,
-          behavior: 'auto',
-        });
-        return;
+    for (const element of stack) {
+      let node = element;
+      while (node && node !== this.doc.body) {
+        const style = view.getComputedStyle(node);
+        const canX = Math.abs(dx) > 0.01
+          && node.scrollWidth > node.clientWidth
+          && /(auto|scroll)/.test(style.overflowX)
+          && (dx < 0 ? node.scrollLeft > 0 : node.scrollLeft + node.clientWidth < node.scrollWidth - 1);
+        const canY = Math.abs(dy) > 0.01
+          && node.scrollHeight > node.clientHeight
+          && /(auto|scroll)/.test(style.overflowY)
+          && (dy < 0 ? node.scrollTop > 0 : node.scrollTop + node.clientHeight < node.scrollHeight - 1);
+        if (canX || canY) return node;
+        node = node.parentElement;
       }
-      node = node.parentElement;
     }
+    return null;
   }
 
   _back(root) {
@@ -606,6 +656,7 @@ export class MenuNavigator {
       this.cursorSnapped = target;
       this.cursorSnapPoint = point;
       this.cursorSnapPush = { x: 0, y: 0 };
+      this.cursorMagnetLockoutPoint = null;
       this._setCursorTarget(target);
       this._renderCursor();
     }

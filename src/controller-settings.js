@@ -7,6 +7,11 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 export function normalizeControllerSettings(value = {}) {
   return {
     sensitivity: clamp(Number(value.sensitivity) || DEFAULT_CONTROLLER_SETTINGS.sensitivity, 0.3, 1.5),
+    cursorSensitivity: clamp(
+      Number(value.cursorSensitivity) || DEFAULT_CONTROLLER_SETTINGS.cursorSensitivity,
+      0.4,
+      1.5
+    ),
     exponent: clamp(Number(value.exponent) || DEFAULT_CONTROLLER_SETTINGS.exponent, 1.2, 3),
     aimAssist: clamp(Number.isFinite(Number(value.aimAssist)) ? Number(value.aimAssist) : DEFAULT_CONTROLLER_SETTINGS.aimAssist, 0, 1),
   };
@@ -27,11 +32,13 @@ export class ControllerSettingsPanel {
     this.settings = this._load();
     this.controls = {
       sensitivity: doc.getElementById('controller-sensitivity'),
+      cursorSensitivity: doc.getElementById('controller-cursor-sensitivity'),
       exponent: doc.getElementById('controller-exponent'),
       aimAssist: doc.getElementById('controller-aim-assist'),
     };
     this.values = {
       sensitivity: doc.getElementById('controller-sensitivity-value'),
+      cursorSensitivity: doc.getElementById('controller-cursor-sensitivity-value'),
       exponent: doc.getElementById('controller-exponent-value'),
       aimAssist: doc.getElementById('controller-aim-assist-value'),
     };
@@ -67,6 +74,7 @@ export class ControllerSettingsPanel {
   _apply(save) {
     this.input.setControllerSettings(this.settings);
     this.values.sensitivity.textContent = `${this.settings.sensitivity.toFixed(2)}×`;
+    this.values.cursorSensitivity.textContent = `${this.settings.cursorSensitivity.toFixed(2)}×`;
     this.values.exponent.textContent = this.settings.exponent.toFixed(2);
     this.values.aimAssist.textContent = `${Math.round(this.settings.aimAssist * 100)}%`;
     const points = responseCurvePoints(this.settings.exponent);

@@ -161,7 +161,7 @@
       </div>
       <div class="shop-footer" data-controller-panel="actions">
         <div id="shop-controller-guide" class="shop-controller-guide controller-only">
-          LEFT STICK CURSOR · A SELECT · X ALTERNATE · LT / RT PANEL · LB / RB CHANGE FIGHTER
+          LEFT STICK CURSOR · RIGHT STICK SCROLL · A SELECT · X ALTERNATE · LT / RT PANEL
         </div>
         <div id="shop-turn-status" class="hidden"></div>
         <button id="btn-end-turn" class="btn btn-big hidden"><span class="pad-key pad-start controller-only" aria-hidden="true">START</span> END TURN — LET THE RIVAL SHOP</button>
@@ -253,6 +253,11 @@
               <input id="controller-sensitivity" type="range" min="0.3" max="1.5" step="0.05" value="0.65" />
               <small>Maximum turn speed</small>
             </label>
+            <label for="controller-cursor-sensitivity">
+              <span>CURSOR SENSITIVITY <output id="controller-cursor-sensitivity-value">0.80×</output></span>
+              <input id="controller-cursor-sensitivity" type="range" min="0.4" max="1.5" step="0.05" value="0.8" />
+              <small>Menu pointer speed</small>
+            </label>
             <label for="controller-exponent">
               <span>RESPONSE EXPONENT <output id="controller-exponent-value">2.15</output></span>
               <input id="controller-exponent" type="range" min="1.2" max="3" step="0.05" value="2.15" />
@@ -278,7 +283,7 @@
           </div>
         </div>
       </section>
-      <div class="settings-controller-guide controller-only">LEFT STICK CURSOR · <span class="pad-key pad-a">A</span> SELECT · <span class="pad-key pad-b">B</span> BACK</div>
+      <div class="settings-controller-guide controller-only">LEFT STICK CURSOR · RIGHT STICK SCROLL · <span class="pad-key pad-a">A</span> SELECT · <span class="pad-key pad-b">B</span> BACK</div>
     </div>
   </div>
 

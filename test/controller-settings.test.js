@@ -7,10 +7,12 @@ test('controller settings normalize corrupt and out-of-range saved values', () =
   assert.deepEqual(normalizeControllerSettings({}), DEFAULT_CONTROLLER_SETTINGS);
   assert.deepEqual(normalizeControllerSettings({
     sensitivity: 99,
+    cursorSensitivity: 99,
     exponent: 0.2,
     aimAssist: -4,
   }), {
     sensitivity: 1.5,
+    cursorSensitivity: 1.5,
     exponent: 1.2,
     aimAssist: 0,
   });

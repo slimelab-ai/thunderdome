@@ -32,6 +32,7 @@ export const AIM_ASSIST = {
 
 export const DEFAULT_CONTROLLER_SETTINGS = Object.freeze({
   sensitivity: 0.65,
+  cursorSensitivity: 0.8,
   exponent: 2.15,
   aimAssist: 0.35,
 });
@@ -134,9 +135,18 @@ export class InputHub {
         if (cursor.mag > 0) {
           this.onMenuInput?.({
             type: 'cursorMove',
-            x: cursor.x,
-            y: cursor.y,
+            x: cursor.x * this.controllerSettings.cursorSensitivity,
+            y: cursor.y * this.controllerSettings.cursorSensitivity,
             magnitude: cursor.mag,
+            dt,
+          });
+        }
+        if (padLook.mag > 0) {
+          this.onMenuInput?.({
+            type: 'cursorScroll',
+            x: padLook.x,
+            y: padLook.y,
+            magnitude: padLook.mag,
             dt,
           });
         }

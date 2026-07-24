@@ -246,12 +246,25 @@ test('outside combat, the left stick drives a continuous analog cursor', () => {
   hub.update(1 / 60, 'shop');
   assert.equal(actions.at(-1).type, 'cursorMove');
   assert.ok(actions.at(-1).x > 0, 'horizontal stick movement is preserved');
+  const defaultCursorX = actions.at(-1).x;
   pad.axes[0] = 0;
   hub.update(1 / 60, 'shop');
+  hub.setControllerSettings({ cursorSensitivity: 0.4 });
   pad.axes[0] = -0.8;
   hub.update(1 / 60, 'shop');
   assert.ok(actions.at(-1).x < 0, 'the cursor moves in both horizontal directions');
+  assert.ok(
+    Math.abs(Math.abs(actions.at(-1).x) / defaultCursorX - 0.5) < 1e-9,
+    'cursor sensitivity scales independently from look sensitivity'
+  );
   pad.axes[0] = 0;
+  hub.update(1 / 60, 'shop');
+
+  pad.axes[3] = 0.8;
+  hub.update(1 / 60, 'shop');
+  assert.equal(actions.at(-1).type, 'cursorScroll');
+  assert.ok(actions.at(-1).y > 0, 'right stick sends continuous panel scrolling');
+  pad.axes[3] = 0;
   hub.update(1 / 60, 'shop');
 
   for (const [index, action] of [
