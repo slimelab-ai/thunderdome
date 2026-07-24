@@ -4,7 +4,8 @@ import { LiquidationMarket, CircuitMarket } from '../src/market.js';
 import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
-  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  liquidationOdds, liquidationBetOptions, liquidationCreditLimit, canPlaceLiquidationBet,
+  recordLiquidationOutcome, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
 } from '../src/liquidation.js';
 
@@ -165,8 +166,26 @@ test('underdog sees comeback odds and can raise the stake', () => {
   const state = newLiquidationState(20000, () => 0.5);
   state.enemyMoney = 20000;
   assert.ok(liquidationOdds(state, 5000) > 2);
-  assert.deepEqual(liquidationBetOptions(state, 5000), [250, 500, 1250, 2500]);
-  assert.deepEqual(liquidationBetOptions(state, 100), [250]);
+  assert.deepEqual(liquidationBetOptions(state, 5000), [250, 500, 1250, 2500, 5000, 2000, 4000]);
+  assert.deepEqual(liquidationBetOptions(state, 100), [250, 2000, 4000]);
+  assert.equal(liquidationCreditLimit(state, 100), 4100);
+  assert.equal(canPlaceLiquidationBet(state, 100, 4000), true);
+  assert.equal(canPlaceLiquidationBet(state, 100, 5000), false);
+  state.draft.complete = true;
+  assert.equal(liquidationCreditLimit(state, 100), 250);
+  assert.equal(canPlaceLiquidationBet(state, 100, 4000), false);
+});
+
+test('consecutive defeats escalate until the next envelope cannot rescue a broke squad', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  fundDraftRound(state, 0);
+  assert.deepEqual(recordLiquidationOutcome(state, false), { loser: 'player', streak: 1, penalty: 0 });
+  assert.deepEqual(recordLiquidationOutcome(state, false), { loser: 'player', streak: 2, penalty: 1000 });
+  const third = recordLiquidationOutcome(state, false);
+  assert.deepEqual(third, { loser: 'player', streak: 3, penalty: 2000 });
+  assert.equal(draftCanCoverDebt(state, -250 - third.penalty), false);
+  assert.deepEqual(recordLiquidationOutcome(state, true), { loser: 'rival', streak: 1, penalty: 0 });
+  assert.equal(state.playerLossStreak, 0);
 });
 
 test('every third completed round resupplies only shared consumables and ammo', () => {

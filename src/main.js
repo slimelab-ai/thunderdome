@@ -21,7 +21,8 @@ import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
-  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
+  resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, commitPlayerDraftTurn,
 } from './liquidation.js';
 import {
@@ -166,6 +167,8 @@ function load() {
         c.analyticsId ||= crypto.randomUUID();
         if (c.liquidation) {
           c.liquidation.enemy ||= { strategy: 'balanced', inventory: {} };
+          c.liquidation.playerLossStreak ||= 0;
+          c.liquidation.enemyLossStreak ||= 0;
           if (!Array.isArray(c.liquidation.enemy.recruits) || !c.liquidation.enemy.recruits.length) {
             c.liquidation.enemy.recruits = ['enforcer'];
           }
@@ -307,6 +310,8 @@ function careerSnapshot() {
       bankroll: liquidation.bankroll,
       playerWins: liquidation.playerWins,
       enemyWins: liquidation.enemyWins,
+      playerLossStreak: liquidation.playerLossStreak || 0,
+      enemyLossStreak: liquidation.enemyLossStreak || 0,
       enemyMoney: liquidation.enemyMoney,
       draft: { ...liquidation.draft },
       enemy: structuredClone(liquidation.enemy),
@@ -1087,14 +1092,31 @@ function finishMatch() {
   if (career.bet > 0) {
     if (match.mode === 'liquidation') {
       const winnings = Math.round(career.bet * match.betOdds);
+      const outcome = recordLiquidationOutcome(career.liquidation, match.won);
       if (match.won) {
         career.money += winnings;
         career.totals.earned += winnings;
         career.liquidation.playerWins++;
+        career.liquidation.enemyMoney -= outcome.penalty;
       } else {
         career.liquidation.enemyMoney += career.bet + match.enemyBet;
         career.liquidation.enemyWins++;
+        career.money -= outcome.penalty;
       }
+      match.liquidationOutcome = outcome;
+      if (outcome.penalty > 0) {
+        const side = outcome.loser === 'player' ? 'YOUR SQUAD' : 'THE RIVAL';
+        ui.eventBanner('DEFEAT STREAK', `${side} margin-called $${outcome.penalty.toLocaleString()}`, 'var(--blood)');
+      }
+      emitCareerEvent('liquidation_match_settlement', {
+        won: match.won,
+        stake: career.bet,
+        winnings: match.won ? winnings : 0,
+        loser: outcome.loser,
+        loss_streak: outcome.streak,
+        streak_penalty: outcome.penalty,
+        state: careerSnapshot(),
+      });
       match.betWinnings = match.won ? winnings : 0;
     } else if (match.won) {
       const winnings = Math.round(career.bet * betOdds());
@@ -1630,12 +1652,14 @@ function showIntro() {
   phase = 'intro';
   const liquidation = career.mode === 'liquidation';
   const liquidationBets = liquidation ? liquidationBetOptions(career.liquidation, career.money) : [];
-  career.bet = liquidation ? (liquidationBets[1] || liquidationBets[0] || 0) : 0;
+  career.bet = liquidation
+    ? (liquidationBets.find(bet => bet > 250 && bet <= career.money) || liquidationBets[0] || 0)
+    : 0;
   const squad = career.mode === 'liquidation'
     ? { name: 'THE RIVAL SYNDICATE', blurb: `Round ${career.liquidation.round}. Choose your stake; a poorer squad receives longer comeback odds.` }
     : SQUADS[career.rank];
   const rerender = () => ui.renderIntro(career, squad, liquidation ? liquidationOdds(career.liquidation, career.money) : betOdds(), (amt) => {
-    if (amt <= career.money) {
+    if (!liquidation ? amt <= career.money : canPlaceLiquidationBet(career.liquidation, career.money, amt)) {
       career.bet = amt;
       audio.uiClick();
       rerender();

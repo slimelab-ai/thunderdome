@@ -732,8 +732,8 @@ export class UI {
       (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
     const bets = liquidation ? liquidationBets : [0, 200, 500, 1000];
     $('bet-row').innerHTML = liquidation
-      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.liquidation.enemyMoney.toLocaleString()}</span> ` +
-        bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}</button>`).join('')
+      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.liquidation.enemyMoney.toLocaleString()} · LOSS STREAK ${career.liquidation.playerLossStreak || 0}–${career.liquidation.enemyLossStreak || 0}<br>CREDIT STAKES OR REPEATED DEFEATS CAN END THE WAR DURING THE DRAFT</span> ` +
+        bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}${b > career.money ? ' ⚠' : ''}</button>`).join('')
       : `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
         ${b <= career.money ? '' : 'disabled'}>${b === 0 ? 'NO BET' : '$' + b}</button>`).join('');

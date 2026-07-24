@@ -19,6 +19,7 @@ export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), r
       pendingEnemyShop: false, playerFirst: false, playerTurnEnded: false, lastEnvelope: 0,
     },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
+    playerLossStreak: 0, enemyLossStreak: 0,
     complete: false, // the war is over: someone's bankroll died with no envelope left to save it
     enemy: { strategy: 'balanced', inventory: {}, recruits: ['enforcer'] },
     marketLog: [{ kind: 'round', round: 1 }],
@@ -58,10 +59,54 @@ export function liquidationOdds(state, playerMoney) {
 }
 
 export function liquidationBetOptions(state, playerMoney) {
-  // The $250 floor can push a desperate squad below zero; that is the terminal
-  // pressure Liquidation needs instead of allowing two broke squads to stalemate.
-  const values = [250, ...[0.10, 0.25, 0.50].map(f => Math.max(250, Math.floor(playerMoney * f / 50) * 50))];
-  return [...new Set(values)];
+  const cash = Math.max(0, playerMoney);
+  const envelope = draftShare(state);
+  // Normal bets scale through an all-in. Two explicit blood markers let either
+  // side borrow against up to two future envelopes, making a voluntary wager
+  // large enough to end a war during the protected draft.
+  const values = [
+    250,
+    ...[0.10, 0.25, 0.50, 1].map(f => Math.max(250, Math.floor(cash * f / 50) * 50)),
+    envelope,
+    envelope * 2,
+  ];
+  return [...new Set(values)].filter(value => value <= liquidationCreditLimit(state, playerMoney));
+}
+
+export function liquidationCreditLimit(state, money) {
+  const draftCredit = state.draft.complete ? 0 : draftShare(state) * 2;
+  return Math.max(250, Math.max(0, money) + draftCredit);
+}
+
+export function canPlaceLiquidationBet(state, money, amount) {
+  return liquidationBetOptions(state, money).includes(amount);
+}
+
+export function recordLiquidationOutcome(state, playerWon) {
+  if (playerWon) {
+    state.playerLossStreak = 0;
+    state.enemyLossStreak = (state.enemyLossStreak || 0) + 1;
+    return {
+      loser: 'rival',
+      streak: state.enemyLossStreak,
+      penalty: liquidationStreakPenalty(state, state.enemyLossStreak),
+    };
+  }
+  state.enemyLossStreak = 0;
+  state.playerLossStreak = (state.playerLossStreak || 0) + 1;
+  return {
+    loser: 'player',
+    streak: state.playerLossStreak,
+    penalty: liquidationStreakPenalty(state, state.playerLossStreak),
+  };
+}
+
+export function liquidationStreakPenalty(state, streak) {
+  if (streak < 2) return 0;
+  // A second straight loss burns half an envelope. A third burns a full one;
+  // combined with the mandatory stake, a squad living envelope-to-envelope can
+  // no longer be rescued indefinitely.
+  return Math.round(draftShare(state) * (streak - 1) / 2);
 }
 
 export function resupplyLiquidation(state, market, random = Math.random) {
