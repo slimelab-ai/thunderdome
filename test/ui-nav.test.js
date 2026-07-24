@@ -125,6 +125,34 @@ test('right-stick scrolling targets the scroll region beneath the cursor', () =>
   assert.equal(navigator.cursorSnapped, null);
 });
 
+test('mouse movement takes control of the active controller menu cursor', () => {
+  const root = { id: 'screen-shop' };
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    body: { classList: { contains: (name) => name === 'controller-menu-cursor' } },
+    defaultView: { innerWidth: 800, innerHeight: 600 },
+    querySelector: () => root,
+  };
+  navigator.cursorSnapped = { id: 'old-snap' };
+  navigator.cursorSnapPoint = { x: 10, y: 10 };
+  navigator.cursorSnapPush = { x: 5, y: 5 };
+  navigator.cursorSnapIgnore = { id: 'old-ignore' };
+  navigator.cursorSnapCooldown = 0.18;
+  navigator.cursorMagnetLockoutPoint = { x: 10, y: 10 };
+  let syncedRoot = null;
+  navigator._renderCursor = () => {};
+  navigator._syncCursorTarget = (value) => { syncedRoot = value; };
+
+  assert.equal(navigator._adoptMouseCursor({ clientX: 345, clientY: 278 }), true);
+  assert.equal(navigator.cursorX, 345);
+  assert.equal(navigator.cursorY, 278);
+  assert.equal(navigator.cursorInitialized, true);
+  assert.equal(navigator.cursorSnapped, null);
+  assert.equal(navigator.cursorSnapIgnore, null);
+  assert.equal(navigator.cursorMagnetLockoutPoint, null);
+  assert.equal(syncedRoot, root);
+});
+
 test('controller hints advertise context-sensitive market shortcuts', () => {
   const shop = controllerHint('screen-shop');
   assert.match(shop, /X ALTERNATE/);

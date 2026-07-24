@@ -462,10 +462,12 @@ export class UI {
       : '<div class="reserve-empty">NO BENCHED FIGHTERS</div>';
 
     $('char-tabs').innerHTML = `
-      <div class="roster-section-head"><span>CHALLENGER</span><b>ACTIVE</b></div>
-      <div class="player-roster-slot">${rosterSlot(playerView, 'CHALLENGER')}</div>
-      <div class="roster-section-head"><span>DEPLOYED SQUAD</span><b>${deployed}/${DEPLOYED_CREW_CAP}</b></div>
-      <div class="deployed-roster">${deployedSlots}</div>
+      <div class="roster-section-head"><span>ACTIVE SQUAD</span><b>${deployed + 1}/${DEPLOYED_CREW_CAP + 1}</b></div>
+      <div class="squad-selector">
+        <span class="roster-cycle-hint controller-only" aria-hidden="true"><span class="pad-key">LB</span><small>PREV</small></span>
+        <div class="deployed-roster">${rosterSlot(playerView, 'CHALLENGER')}${deployedSlots}</div>
+        <span class="roster-cycle-hint controller-only" aria-hidden="true"><span class="pad-key">RB</span><small>NEXT</small></span>
+      </div>
       <div class="roster-section-head reserve-head"><span>RESERVE LOCKER</span><b>${reserveCrew.length} BENCHED · ${career.crew.length}/${CREW_CONTRACT_CAP} CONTRACTS</b></div>
       <div class="reserve-roster">${reserveSlots}</div>`;
 

@@ -123,6 +123,7 @@ export class MenuNavigator {
       this._setCursorTarget(null);
       this._updateHint();
     };
+    doc.addEventListener('mousemove', (event) => this._adoptMouseCursor(event), { passive: true });
     doc.addEventListener('pointerdown', leaveControllerMode, { passive: true });
     doc.addEventListener('screenchange', () => {
       doc.body.classList.remove('controller-menu-cursor');
@@ -298,6 +299,28 @@ export class MenuNavigator {
     }
     this._renderCursor();
     this._syncCursorTarget(root);
+  }
+
+  _adoptMouseCursor(event) {
+    if (!this.doc.body.classList.contains('controller-menu-cursor')) return false;
+    if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return false;
+    const root = this.doc.querySelector('.screen:not(.hidden)');
+    if (!root) return false;
+    const view = this.doc.defaultView;
+    const width = view?.innerWidth || 1280;
+    const height = view?.innerHeight || 720;
+    this.cursorX = Math.max(0, Math.min(width, event.clientX));
+    this.cursorY = Math.max(0, Math.min(height, event.clientY));
+    this.cursorInitialized = true;
+    this.cursorSnapped = null;
+    this.cursorSnapPoint = null;
+    this.cursorSnapPush = { x: 0, y: 0 };
+    this.cursorSnapIgnore = null;
+    this.cursorSnapCooldown = 0;
+    this.cursorMagnetLockoutPoint = null;
+    this._renderCursor();
+    this._syncCursorTarget(root);
+    return true;
   }
 
   _moveCursor({ x = 0, y = 0, magnitude = 0, dt = 0 }, root) {

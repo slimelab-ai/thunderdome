@@ -704,9 +704,20 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
   color: #777783; font-size: 8px; font-weight: 900; letter-spacing: 1.3px;
 }
 .roster-section-head b { color: #a9a9b2; font-size: 8px; }
-.player-roster-slot { height: 38px; margin-bottom: 3px; }
+.squad-selector { display: block; }
 .deployed-roster {
-  height: 64px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px;
+  height: 64px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px;
+}
+.roster-cycle-hint {
+  width: 28px; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: 1px solid #383844; border-radius: 4px; background: rgba(12,12,17,0.9); color: #777783;
+}
+.roster-cycle-hint .pad-key { min-width: 24px; height: 18px; padding: 0 3px; border-radius: 5px; font-size: 8px; }
+.roster-cycle-hint small { font-size: 6px; font-weight: 900; letter-spacing: 0.5px; writing-mode: vertical-rl; }
+.controller-mode .squad-selector {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; gap: 5px;
+  padding: 3px; border: 1px solid rgba(255,185,46,0.22); border-radius: 5px;
+  background: rgba(255,185,46,0.035);
 }
 .reserve-head { margin-top: 3px; }
 .reserve-roster {
@@ -1008,8 +1019,12 @@ body.touch-mode .spec-hint-touch { display: inline; }
   #char-tabs { margin-bottom: 5px; }
   .roster-section-head { height: 12px; font-size: 6px; letter-spacing: 0.7px; }
   .roster-section-head b { font-size: 6px; }
-  .player-roster-slot { height: 26px; margin-bottom: 2px; }
   .deployed-roster { height: 42px; gap: 2px; }
+  .controller-mode .squad-selector { gap: 2px; }
+  .roster-cycle-hint { width: 20px; gap: 2px; }
+  .roster-cycle-hint .pad-key { min-width: 18px; height: 14px; font-size: 6px; }
+  .roster-cycle-hint small { font-size: 5px; }
+  .controller-mode .squad-selector { padding: 2px; }
   .reserve-head { margin-top: 2px; }
   .reserve-roster { height: 73px; grid-auto-rows: 35px; gap: 3px 2px; }
   .roster-slot { gap: 2px; padding: 3px; }
