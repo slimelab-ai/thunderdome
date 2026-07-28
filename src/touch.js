@@ -1,6 +1,6 @@
-// Mobile touch controls, standard mobile-FPS layout: a floating virtual
-// thumbstick on the left half moves, dragging anywhere on the right half aims,
-// and a thumb cluster of buttons handles everything else. The InputHub reads
+// Mobile touch controls: a floating virtual thumbstick on the left half moves,
+// the broad, unobstructed middle/right surface aims, and actions sit on the
+// screen edges. The InputHub reads
 // moveX/moveY (running them through the exponential stick curve) and drains
 // look deltas via consumeLook(); button edges call straight into the player.
 
@@ -27,6 +27,7 @@ export class TouchControls {
     this._looks = new Map();    // touch id → last {x, y} for drag aiming
     this._btnTouches = new Map();
     this._firing = false;
+    this._lookHintShown = false;
     this._build();
   }
 
@@ -41,6 +42,10 @@ export class TouchControls {
     if (v === this.enabled) return;
     this.enabled = v;
     this.root.classList.toggle('hidden', !v);
+    if (v && !this._lookHintShown) {
+      this._lookHintShown = true;
+      this.root.classList.add('show-look-hint');
+    }
     if (!v) this._resetAll();
   }
 
@@ -57,6 +62,8 @@ export class TouchControls {
     const p = this.player;
     this.root.querySelector('#t-ads').classList.toggle('on', !!p.adsHeld);
     this.root.querySelector('#t-crouch').classList.toggle('on', !!p.crouchToggled);
+    this.root.querySelector('#t-lean-left').classList.toggle('on', p.leanToggle === -1);
+    this.root.querySelector('#t-lean-right').classList.toggle('on', p.leanToggle === 1);
   }
 
   _build() {
@@ -64,18 +71,21 @@ export class TouchControls {
     root.id = 'touch-ui';
     root.className = 'hidden';
     root.innerHTML = `
+      <div id="t-look-hint" aria-hidden="true"><span>DRAG TO LOOK</span></div>
       <div id="t-stick"><div id="t-stick-nub"></div></div>
-      <button id="t-pause" class="t-btn">❚❚</button>
-      <button id="t-fire" class="t-btn">FIRE</button>
-      <button id="t-ads" class="t-btn">ADS</button>
-      <button id="t-jump" class="t-btn">JUMP</button>
-      <button id="t-reload" class="t-btn">RLD</button>
-      <button id="t-crouch" class="t-btn">CRCH</button>
-      <button id="t-swap" class="t-btn">SWAP</button>
-      <button id="t-knife" class="t-btn">🔪</button>
-      <button id="t-nade" class="t-btn">💣</button>
-      <button id="t-med" class="t-btn">✚</button>
-      <button id="t-splint" class="t-btn">🩹</button>`;
+      <button id="t-pause" class="t-btn t-square" aria-label="Pause">❚❚</button>
+      <button id="t-fire" class="t-btn" aria-label="Fire">FIRE</button>
+      <button id="t-ads" class="t-btn" aria-label="Aim down sights">ADS</button>
+      <button id="t-jump" class="t-btn" aria-label="Jump">JUMP</button>
+      <button id="t-reload" class="t-btn" aria-label="Reload">RLD</button>
+      <button id="t-crouch" class="t-btn" aria-label="Toggle crouch">CRCH</button>
+      <button id="t-swap" class="t-btn t-square" aria-label="Swap weapon">SWAP</button>
+      <button id="t-knife" class="t-btn t-square" aria-label="Toggle knife">🔪</button>
+      <button id="t-nade" class="t-btn t-square" aria-label="Throw grenade">💣</button>
+      <button id="t-med" class="t-btn t-square" aria-label="Use medkit">✚</button>
+      <button id="t-splint" class="t-btn t-square" aria-label="Use splint">🩹</button>
+      <button id="t-lean-left" class="t-btn t-lean" aria-label="Toggle lean left"><b>‹</b><span>LEAN</span></button>
+      <button id="t-lean-right" class="t-btn t-lean" aria-label="Toggle lean right"><span>LEAN</span><b>›</b></button>`;
     document.body.appendChild(root);
     this.root = root;
     this.stick = root.querySelector('#t-stick');
@@ -94,6 +104,8 @@ export class TouchControls {
       't-nade': { down: () => p.throwGrenade() },
       't-med': { down: () => p.startHeal('medkit') },
       't-splint': { down: () => p.startHeal('splint') },
+      't-lean-left': { down: () => { p.leanToggle = p.leanToggle === -1 ? 0 : -1; } },
+      't-lean-right': { down: () => { p.leanToggle = p.leanToggle === 1 ? 0 : 1; } },
       't-pause': { down: () => this.onPause() },
     };
 
