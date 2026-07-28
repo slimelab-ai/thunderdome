@@ -7,8 +7,16 @@
 const STICK_R = 52;   // px travel of the virtual stick
 
 export function isTouchDevice() {
-  return (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
-    && matchMedia('(pointer: coarse)').matches;
+  // A mouse/trackpad can become the "primary" pointer on hybrid devices, so
+  // requiring `(pointer: coarse)` incorrectly hides touch controls there.
+  // `?touch=1` is also useful for validating the mobile HUD from desktop.
+  const override = new URLSearchParams(window.location.search).get('touch');
+  if (override === '1') return true;
+  if (override === '0') return false;
+  const touchCapable = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  const hasCoarsePointer = matchMedia('(any-pointer: coarse)').matches
+    || matchMedia('(pointer: coarse)').matches;
+  return touchCapable || hasCoarsePointer;
 }
 
 export class TouchControls {
