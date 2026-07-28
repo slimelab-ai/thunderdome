@@ -6,17 +6,33 @@
 
 const STICK_R = 52;   // px travel of the virtual stick
 
+export function touchModeFromSignals({
+  override = null,
+  maxTouchPoints = 0,
+  touchEvent = false,
+  coarsePointer = false,
+  mobileUserAgent = false,
+} = {}) {
+  if (override === '1') return true;
+  if (override === '0') return false;
+  return maxTouchPoints > 0 || touchEvent || coarsePointer || mobileUserAgent;
+}
+
 export function isTouchDevice() {
   // A mouse/trackpad can become the "primary" pointer on hybrid devices, so
   // requiring `(pointer: coarse)` incorrectly hides touch controls there.
-  // `?touch=1` is also useful for validating the mobile HUD from desktop.
-  const override = new URLSearchParams(window.location.search).get('touch');
-  if (override === '1') return true;
-  if (override === '0') return false;
-  const touchCapable = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
-  const hasCoarsePointer = matchMedia('(any-pointer: coarse)').matches
-    || matchMedia('(pointer: coarse)').matches;
-  return touchCapable || hasCoarsePointer;
+  // Chrome's iPhone simulator on Windows can also retain desktop pointer
+  // capabilities, so its emulated mobile user agent is an independent signal.
+  const ua = navigator.userAgent || '';
+  return touchModeFromSignals({
+    override: new URLSearchParams(window.location.search).get('touch'),
+    maxTouchPoints: navigator.maxTouchPoints || 0,
+    touchEvent: 'ontouchstart' in window,
+    coarsePointer: matchMedia('(any-pointer: coarse)').matches
+      || matchMedia('(pointer: coarse)').matches,
+    mobileUserAgent: navigator.userAgentData?.mobile === true
+      || /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(ua),
+  });
 }
 
 export class TouchControls {
