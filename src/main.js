@@ -2066,6 +2066,7 @@ window.__game = {
   THREE,                                  // capture/diagnostic poses need constructors
   assetsReady,                            // tools/shot.mjs waits on this before posing
   setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },
+  get stats() { return pipeline.stats(); },
   tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
   setLocked(v) { locked = v; },

@@ -199,17 +199,26 @@ export class Combatant {
     // archetype dressing, parented to the bones it belongs on
     if (this.archetype === 'shield') {
       const shield = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.07), surface('TD_steel_painted'));
-      // On the support forearm, facing forward: the shield swings with the arm, so
-      // a shieldman who lowers his guard really does expose his chest.
-      shield.position.set(0, 0.16, -0.34);
+      // Mounted on the torso, not the arm.
+      //
+      // The shield's job is a stable frontal barrier — the archetype's whole rule is
+      // "torso immune from the front, so flank him or frag him". Parenting it to the
+      // support forearm meant it swung with every stride and aim transition: it looked
+      // like he was waving it around, and the protected angle moved from frame to
+      // frame, which makes the counter-play unreadable.
+      shield.position.set(0, -0.10, 0.36);
       shield.castShadow = true;
       shield.userData = { combatant: this, part: 'shield' };
-      bone('forearm_l')?.add(shield);
+      bone('spine')?.add(shield);
       this.shieldMesh = shield;
+      // Support arm holds it there rather than reaching for a handguard he cannot
+      // get to. Pinned, so the locomotion and aim layers do not drag it out.
+      this.rig.pinBone('upperarm_l', [-0.55, -0.25, -0.30]);
+      this.rig.pinBone('forearm_l', [-1.35, 0, 0]);
     } else if (this.archetype === 'medic') {
       const cross = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.16, 0.02),
-        new THREE.MeshStandardMaterial({ color: 0xf2f2f2, emissive: 0xff4040, emissiveIntensity: 0.8 }),
+        new THREE.MeshStandardMaterial({ color: 0xd8d8d8, emissive: 0xff3030, emissiveIntensity: 0.25 }),
       );
       cross.position.set(0.09, 0.06, 0.15);
       bone('chest')?.add(cross);

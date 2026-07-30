@@ -364,6 +364,21 @@ def new_action(rig, name):
     return action
 
 
+def hips_loc(down=0.0, forward=0.0):
+    """Root translation in the hips bone's own local space.
+
+    Pose-bone location is expressed along the *bone's* axes, not the world's, and the
+    hips bone points up. With this file's roll convention (local X pinned to world X)
+    that makes local Y = up and local Z = forward. Writing a "drop" into Z — which is
+    what the first pass did — slides the fighter backwards instead of lowering him,
+    so the crouch folded the legs while the hips stayed put and the feet came off the
+    floor, and the death clips slid bodies backwards instead of laying them down.
+
+    Positive `down` lowers the fighter; positive `forward` moves him the way he faces.
+    """
+    return (0.0, -down, forward)
+
+
 def key(rig, frame, pose, extra_loc=None):
     """Key a set of bone rotations (degrees, XYZ euler) at one frame.
 
@@ -459,7 +474,7 @@ def _walk_cycle(rig, name, length, stride, arm, lean, bounce):
             # The weapon arm keeps the gun up; only the support arm swings fully.
             "upperarm_l": (ARM_L[0] - arm * sign, ARM_L[1], ARM_L[2]),
             "upperarm_r": (ARM_R[0] + arm * 0.25 * sign, ARM_R[1], ARM_R[2]),
-        }, ), extra_loc={"hips": (0, 0, -abs(bounce) * (1 if sign > 0 else 1))})
+        }, ), extra_loc={"hips": hips_loc(down=abs(bounce))})
 
     def pass_pose(f, sign):
         key(rig, f, merged(STANCE, {
@@ -470,7 +485,7 @@ def _walk_cycle(rig, name, length, stride, arm, lean, bounce):
             "shin_r": (stride * 0.7, 0, 0),
             "upperarm_l": ARM_L,
             "upperarm_r": ARM_R,
-        }), extra_loc={"hips": (0, 0, abs(bounce))})
+        }), extra_loc={"hips": hips_loc(down=-abs(bounce))})
 
     q = (length - 1) / 4.0
     half(1, 1)
@@ -488,10 +503,14 @@ def anim_run(rig):
     _walk_cycle(rig, "run", 23, stride=44, arm=34, lean=13, bounce=0.045)
 
 
+# A real combat crouch, not a slight bend. The first pass dropped the head only 25 cm,
+# which was visually indistinguishable from standing and — worse — left the *visible*
+# head 20 cm above the eye height the AI actually fires and sights from
+# (`Combatant.eyePos`, 1.55 x crouchK). CROUCH_HEAD_DROP below keeps the two in step.
 CROUCH = {
-    "hips": (14, 0, 0), "spine": (10, 0, 0), "chest": (6, 0, 0), "neck": (-12, 0, 0),
-    "thigh_l": (-72, 0, 4), "shin_l": (88, 0, 0), "foot_l": (-20, 0, 0),
-    "thigh_r": (-72, 0, -4), "shin_r": (88, 0, 0), "foot_r": (-20, 0, 0),
+    "hips": (20, 0, 0), "spine": (15, 0, 0), "chest": (8, 0, 0), "neck": (-16, 0, 0),
+    "thigh_l": (-96, 0, 5), "shin_l": (112, 0, 0), "foot_l": (-24, 0, 0),
+    "thigh_r": (-96, 0, -5), "shin_r": (112, 0, 0), "foot_r": (-24, 0, 0),
     "upperarm_r": (ARM_R[0] + 2, ARM_R[1] + 2, ARM_R[2]), "forearm_r": (FOREARM_R[0] - 2, 0, 0),
     "upperarm_l": (ARM_L[0] + 2, ARM_L[1], ARM_L[2]), "forearm_l": (FOREARM_L[0] - 2, 0, 0),
 }
@@ -504,7 +523,7 @@ def anim_crouch_idle(rig):
         key(rig, f, merged(STANCE, CROUCH, {
             "spine": (10 - s * 1.5, 0, 0),
             "chest": (6 + s * 1.5, 0, 0),
-        }), extra_loc={"hips": (0, 0, -0.42)})
+        }), extra_loc={"hips": hips_loc(down=0.42)})
 
 
 def anim_crouch_walk(rig):
@@ -518,7 +537,7 @@ def anim_crouch_walk(rig):
             "thigh_r": (-72 + sign * 16, 0, -4),
             "shin_r": (88 - sign * 8, 0, 0),
             "hips": (14, 0, -sign * 2),
-        }), extra_loc={"hips": (0, 0, -0.42 + (0.012 if i % 2 else 0))})
+        }), extra_loc={"hips": hips_loc(down=0.42 - (0.012 if i % 2 else 0))})
 
 
 def anim_aim_pose(rig):
@@ -618,83 +637,99 @@ def anim_hit_react(rig):
 
 
 def anim_death_front(rig):
-    """Shot from the front: knees buckle, body folds backwards onto the floor."""
+    """Shot from the front: knees buckle, body folds backwards flat onto its back.
+
+    The end pose has to be genuinely *flat*, not merely leaning a long way back. With
+    the hips rotated -90 the spine lies horizontal pointing backwards, and because the
+    thighs inherit that rotation, a thigh angle near zero puts the legs horizontal
+    pointing forwards. Leaving the legs folded (as the first pass did) left them
+    sticking into the air, and no amount of dropping the hips fixes that — it just
+    buries the body.
+
+    Heights are not authored at all: `plant_on_floor` measures the posed mesh and
+    lowers the hips until the lowest vertex touches the ground.
+    """
     new_action(rig, "death_front")
     clear_pose(rig)
-    key(rig, 1, STANCE)
+    key(rig, 1, STANCE, extra_loc={"hips": hips_loc()})
     key(rig, 7, merged(STANCE, {
         "chest": (-22, 0, 0), "spine": (-14, 0, 0), "neck": (-18, 0, 0), "head": (-10, 0, 0),
         "upperarm_r": (24, 0, -20), "upperarm_l": (22, 0, 20),
         "thigh_l": (-26, 0, 4), "shin_l": (34, 0, 0),
         "thigh_r": (-24, 0, -4), "shin_r": (30, 0, 0),
-    }), extra_loc={"hips": (0, 0, -0.12)})
+    }), extra_loc={"hips": hips_loc(down=0.10)})
     key(rig, 20, merged(STANCE, {
-        "hips": (-64, 0, 0), "chest": (-16, 0, 0), "spine": (-10, 0, 0),
-        "neck": (-20, 0, 0), "head": (-16, 0, 0),
+        "hips": (-55, 0, 0), "spine": (-8, 0, 0), "chest": (-12, 0, 0),
+        "neck": (-18, 0, 0), "head": (-14, 0, 0),
         "upperarm_r": (40, 0, -46), "forearm_r": (-20, 0, 0),
         "upperarm_l": (38, 0, 46), "forearm_l": (-24, 0, 0),
-        "thigh_l": (52, 0, 10), "shin_l": (62, 0, 0),
-        "thigh_r": (48, 0, -10), "shin_r": (58, 0, 0),
-    }), extra_loc={"hips": (0, -0.18, -0.86)})
+        "thigh_l": (20, 0, 8), "shin_l": (40, 0, 0),
+        "thigh_r": (18, 0, -8), "shin_r": (36, 0, 0),
+    }), extra_loc={"hips": hips_loc(down=0.45, forward=-0.20)})
     key(rig, 34, merged(STANCE, {
-        "hips": (-78, 0, 3), "chest": (-8, 4, 0), "spine": (-4, 0, 0),
-        "neck": (-14, 6, 0), "head": (-10, 8, 0),
-        "upperarm_r": (46, 0, -62), "forearm_r": (-14, 0, 0),
-        "upperarm_l": (44, 0, 58), "forearm_l": (-18, 0, 0),
-        "thigh_l": (66, 0, 14), "shin_l": (34, 0, 0), "foot_l": (10, 0, 0),
-        "thigh_r": (62, 0, -12), "shin_r": (28, 0, 0), "foot_r": (10, 0, 0),
-    }), extra_loc={"hips": (0, -0.26, -0.94)})
+        "hips": (-90, 0, 3), "spine": (-4, 0, 0), "chest": (-6, 4, 0),
+        "neck": (-12, 6, 0), "head": (-8, 8, 0),
+        "upperarm_r": (46, 0, -66), "forearm_r": (-12, 0, 0),
+        "upperarm_l": (44, 0, 62), "forearm_l": (-16, 0, 0),
+        "thigh_l": (8, 0, 12), "shin_l": (12, 0, 0), "foot_l": (-25, 0, 0),
+        "thigh_r": (6, 0, -10), "shin_r": (10, 0, 0), "foot_r": (-25, 0, 0),
+    }), extra_loc={"hips": hips_loc(down=0.80, forward=-0.35)})
 
 
 def anim_death_back(rig):
-    """Shot from behind: pitches forward, face down."""
+    """Shot from behind: pitches forward and lands face down.
+
+    Mirror of the above — hips at +90 lay the spine horizontal *forwards*, and the
+    inherited rotation puts near-zero thighs horizontal pointing backwards, so the
+    legs trail behind the torso.
+    """
     new_action(rig, "death_back")
     clear_pose(rig)
-    key(rig, 1, STANCE)
+    key(rig, 1, STANCE, extra_loc={"hips": hips_loc()})
     key(rig, 8, merged(STANCE, {
         "hips": (18, 0, 0), "chest": (26, 0, 0), "spine": (18, 0, 0), "neck": (14, 0, 0),
         "upperarm_r": (-28, 0, -16), "upperarm_l": (-26, 0, 16),
         "thigh_l": (-34, 0, 4), "shin_l": (48, 0, 0),
         "thigh_r": (-30, 0, -4), "shin_r": (44, 0, 0),
-    }), extra_loc={"hips": (0, 0, -0.22)})
+    }), extra_loc={"hips": hips_loc(down=0.18)})
     key(rig, 22, merged(STANCE, {
-        "hips": (82, 0, 0), "chest": (14, 0, 0), "spine": (10, 0, 0),
-        "neck": (26, 0, 0), "head": (18, 0, 0),
+        "hips": (60, 0, 0), "spine": (8, 0, 0), "chest": (12, 0, 0),
+        "neck": (22, 0, 0), "head": (16, 0, 0),
         "upperarm_r": (-58, 0, -40), "forearm_r": (-26, 0, 0),
         "upperarm_l": (-56, 0, 40), "forearm_l": (-28, 0, 0),
-        "thigh_l": (-14, 0, 8), "shin_l": (26, 0, 0),
-        "thigh_r": (-10, 0, -8), "shin_r": (22, 0, 0),
-    }), extra_loc={"hips": (0, 0.20, -0.88)})
+        "thigh_l": (-10, 0, 6), "shin_l": (26, 0, 0),
+        "thigh_r": (-8, 0, -6), "shin_r": (22, 0, 0),
+    }), extra_loc={"hips": hips_loc(down=0.42, forward=0.24)})
     key(rig, 36, merged(STANCE, {
-        "hips": (90, 0, -4), "chest": (8, -5, 0), "spine": (4, 0, 0),
-        "neck": (22, 0, 0), "head": (14, -6, 0),
-        "upperarm_r": (-66, 0, -54), "forearm_r": (-18, 0, 0),
-        "upperarm_l": (-64, 0, 52), "forearm_l": (-20, 0, 0),
-        "thigh_l": (-6, 0, 10), "shin_l": (14, 0, 0), "foot_l": (-14, 0, 0),
-        "thigh_r": (-4, 0, -10), "shin_r": (10, 0, 0), "foot_r": (-14, 0, 0),
-    }), extra_loc={"hips": (0, 0.24, -0.95)})
+        "hips": (90, 0, -4), "spine": (3, 0, 0), "chest": (6, -5, 0),
+        "neck": (20, 0, 0), "head": (12, -6, 0),
+        "upperarm_r": (-66, 0, -56), "forearm_r": (-18, 0, 0),
+        "upperarm_l": (-64, 0, 54), "forearm_l": (-20, 0, 0),
+        "thigh_l": (-6, 0, 8), "shin_l": (10, 0, 0), "foot_l": (-14, 0, 0),
+        "thigh_r": (-4, 0, -8), "shin_r": (8, 0, 0), "foot_r": (-14, 0, 0),
+    }), extra_loc={"hips": hips_loc(down=0.80, forward=0.40)})
 
 
 def anim_death_collapse(rig):
-    """Headshot: no bracing at all, straight down in a heap."""
+    """Headshot: no bracing at all. Folds and drops where he stood, on his side."""
     new_action(rig, "death_collapse")
     clear_pose(rig)
-    key(rig, 1, STANCE)
+    key(rig, 1, STANCE, extra_loc={"hips": hips_loc()})
     key(rig, 10, merged(STANCE, {
-        "hips": (26, 0, 6), "chest": (18, 8, 0), "spine": (14, 0, 0),
+        "hips": (26, 0, 8), "spine": (14, 0, 0), "chest": (18, 8, 0),
         "neck": (16, 0, 0), "head": (20, 10, 0),
         "upperarm_r": (-12, 0, -26), "upperarm_l": (-10, 0, 26),
         "thigh_l": (-84, 0, 8), "shin_l": (96, 0, 0),
         "thigh_r": (-80, 0, -8), "shin_r": (92, 0, 0),
-    }), extra_loc={"hips": (0, 0, -0.62)})
+    }), extra_loc={"hips": hips_loc(down=0.50)})
     key(rig, 26, merged(STANCE, {
-        "hips": (52, 0, 14), "chest": (24, 14, 0), "spine": (18, 0, 0),
-        "neck": (22, 0, 0), "head": (26, 16, 0),
+        "hips": (62, 0, 18), "spine": (14, 0, 0), "chest": (20, 14, 0),
+        "neck": (20, 0, 0), "head": (24, 16, 0),
         "upperarm_r": (-26, 0, -52), "forearm_r": (-34, 0, 0),
         "upperarm_l": (-22, 0, 48), "forearm_l": (-30, 0, 0),
-        "thigh_l": (-96, 0, 16), "shin_l": (108, 0, 0), "foot_l": (-8, 0, 0),
-        "thigh_r": (-92, 0, -14), "shin_r": (104, 0, 0), "foot_r": (-8, 0, 0),
-    }), extra_loc={"hips": (0, 0.05, -1.02)})
+        "thigh_l": (-70, 0, 16), "shin_l": (100, 0, 0), "foot_l": (-8, 0, 0),
+        "thigh_r": (-66, 0, -14), "shin_r": (96, 0, 0), "foot_r": (-8, 0, 0),
+    }), extra_loc={"hips": hips_loc(down=0.86, forward=0.10)})
 
 
 def anim_heal(rig):
@@ -719,6 +754,55 @@ def anim_heal(rig):
     key(rig, 52, zero)
 
 
+
+# Clips whose keyed hips height is measured rather than authored. Anything where the
+# body is meant to be in contact with the ground belongs here; walk and run are
+# deliberately excluded, because planting every keyframe would flatten their vertical
+# bounce to nothing.
+PLANTED = ("crouch_idle", "crouch_walk", "death_front", "death_back", "death_collapse")
+
+
+def plant_on_floor(rig, body, clip_names=PLANTED, floor=0.0):
+    """Lower each keyed frame until the posed mesh's lowest vertex sits on the floor.
+
+    Authoring contact heights by hand does not work: the height that puts a fighter's
+    boots on the ground is a consequence of every rotation in the chain, so any pose
+    tweak silently breaks it. This measures the actual deformed mesh instead.
+
+    One pass is exact. The hips bone points up, so its local Y maps 1:1 to world Z —
+    a correction of d lowers the whole mesh by exactly d.
+    """
+    scene = bpy.context.scene
+    for name in clip_names:
+        action = bpy.data.actions.get(name)
+        if not action:
+            continue
+        rig.animation_data.action = action
+        curves = {fc.array_index: fc for fc in action.fcurves
+                  if fc.data_path == 'pose.bones["hips"].location'}
+        if 1 not in curves:
+            log(f"  plant: {name} has no hips height channel, skipped")
+            continue
+        frames = sorted({round(kp.co[0]) for kp in curves[1].keyframe_points})
+        fixes = []
+        for f in frames:
+            scene.frame_set(f)
+            bpy.context.view_layer.update()
+            deps = bpy.context.evaluated_depsgraph_get()
+            ev = body.evaluated_get(deps)
+            mesh = ev.to_mesh()
+            mw = ev.matrix_world
+            low = min((mw @ v.co).z for v in mesh.vertices)
+            ev.to_mesh_clear()
+            correction = low - floor
+            if abs(correction) < 0.002:
+                continue
+            pb = rig.pose.bones["hips"]
+            pb.location = (pb.location[0], pb.location[1] - correction, pb.location[2])
+            pb.keyframe_insert("location", frame=f)
+            fixes.append(f"{f}:{-correction:+.3f}")
+        log(f"  planted {name} {' '.join(fixes) if fixes else '(already flat)'}")
+
 CLIPS = [
     anim_idle, anim_walk, anim_run, anim_crouch_idle, anim_crouch_walk,
     anim_aim_pose, anim_fire, anim_reload, anim_throw, anim_hit_react, anim_heal,
@@ -738,6 +822,7 @@ def main():
     bpy.ops.object.mode_set(mode="POSE")
     for clip in CLIPS:
         clip(rig)
+    plant_on_floor(rig, body)
     bpy.ops.object.mode_set(mode="OBJECT")
     rig.animation_data.action = None        # ship no default pose
 

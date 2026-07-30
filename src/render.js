@@ -15,13 +15,30 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
  * survive dropping to `low`, just with less of it.
  */
 
-export const QUALITY_TIERS = ['low', 'medium', 'high'];
+export const QUALITY_TIERS = ['low', 'medium', 'high', 'ultra'];
 
+/**
+ * Ambient occlusion lives on `ultra`, not `high`.
+ *
+ * GTAO is by a wide margin the most expensive pass in the chain — it renders depth
+ * and normals for the whole scene and then denoises — and it is also the one whose
+ * absence is hardest to notice in a room this dark. Making it opt-in is what lets
+ * `high` be a sensible default on a desktop that is not a gaming machine.
+ *
+ * The pixel-ratio caps are ceilings, not targets: `renderScale` below trims the
+ * actual resolution down from there when frames run long.
+ */
 const TIERS = {
-  low:    { ao: false, bloom: true,  smaa: false, grade: true,  maxPixelRatio: 1.0, shadowMap: 1024, softShadows: false },
-  medium: { ao: false, bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.35, shadowMap: 2048, softShadows: true },
-  high:   { ao: true,  bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.75, shadowMap: 2048, softShadows: true },
+  low:    { ao: false, bloom: true,  smaa: false, grade: true,  maxPixelRatio: 1.0,  shadowMap: 1024, softShadows: false },
+  medium: { ao: false, bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.25, shadowMap: 1024, softShadows: true },
+  high:   { ao: false, bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.5,  shadowMap: 2048, softShadows: true },
+  ultra:  { ao: true,  bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.75, shadowMap: 2048, softShadows: true },
 };
+
+// Adaptive resolution bounds. 0.62 is roughly 720p on a 1080p canvas — past that the
+// grade's grain starts doing more work than the render.
+const MIN_RENDER_SCALE = 0.62;
+const FRAME_BUDGET_MS = 1000 / 60;
 
 /**
  * Final colour grade, applied after tone mapping so the numbers behave like a
@@ -153,6 +170,9 @@ export class RenderPipeline {
       0.82,   // threshold — only genuine emissives and specular hits bloom
     );
 
+    // Trimmed by _adapt when frames run long; 1 means "the tier's full pixel ratio".
+    this.renderScale = 1;
+
     this.outputPass = new OutputPass();      // tone map + sRGB transfer
     this.smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
     this.gradePass = new ShaderPass(GradeShader);
@@ -170,7 +190,10 @@ export class RenderPipeline {
 
     this.renderer.shadowMap.type = tier.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.renderer.shadowMap.needsUpdate = true;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, tier.maxPixelRatio));
+    // A tier change is a fresh start for the adaptive scaler: the whole point of
+    // moving to a cheaper tier is to buy resolution back.
+    this.renderScale = 1;
+    this._frameAvg = undefined;
 
     // Rebuild the chain rather than toggling `enabled`: a disabled pass still costs
     // its render target, and GTAO's is the expensive one.
@@ -232,9 +255,38 @@ export class RenderPipeline {
     if (color) this.gradePass.uniforms.uFlashColor.value.set(color);
   }
 
+  /**
+   * Adaptive resolution.
+   *
+   * Rather than ask the player to find a settings menu when frames get long, the
+   * pipeline trims its own render scale and restores it when there is headroom. The
+   * measurement is a long median-ish average, not a per-frame reaction: a single
+   * stutter (a GLB decoding, a garbage collection) must not drop the resolution, and
+   * a resolution change that oscillates is worse than a low one that holds.
+   */
+  _adapt(frameMs) {
+    this._frameAvg = this._frameAvg === undefined
+      ? frameMs
+      : this._frameAvg + (frameMs - this._frameAvg) * 0.05;
+    this._adaptCooldown = (this._adaptCooldown ?? 0) - 1;
+    if (this._adaptCooldown > 0) return;
+
+    const scale = this.renderScale;
+    let next = scale;
+    if (this._frameAvg > FRAME_BUDGET_MS * 1.35) next = Math.max(MIN_RENDER_SCALE, scale - 0.08);
+    else if (this._frameAvg < FRAME_BUDGET_MS * 0.75) next = Math.min(1, scale + 0.05);
+    if (Math.abs(next - scale) < 0.001) return;
+
+    this.renderScale = next;
+    // Half a second of frames before reconsidering, so a change gets time to show up
+    // in the average it is being judged by.
+    this._adaptCooldown = 30;
+    this.resize();
+  }
+
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
-    const dpr = Math.min(window.devicePixelRatio, this.tier.maxPixelRatio);
+    const dpr = Math.min(window.devicePixelRatio, this.tier.maxPixelRatio) * this.renderScale;
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h);
     this.composer.setPixelRatio(dpr);
@@ -247,8 +299,26 @@ export class RenderPipeline {
   }
 
   render(elapsed) {
+    const t0 = performance.now();
     this.gradePass.uniforms.uTime.value = elapsed;
     this.composer.render();
+    // Measured around the composer only, so the number reflects rendering rather
+    // than whatever the game simulation did this frame.
+    this._adapt(performance.now() - t0);
+  }
+
+  /** Live numbers for the debug handle: what the pipeline is actually doing. */
+  stats() {
+    const info = this.renderer.info.render;
+    return {
+      quality: this.quality,
+      renderScale: +this.renderScale.toFixed(2),
+      pixelRatio: +this.renderer.getPixelRatio().toFixed(2),
+      renderMs: +(this._frameAvg ?? 0).toFixed(2),
+      calls: info.calls,
+      triangles: info.triangles,
+      programs: this.renderer.info.programs?.length ?? 0,
+    };
   }
 
   get domElement() { return this.renderer.domElement; }

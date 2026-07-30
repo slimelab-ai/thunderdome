@@ -81,8 +81,10 @@ The short version:
 
 - **Forward pipeline with a post chain** in `src/render.js`: HDR scene → GTAO → bloom →
   ACES tone map → SMAA → colour grade (split-tone, vignette, grain, chromatic
-  aberration). Three quality tiers, auto-selected from the device on first run and
-  overridable at runtime.
+  aberration). Four quality tiers, auto-selected from the device on first run and
+  overridable at runtime, plus adaptive resolution that trims the render scale when
+  frames run long. Ambient occlusion is `ultra` only — it is the most expensive pass
+  and the least missed in a room this dark.
 - **PBR throughout.** Every surface is a `MeshStandardMaterial` fed by a baked
   albedo/normal/ORM set. A reflection probe rendered from inside the pit provides the
   environment map, so cage steel and gunmetal actually read as metal.
@@ -142,8 +144,9 @@ node tools/shot.mjs shots/d.png --pose diag          # draw calls + scene report
 | `tools/shot.mjs` | Scripted visual capture harness and its poses |
 
 Debug: `window.__game` exposes `{world, match, player, phase, career, renderer, camera,
-scene, pipeline, step(dt, n), setLocked(v), setQuality(tier), fight(mode, rank),
-freeCam(pos, look)}` for headless simulation and capture.
+scene, pipeline, stats, step(dt, n), setLocked(v), setQuality(tier), fight(mode, rank),
+freeCam(pos, look)}` for headless simulation and capture. `__game.stats` reports the
+live quality tier, render scale, draw calls and render time.
 
 ## Gameplay analytics
 

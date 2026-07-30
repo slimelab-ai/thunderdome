@@ -96,13 +96,16 @@ Scene budget: **≤ 220 draw calls** in a live match. Anything that repeats more
 than eight times is an `InstancedMesh` (crowd, mezzanine beams, lamp fixtures,
 fence posts, stair nosings).
 
-> **Current state: ~327.** Instancing the repeats and joining the prop meshes took
-> the empty pit from 978 to 321, but the target is not met yet. The remaining cost is
-> concentrated in two places: each authored prop still draws once per material slot
-> (two to four), and there are ~35 prop instances. The fix is prop-level instancing —
-> the eight crates and twenty arena blocks are the same geometry at different
-> transforms and should be `InstancedMesh` batches per material, not separate
-> `Group`s. Fighters are already two calls each.
+> **Current state: ~175, met.** The route was 978 → 321 (instancing the repeats and
+> joining each prop into one mesh at export) → 175 (batching *placements*, so all
+> twenty arena blocks are one `InstancedMesh` per material rather than twenty cloned
+> `Group`s). Fighters are two calls each.
+
+Resolution is adaptive on top of the tier: `RenderPipeline` measures its own render
+time and trims `renderScale` toward 0.62 when frames run long, restoring it when
+there is headroom. The measurement is a slow average with a cooldown, because a
+resolution that oscillates looks worse than one that is simply lower. `__game.stats`
+reports what it has settled on.
 
 ## 6. Animation rules
 

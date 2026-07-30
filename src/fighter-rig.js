@@ -132,6 +132,13 @@ export class FighterRig {
         : body;
     }
 
+    // Snapshot the bind pose before the mixer ever runs. `pinBone` needs a rest
+    // rotation to build absolute poses from, and after the first mixer update the
+    // bones' local quaternions are animation output, not rest.
+    this.restQuat = new Map();
+    for (const [name, bone] of this.bones) this.restQuat.set(name, bone.quaternion.clone());
+    this.pinned = new Map();
+
     this.mixer = new THREE.AnimationMixer(this.root);
     this.actions = new Map();
     for (const [name, clip] of asset.clips) {
@@ -298,6 +305,8 @@ export class FighterRig {
         this._pitchBone('chest', this.aimPitch * 0.55);
         this._pitchBone('head', this.aimPitch * 0.45);
       }
+      // Pins last: they are absolute, so anything above them is deliberately ignored.
+      if (this.pinned.size) this._applyPins();
     }
   }
 
@@ -306,6 +315,30 @@ export class FighterRig {
     if (!bone) return;
     _q.setFromAxisAngle(_X, radians);
     bone.quaternion.multiply(_q);
+  }
+
+  /**
+   * Hold a bone at a fixed pose, overriding whatever the clips say.
+   *
+   * Multiplying onto the animated rotation (the way the aim pitch does) is not enough
+   * when the point is to stop the bone moving: the underlying swing still comes
+   * through. This replaces the rotation outright, relative to the bind pose. Used for
+   * the shieldman's support arm, which has to stay locked behind the shield instead of
+   * swinging through the walk cycle.
+   *
+   * Pass `null` to release.
+   */
+  pinBone(name, euler) {
+    if (!this.bones.has(name)) return;
+    if (!euler) { this.pinned.delete(name); return; }
+    this.pinned.set(name, new THREE.Euler(euler[0], euler[1], euler[2]));
+  }
+
+  _applyPins() {
+    for (const [name, euler] of this.pinned) {
+      const bone = this.bones.get(name);
+      bone.quaternion.copy(this.restQuat.get(name)).multiply(_q.setFromEuler(euler));
+    }
   }
 
   /** Fade the whole fighter out (corpse cleanup). */

@@ -10,43 +10,77 @@ const propLoader = new GLTFLoader();
 const propCache = new Map();
 
 /**
- * Load an authored prop, instancing it if it has been seen before.
+ * Prop placement batching.
  *
- * Every prop's materials are swapped for the shared registry ones on first load, so
- * a hundred crates cost one steel material and one concrete material between them.
+ * Props are queued during the build and resolved once, as `InstancedMesh` batches —
+ * every arena block in the pit is one draw call per material instead of one per
+ * block. That is where the draw-call budget was going: twenty blocks and eight
+ * crates, each a separate cloned `Group` with two to four material groups, came to
+ * well over a hundred calls on their own.
+ *
+ * Batching is only correct because the props are *identical geometry at different
+ * transforms* — the per-placement size differences are non-uniform scales baked into
+ * the instance matrix, not different meshes.
  */
-function loadProp(scene, file, position, rotationY, scale, fallback, pending) {
-  const install = (source) => {
-    const prop = source.clone(true);
-    prop.position.copy(position);
-    prop.rotation.y = rotationY;
-    prop.scale.copy(scale);
-    prop.traverse((child) => {
-      if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
-    });
-    scene.add(prop);
-    return prop;
-  };
-  let entry = propCache.get(file);
-  if (!entry) {
-    entry = propLoader.loadAsync(`/assets/models/${file}.glb`).then((gltf) => {
-      bindAuthoredMaterials(gltf.scene);
-      propCache.set(file, gltf);
-      return gltf;
-    });
-    propCache.set(file, entry);
+class PropBatcher {
+  constructor() {
+    this.queued = new Map();   // file -> [{ matrix, fallback }]
   }
-  if (entry.scene) {
-    install(entry.scene);
-  } else {
-    // NB: pending waiters must unwrap .scene themselves — handing `install` the raw
-    // GLTF result made every instance after the first silently fall back to primitives
-    const done = entry.then((gltf) => install(gltf.scene)).catch((err) => {
-      console.warn(`Could not load authored prop ${file}; using primitive fallback.`, err);
-      propCache.delete(file);
-      fallback();
+
+  /** Queue one placement. Cheap and synchronous; nothing loads until `resolve`. */
+  place(file, position, rotationY, scale, fallback) {
+    const matrix = new THREE.Matrix4().compose(
+      position,
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotationY, 0)),
+      scale,
+    );
+    if (!this.queued.has(file)) this.queued.set(file, []);
+    this.queued.get(file).push({ matrix, fallback });
+  }
+
+  /** Load every queued prop and build its batches. Returns a promise per file. */
+  resolve(scene) {
+    const pending = [];
+    for (const [file, placements] of this.queued) {
+      let entry = propCache.get(file);
+      if (!entry) {
+        entry = propLoader.loadAsync(`/assets/models/${file}.glb`).then((gltf) => {
+          bindAuthoredMaterials(gltf.scene);
+          return gltf;
+        });
+        propCache.set(file, entry);
+      }
+      pending.push(Promise.resolve(entry)
+        .then((gltf) => this._build(scene, gltf.scene, placements))
+        .catch((err) => {
+          console.warn(`Could not load authored prop ${file}; using primitive fallbacks.`, err);
+          propCache.delete(file);
+          for (const p of placements) p.fallback?.();
+        }));
+    }
+    return Promise.allSettled(pending);
+  }
+
+  _build(scene, source, placements) {
+    source.updateMatrixWorld(true);
+    const combined = new THREE.Matrix4();
+    source.traverse((child) => {
+      if (!child.isMesh) return;
+      const mesh = new THREE.InstancedMesh(child.geometry, child.material, placements.length);
+      placements.forEach((p, i) => {
+        // The prop's own transform inside the GLB has to compose with the placement,
+        // or a mesh that sits off-origin in its file lands in the wrong spot.
+        combined.multiplyMatrices(p.matrix, child.matrixWorld);
+        mesh.setMatrixAt(i, combined);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      // A batch spans the whole arena, so its bounding sphere is never a useful cull
+      // and computing one from instances would only cost time.
+      mesh.frustumCulled = false;
+      scene.add(mesh);
     });
-    pending?.push(done);
   }
 }
 
@@ -134,7 +168,7 @@ export function buildArena(scene) {
   const crowd = [];          // animated crowd instances
   const dynamic = [];        // {update(t)} misc animated things
   const housePractical = []; // emissive materials on the house circuit (dim with LIGHTS OUT)
-  const pending = [];        // authored-prop loads, awaited by propsReady
+  const props = new PropBatcher();
 
   const addCollider = (cx, cy, cz, w, h, d, ry = 0) => {
     colliders.push(new Collider(cx, cy, cz, w, h, d, ry));
@@ -327,12 +361,12 @@ export function buildArena(scene) {
   };
 
   const addBarrel = (cx, cz) => {
-    loadProp(scene, 'hazard_barrel', new THREE.Vector3(cx, 0, cz), Math.random() * 6.28, new THREE.Vector3(1, 1, 1), () => {
+    props.place('hazard_barrel', new THREE.Vector3(cx, 0, cz), Math.random() * 6.28, new THREE.Vector3(1, 1, 1), () => {
       const b = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.1, 12), M.rust);
       b.position.set(cx, 0.55, cz);
       b.castShadow = true;
       scene.add(b);
-    }, pending);
+    });
     // The authored drum is round; a box proxy created four invisible collision
     // corners around every barrel. Match the outer steel hoops exactly instead.
     colliders.push(new CylinderCollider(cx, 0, cz, 0.43, 1.113));
@@ -346,10 +380,10 @@ export function buildArena(scene) {
       m.castShadow = true; m.receiveShadow = true;
       scene.add(m);
     };
-    loadProp(
-      scene, file, new THREE.Vector3(cx, 0, cz), ry,
+    props.place(
+      file, new THREE.Vector3(cx, 0, cz), ry,
       new THREE.Vector3(w / nativeSize.x, h / nativeSize.y, d / nativeSize.z),
-      fallback, pending,
+      fallback,
     );
     addCollider(cx, 0, cz, w, h, d, ry);
   };
@@ -417,10 +451,10 @@ export function buildArena(scene) {
       m.castShadow = true; m.receiveShadow = true;
       scene.add(m);
     };
-    loadProp(
-      scene, file, new THREE.Vector3(cx, baseY, cz), 0,
+    props.place(
+      file, new THREE.Vector3(cx, baseY, cz), 0,
       new THREE.Vector3(w / nativeSize.x, h / nativeSize.y, d / nativeSize.z),
-      fallback, pending,
+      fallback,
     );
     addCollider(cx, baseY, cz, w, h, d);
   };
@@ -450,7 +484,7 @@ export function buildArena(scene) {
   instanced(boxGeo(4.04, 0.08, 0.12, 1), M.plate, nosings);
 
   // wrecked car
-  loadProp(scene, 'wrecked_car', new THREE.Vector3(8, 0, -8.5), 0.4, new THREE.Vector3(1, 1, 1), () => {
+  props.place('wrecked_car', new THREE.Vector3(8, 0, -8.5), 0.4, new THREE.Vector3(1, 1, 1), () => {
     const car = new THREE.Group();
     const carBody = new THREE.Mesh(boxGeo(4.2, 1.1, 1.9), M.rust);
     carBody.position.y = 0.75;
@@ -460,7 +494,7 @@ export function buildArena(scene) {
     car.position.set(8, 0, -8.5);
     car.rotation.y = 0.4;
     scene.add(car);
-  }, pending);
+  });
   addCollider(8, 0, -8.5, 4.2, 1.65, 2.02, 0.4);
 
   // barrels
@@ -469,12 +503,12 @@ export function buildArena(scene) {
 
   // ---------- gates ----------
   const mkGate = (z, rot) => {
-    loadProp(scene, 'arena_gate', new THREE.Vector3(0, 0, z), rot, new THREE.Vector3(1, 1, 1), () => {
+    props.place('arena_gate', new THREE.Vector3(0, 0, z), rot, new THREE.Vector3(1, 1, 1), () => {
       const frame = new THREE.Mesh(boxGeo(4.6, 3.6, 0.6), M.painted);
       frame.position.set(0, 1.8, z);
       frame.rotation.y = rot;
       scene.add(frame);
-    }, pending);
+    });
   };
   mkGate(-D / 2 - 0.1, 0);
   mkGate(D / 2 + 0.1, Math.PI);
@@ -657,7 +691,7 @@ export function buildArena(scene) {
 
   return {
     colliders, lights, crowd, dynamic, spawns, strobe, oddsSign: odds,
-    propsReady: Promise.allSettled(pending),
+    propsReady: props.resolve(scene),
 
     /** Shadow resolution follows the quality tier. */
     setShadowMapSize(size) {

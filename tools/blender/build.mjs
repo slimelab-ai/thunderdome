@@ -59,7 +59,12 @@ for (const script of wanted) {
   const out = `${res.stdout || ''}${res.stderr || ''}`;
   // Blender is extremely chatty on success; only the export lines and any
   // traceback are worth surfacing.
-  const useful = out.split(/\r?\n/).filter((l) => /Exported|Error|Traceback|^\s{2}File "|Exception|error:/i.test(l));
+  const useful = out.split(/\r?\n/).filter((l) => (
+    /Exported|Error|Traceback|^\s{2}File "|Exception|error:/i.test(l)
+    // Authoring scripts report their own measurements (weight bakes, floor planting,
+    // clip lists) through td_lib's log(); those lines are the whole point of the build.
+    || /^ {2}(planted|baked|\d+ clips)/.test(l)
+  ));
   console.log(`${basename(script)}  (${Date.now() - t0}ms)`);
   for (const l of useful) console.log(`  ${l}`);
   if (res.status !== 0) {
