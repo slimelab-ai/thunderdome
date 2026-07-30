@@ -213,6 +213,19 @@ npm run animcheck               # every weapon, every action
 npm run animcheck -- --weapon rifle --verbose
 ```
 
+For looking at something yourself rather than measuring it, boot straight into an
+empty arena with the loadout you need:
+
+```
+http://localhost:5173/?sandbox=rifle,shotgun     # nothing shoots back, invulnerable
+http://localhost:5173/?sandbox                   # every weapon
+http://localhost:5173/?sandbox=dmr&god=0         # hazards still hurt
+```
+
+or `__game.sandbox('rifle')` from the console. Animation work needs long uninterrupted
+looks at a weapon in the real renderer, and a live bout does not allow it — the
+fighters kill you, the match ends, and the thing you were studying is gone.
+
 `tools/animcheck.mjs` plays each first-person action frame by frame and measures the
 **final world transform** of what the player actually looks at — the muzzle, both
 fists, the moving parts — then asserts:

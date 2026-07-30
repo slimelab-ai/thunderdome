@@ -5,7 +5,7 @@ import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
 import { UI, nextCrewName } from './ui.js';
-import { WEAPONS, preloadWeapons } from './weapons.js';
+import { WEAPONS, WEAPON_ORDER, preloadWeapons } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
@@ -42,6 +42,52 @@ import {
 import {
   orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
 } from './squad-auto.js';
+
+// ============================================================ sandbox
+/**
+ * Debug bench: an empty arena with a chosen loadout.
+ *
+ *   ?sandbox                     every weapon, nothing shooting back
+ *   ?sandbox=rifle,shotgun       just those, in slots 1 and 2
+ *   ?sandbox=rifle&god=0         let the arena's own hazards hurt you
+ *
+ * Also callable live as `__game.sandbox('rifle')`.
+ *
+ * Animation and VFX work needs long uninterrupted looks at a weapon in the real
+ * renderer, which a live bout does not allow — the fighters kill you, the match ends,
+ * and the thing you were watching is gone. This spawns no opposition, keeps the match
+ * from ending on an empty arena, and (by default) makes the player invulnerable.
+ */
+const sandbox = { active: false, god: true };
+
+function enterSandbox(weapons = null, { god = true } = {}) {
+  const list = (Array.isArray(weapons) ? weapons : String(weapons || '').split(','))
+    .map((w) => w.trim())
+    .filter((w) => WEAPON_ORDER.includes(w));
+  sandbox.active = true;
+  sandbox.god = god;
+
+  career = newCareer('circuits');
+  career.rank = 15;
+  market = createMarket('circuits');
+
+  // Stock the pack so every weapon has rounds, and put the requested guns in hand.
+  const pack = career.playerCh.pack;
+  for (const ammo of ['ammo_9mm', 'ammo_buck', 'ammo_762', 'ammo_308']) {
+    for (let i = 0; i < 3; i++) autoPlace(pack, makeItem(ammo));
+  }
+  const chosen = list.length ? list : WEAPON_ORDER;
+  for (const id of chosen.slice(0, 2)) autoPlace(pack, makeItem(id));
+
+  startMatch();
+  player.slots = chosen.slice(0, 2);
+  player.slotIdx = 0;
+  player.knifeOut = false;
+  player.loadMagsFromPack();
+  player._mountViewmodel();
+  ui.eventBanner('SANDBOX', `${chosen.join(' · ')}${god ? ' · invulnerable' : ''}`, 'var(--gold)');
+  return chosen;
+}
 
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
@@ -622,7 +668,7 @@ function startMatch() {
   const roster = [...squad.roster];
   if (!liquidation && hasMut('swarm') && roster.length <= 4) roster.push({ ...roster[roster.length - 1] });
   const names = squadNames(roster.length);
-  roster.forEach((r, i) => {
+  (sandbox.active ? [] : roster).forEach((r, i) => {
     const c = new Combatant({
       name: r.name || names[i], team: 'enemy', weaponId: r.w,
       skill: {
@@ -806,7 +852,7 @@ function handleKill(killer, victim, part) {
     } else if (killer.careerRef) {
       killer.careerRef.kills = (killer.careerRef.kills || 0) + 1;
     }
-    wonNow = match.enemiesAlive <= 0 && !match.ended;
+    wonNow = match.enemiesAlive <= 0 && !match.ended && !sandbox.active;
     if (wonNow) {
       markKnownOutcome(match, { won: true, endDelay: 2.0 },
         () => journalTerminal('player_win', 'player'));
@@ -865,6 +911,7 @@ function handleKill(killer, victim, part) {
 }
 
 function handlePlayerDamaged(dmg, part, fromPos) {
+  if (sandbox.active && sandbox.god) return;   // the point of the bench is not dying
   if (!player.alive) return;
   player.takeDamage(dmg, part, fromPos);
   ui.damageFlash();
@@ -2159,6 +2206,7 @@ window.__game = {
   items: { makeItem, autoPlace },         // capture poses stock a pack to test reloads
   assetsReady,                            // tools/shot.mjs waits on this before posing
   setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },
+  sandbox(weapons, opts) { return enterSandbox(weapons, opts); },
   get stats() { return pipeline.stats(); },
   tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
@@ -2178,6 +2226,14 @@ window.__game = {
     startMatch();
   },
 };
+
+// URL entry into the debug bench, once the assets it needs have arrived.
+{
+  const params = new URLSearchParams(location.search);
+  if (params.has('sandbox')) {
+    assetsReady.then(() => enterSandbox(params.get('sandbox'), { god: params.get('god') !== '0' }));
+  }
+}
 
 function tick() {
   requestAnimationFrame(tick);

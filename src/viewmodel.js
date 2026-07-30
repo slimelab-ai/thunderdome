@@ -54,7 +54,7 @@ const SUPPORT_TARGET = {
   pistol: {
     carry: [0.012, -0.050, 0.075],   // wrapped around the firing hand at the grip
     mag: [0.012, -0.130, 0.060],     // magazine well, below the grip
-    rack: [0.012, 0.040, 0.040],     // over the top of the slide, at its rear
+    rack: [0, 0.055, 0.040],         // over the top of the slide, at its rear
   },
   smg: {
     carry: [0, 0.028, -0.24],
@@ -266,7 +266,7 @@ export class ViewModel {
 
     this.reloadClip = RELOAD_CLIP[id] || 'reload';
     this._ikWarm = null;      // a new weapon means a new grip; do not resume the old one
-    this._smoothed = null;    // nor smooth from the old weapon's hand position
+    this._smoothedLocal = null;   // nor smooth from the old weapon's grip point
     this.play('draw', 1);
   }
 
@@ -342,29 +342,41 @@ export class ViewModel {
     if (phases) {
       const clip = this.current.getClip();
       const t = clip.duration > 0 ? this.current.time / clip.duration : 0;
-      key = 'carry';
       for (const phase of phases) {
         if (t <= phase.until) { key = phase.target; break; }
       }
     }
 
-    if (key === 'away') {
-      // Off the weapon entirely: hold the hand below the frame rather than aiming it
-      // at a point, so it reads as "gone to the pouch" instead of hovering.
-      _ikTarget.fromArray(targets.carry);
-      this.heldGroup.localToWorld(_ikTarget);
-      _v.set(AWAY_OFFSET[0], AWAY_OFFSET[1], AWAY_OFFSET[2]);
-      this.vmRoot.localToWorld(_v);
-      return _ikTarget.copy(_v);
-    }
-
     const local = targets[key] || targets.carry;
     _ikTarget.fromArray(local);
-    // The pump is the one target that moves on its own, so track the part rather than
-    // a fixed point: the hand goes back with the stroke instead of watching it go.
-    if (key === 'carry' && this.weaponId === 'shotgun' && this.parts?.pump) {
+
+    if (key === 'away') {
+      // Off the weapon entirely: down and back, out of the bottom of the frame, so it
+      // reads as "gone to the pouch" rather than hovering beside the gun.
+      _ikTarget.fromArray(targets.carry);
+      _ikTarget.x += AWAY_OFFSET[0];
+      _ikTarget.y += AWAY_OFFSET[1];
+      _ikTarget.z += AWAY_OFFSET[2];
+    } else if (key === 'carry' && this.weaponId === 'shotgun' && this.parts?.pump) {
+      // Targets on a moving part track that part, so the hand travels *with* the
+      // mechanism rather than watching it slide out from under itself.
       _ikTarget.z = this.parts.pump.position.z + PUMP_GRIP_Z;
+    } else if (key === 'rack' && this.parts?.slide) {
+      _ikTarget.z = local[2] + (this.parts.slide.position.z - this.parts.slide.userData.restZ);
     }
+
+    // Smoothing happens in the *weapon's* space, not the world's.
+    //
+    // Smoothing a world-space target makes the hand lag the whole viewmodel: walking,
+    // sway and camera motion move the target every frame, the filter trails it, and
+    // the hand visibly drags behind the gun it is holding. In weapon space the target
+    // is near-constant and only a phase change moves it — which is the only thing that
+    // wanted smoothing in the first place.
+    if (!this._smoothedLocal) this._smoothedLocal = _ikTarget.clone();
+    else if (this._smoothedLocal.distanceToSquared(_ikTarget) > 0.36) this._smoothedLocal.copy(_ikTarget);
+    else this._smoothedLocal.lerp(_ikTarget, Math.min(1, (this._smoothDt || 0.016) * 6));
+    _ikTarget.copy(this._smoothedLocal);
+
     return this.heldGroup.localToWorld(_ikTarget);
   }
 
@@ -378,20 +390,8 @@ export class ViewModel {
    * the target across the weapon in a single frame.
    */
   _solveSupportHand() {
-    const raw = this._supportTarget();
-    if (!raw) { this._smoothed = null; return; }
-
-    // Low-pass the target.
-    //
-    // Phases are a step function — the hand's destination jumps from the magazine
-    // well to the slide between one frame and the next — and the solver follows
-    // instantly, so the hand teleported. Smoothing the *target* rather than the pose
-    // fixes every such jump at once, including any added later, and 60 ms is short
-    // enough that a deliberate fast move still reads as fast.
-    if (!this._smoothed) this._smoothed = raw.clone();
-    else if (this._smoothed.distanceToSquared(raw) > 0.36) this._smoothed.copy(raw);
-    else this._smoothed.lerp(raw, Math.min(1, this._smoothDt * 11));
-    const target = this._smoothed;
+    const target = this._supportTarget();
+    if (!target) return;
     const chain = this._ikChain;
     const hand = this.bones.get('hand_l');
     if (!chain || !hand) return;

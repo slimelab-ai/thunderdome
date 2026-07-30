@@ -124,6 +124,18 @@ node tools/shot.mjs shots/m.png --pose match         # live first-person frame
 node tools/shot.mjs shots/d.png --pose diag          # draw calls + scene report
 ```
 
+Animations are verified by measurement rather than by eye, because a still frame
+cannot show snapping or an inverted axis:
+
+```sh
+npm run animcheck                    # every weapon, every action
+npm run animcheck -- --weapon rifle
+```
+
+To look at one yourself, boot into an empty arena with the loadout you need and
+nothing shooting back — `http://localhost:5173/?sandbox=rifle,shotgun`, or
+`__game.sandbox('rifle')` from the console.
+
 | File | What it is |
 | --- | --- |
 | `src/main.js` | Game state machine, match lifecycle, squads/ranks, events, economy, save |
@@ -146,6 +158,7 @@ node tools/shot.mjs shots/d.png --pose diag          # draw calls + scene report
 | `tools/blender/` | Headless Blender authoring: shared library, arena props, fighter, weapons |
 | `tools/textures/` | Canvas2D PBR texture bakery, run in headless Chrome |
 | `tools/shot.mjs` | Scripted visual capture harness and its poses |
+| `tools/animcheck.mjs` | Animation test bed: snapping, hand reach and recoil direction |
 
 Debug: `window.__game` exposes `{world, match, player, phase, career, renderer, camera,
 scene, pipeline, stats, step(dt, n), setLocked(v), setQuality(tier), fight(mode, rank),
