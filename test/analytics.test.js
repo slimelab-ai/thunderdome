@@ -101,3 +101,29 @@ test('an oversized restored record is compacted and cannot block later events', 
   assert.equal(batch[0].payload.payload_omitted, true);
   assert.equal(batch[1].payload.terminal_reason, 'player_win');
 });
+
+test('simulation provenance is explicit and inherited by every emitted event', () => {
+  const analytics = makeAnalytics(new MemoryStorage());
+  analytics.setSimulationContext({
+    batchId: 'batch-10',
+    seed: 20260730,
+    pairId: 'pair-3',
+    sideSwap: true,
+    bots: ['alpha', 'bravo'],
+  });
+  analytics.emit('match_enter', {});
+  analytics.emit('combat_decision', {});
+  for (const event of analytics.queue) {
+    assert.equal(event.simulation, true);
+    assert.equal(event.simulation_batch_id, 'batch-10');
+    assert.equal(event.simulation_seed, 20260730);
+    assert.equal(event.simulation_pair_id, 'pair-3');
+    assert.equal(event.simulation_side_swap, true);
+    assert.deepEqual(event.simulation_bots, ['alpha', 'bravo']);
+  }
+});
+
+test('simulation provenance rejects an ambiguous unseeded batch', () => {
+  const analytics = makeAnalytics(new MemoryStorage());
+  assert.throws(() => analytics.setSimulationContext({ batchId: 'batch-10' }), /numeric seed/);
+});
