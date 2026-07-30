@@ -168,6 +168,18 @@ a foot travelling the diagonal, and the diagonal of two half-weighted perpendicu
 strides is 0.71 of either, not the 1.0 a scalar average gives. Averaging the numbers
 instead of the vectors slid every diagonal by 40%.
 
+**Gameplay state is not continuous, and the rig must not care.** Speed and heading
+arrive as whatever this frame happened to produce: a fighter who reaches his goal drops
+from 4.6 m/s to zero in one frame, and one frame of a fighter shoved sideways by
+collision resolution points anywhere at all. Fed in raw, the first cut a deep leaning
+run pose straight to idle and threw the head 20 cm in a single frame, and the second
+swung the blendspace heading past 60 degrees between frames — which, since the poles
+either side of the circle lean opposite ways, read as fighters snapping between leaning
+left and leaning right twice every five seconds. Both are damped inside the rig, where
+every caller gets it: the move blend eases over time as well as over speed, and the
+heading is both averaged and rate-limited so a full reversal takes about a third of a
+second.
+
 ### 6.2 Holding the weapon
 
 **Both hands are solved from the weapon, not posed independently.** There are two
@@ -184,6 +196,21 @@ At runtime a two-bone CCD keeps the left fist on the grip as the weapon moves wi
 walk, the aim offset and the recoil. It warm-starts, for the reason in the traps below.
 It lets go — eased, not cut — while a clip has the hand somewhere else, and a shieldman
 opts out entirely by pinning his support arm.
+
+**The torso is bladed, and it stays bladed.** Both holds turn the spine and chest so
+the support side leads, the way anyone stands behind a weapon; without it the fighter
+is square on to the target with a rifle held across a flat chest — technically holding
+it, and reading as a mannequin. The blade is applied *before* the arms are solved, and
+the arm targets are in world space, so blading costs nothing at the grip: the arms
+simply come out different. Locomotion adds its counter-rotation on top of the bladed
+stance rather than replacing it, so taking a step does not square him up.
+
+**The head does not ride the chest.** A head sits about 1.4 m above the hips, and every
+degree of pelvis roll is five centimetres up there. Authored honestly, the pelvis put
+9 cm of rise and 10 cm of side-to-side into the head and the fighters read as
+bobbleheads. The bounce and sway are deliberately below life, and the roll terms up the
+spine sum to roughly zero at the neck, so the pelvis still works and the head stays
+level. Measured: 2.7 cm rise and 3.9 cm sway at a walk, 4.8 and 5.0 at a run.
 
 **Bots aim down sights.** Shouldering is a state with a cost and a payoff: it takes
 about a third of a second, it slows the fighter by a third while it is up, and it
@@ -335,6 +362,8 @@ at its worst — and asserts:
 | `air` | both feet off the ground in a walk |
 | `grip` | distance from the left fist to the weapon it is holding, per weapon, standing / walking / crouched / firing |
 | `recoil` | that the muzzle actually swings under sustained automatic fire |
+| transitions | worst single-frame head movement and blendspace churn through a dead stop, a standing start, an instant reversal, and per-frame heading noise |
+| bob | how far the head rides up and down and side to side over one cycle |
 | locked | the feet must not move *at all* when only aim or lean changes |
 | reach | aim pitch, aim yaw and lean each sweep far enough, and the right way |
 
@@ -435,6 +464,11 @@ solver that cold-starts from the animation pose closes only part of the gap and 
 reset before it finishes — the support hand trailed the magazine well by 11 cm forever
 while converging perfectly in isolation. Resume from last frame's solution.
 
+**Damping a signal at the source beats damping it at every consumer.** Smoothing the
+heading inside `setStance` fixes it for the AI, the capture poses and the test bench at
+once. The alternative — asking every caller to hand over a clean direction — is the
+version where one of them forgets.
+
 **Two hands on one object cannot be posed separately.** Author one of them from the
 object and derive the other. Both fighter arms were hand-keyed toward a rifle that was
 itself hand-keyed, and the result was a weapon held out at arm's length with the support
@@ -444,6 +478,12 @@ hand 20 cm from the handguard — in every clip, on every weapon, for the whole 
 recoil clip peaks three frames in; an automatic weapon retriggered it every five, and
 `reset()` puts an additive clip back at its zero frame. The fighters fired without
 moving and the clip was perfectly correct.
+
+**A local that shadows a parameter of the same name is invisible in review.** The
+locomotion generator takes a `base` pose and later built a local `base` from the
+stance; the keyed torso then no longer matched the one the legs had been solved
+against, and the run came out 66% airborne. It looked like an animation problem and
+was a scoping problem — caught only because the bench measures ground contact.
 
 **An action that was never played still reports its default weight of 1.** Testing
 `getEffectiveWeight()` alone to decide whether a clip is active declares every clip

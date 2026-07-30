@@ -49,6 +49,9 @@ const LIMITS = {
   locked: 0.012,   // m a foot may move when only the upper body is asked to change
   grip: 0.070,     // m the support fist may sit from the weapon it is holding
   recoil: 2.0,     // deg the muzzle must swing under sustained automatic fire
+  headStep: 0.045, // m the head may move in one frame, through any state change
+  churn: 0.60,     // how much blendspace weight may move in one frame
+  bob: 0.085,      // m the head may rise and fall over one locomotion cycle
 };
 
 const browser = await puppeteer.launch({
@@ -365,6 +368,72 @@ const report = await page.evaluate(async () => {
     settle(0);
   }
 
+  // ---- transitions ----
+  //
+  // Gameplay state is not continuous. A fighter who reaches his goal drops from
+  // 4.6 m/s to zero in one frame, and one frame of a fighter shoved by collision
+  // resolution points anywhere at all. Both used to reach the blendspace raw:
+  // stopping cut a deep leaning run pose straight to idle and threw the head 20 cm in
+  // a single frame, and the heading swinging past 60 degrees between frames made
+  // fighters snap between leaning left and leaning right twice every five seconds.
+  //
+  // Neither is visible in a steady walk, which is all every case above tests.
+  const headOf = () => {
+    rig.group.updateMatrixWorld(true);
+    return rig.group.worldToLocal(
+      new T.Vector3().setFromMatrixPosition(rig.bones.get('head').matrixWorld));
+  };
+  const transitions = [];
+  for (const [name, script] of [
+    ['stop', (i) => (i < 130 ? [4.4, 0, 1] : [0, 0, 1])],
+    ['start', (i) => (i < 60 ? [0, 0, 1] : [4.4, 0, 1])],
+    ['reverse', (i) => (i < 130 ? [3.2, 0, 1] : [3.2, 0, -1])],
+    // The pathological case: heading noise of the kind collision resolution produces.
+    ['jitter', (i) => [3.0, i % 2 ? 0.9 : -0.9, 0.4]],
+  ]) {
+    rig.group.position.set(0, 0, 0);
+    rig.phase = 0;
+    let head = null, worstHead = 0, worstChurn = 0, prevW = null;
+    for (let i = 0; i < 260; i++) {
+      const [sp, mx, mz] = script(i);
+      const len = Math.hypot(mx, mz) || 1;
+      rig.group.position.x += -(mx / len) * sp * DT;
+      rig.group.position.z += (mz / len) * sp * DT;
+      rig.setStance(sp, false, mx, mz);
+      rig.update(DT);
+      const h = headOf();
+      if (head && i > 20) worstHead = Math.max(worstHead, h.distanceTo(head));
+      head = h;
+      const w = Array.from(rig._dirW);
+      if (prevW && i > 20) {
+        let churn = 0;
+        for (let k = 0; k < 8; k++) churn += Math.abs(w[k] - prevW[k]);
+        worstChurn = Math.max(worstChurn, churn);
+      }
+      prevW = w;
+    }
+    transitions.push({ name, head: worstHead, churn: worstChurn });
+  }
+
+  // Steady-state head travel: how far the head rides up and down over a cycle with
+  // nothing else changing. This is the "heads bob a lot" number.
+  const bob = [];
+  for (const [name, sp, crouched] of [['walk', 1.6, false], ['run', 4.0, false], ['crouch', 1.4, true]]) {
+    rig.group.position.set(0, 0, 0);
+    rig._crouchK = crouched ? 1 : 0;
+    for (let i = 0; i < 200; i++) { rig.setStance(sp, crouched, 0, 1); rig.update(DT); }
+    const ys = [], xs = [];
+    for (let i = 0; i < 200; i++) {
+      rig.group.position.z += sp * DT;
+      rig.setStance(sp, crouched, 0, 1);
+      rig.update(DT);
+      const h = headOf();
+      ys.push(h.y); xs.push(h.x);
+    }
+    bob.push({ name, rise: Math.max(...ys) - Math.min(...ys), sway: Math.max(...xs) - Math.min(...xs) });
+  }
+  rig._crouchK = 0;
+
   // ---- support hand ----
   //
   // Does the left hand actually hold the weapon?
@@ -431,7 +500,7 @@ const report = await page.evaluate(async () => {
   rig.setWeapon(null, null);
 
   g.scene.remove(rig.group);
-  return { cases, locked, aimRange, grip };
+  return { cases, locked, aimRange, grip, transitions, bob };
 });
 
 await browser.close();
@@ -480,6 +549,20 @@ const a = report.aimRange;
 console.log(`  pitch sweep  ${(a.pitchSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.pitchSign > 0 ? 'up' : 'DOWN'}${bad(a.pitchSweep < 0.35, `pitch sweep only ${(a.pitchSweep * 57.3).toFixed(1)} deg`)}${bad(a.pitchSign <= 0, 'aim pitch is inverted')}`);
 console.log(`  lean spread  ${(a.leanSpread * 100).toFixed(1).padStart(6)} cm   sign ${a.leanSign > 0 ? 'right' : 'LEFT'}${bad(a.leanSpread < 0.10, `lean spread only ${(a.leanSpread * 100).toFixed(1)} cm`)}${bad(a.leanSign <= 0, 'setLean(+1) leans him left, not right')}`);
 console.log(`  yaw sweep    ${(a.yawSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.yawSign > 0 ? 'left' : 'RIGHT'}${bad(a.yawSweep < 0.35, `yaw sweep only ${(a.yawSweep * 57.3).toFixed(1)} deg`)}${bad(a.yawSign <= 0, 'aim yaw is inverted')}`);
+
+console.log('\ntransitions: gameplay state is not continuous, and the rig must not care');
+console.log('  case        worst head step   pole churn/frame');
+for (const t of report.transitions) {
+  console.log(`  ${t.name.padEnd(10)} ${t.head.toFixed(3).padStart(11)} m ${t.churn.toFixed(2).padStart(14)}`
+    + bad(t.head > LIMITS.headStep, `${t.name} moves the head ${(t.head * 100).toFixed(1)} cm in one frame`)
+    + bad(t.churn > LIMITS.churn, `${t.name} churns the blendspace ${t.churn.toFixed(2)}/frame`));
+}
+
+console.log('\nhead travel over one cycle (the "heads bob" number)');
+for (const b of report.bob) {
+  console.log(`  ${b.name.padEnd(8)} rise ${(b.rise * 100).toFixed(1).padStart(5)} cm   sway ${(b.sway * 100).toFixed(1).padStart(5)} cm`
+    + bad(b.rise > LIMITS.bob, `${b.name} head rises ${(b.rise * 100).toFixed(1)} cm`));
+}
 
 console.log('\nsupport hand: distance from the left fist to the weapon it should be holding');
 console.log('  weapon     aimed  walking crouched  firing   recoil');

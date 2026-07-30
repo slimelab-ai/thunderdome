@@ -434,11 +434,19 @@ RIFLE_GRIP = Vector((0.0, 0.036, -0.20))
 # 80 cm from a 60 cm arm, so the support hand could not have reached it in any pose. A
 # target you can measure cannot go wrong that way: `npm run fightercheck` reports the
 # distance from the left fist to the handguard, in every stance.
+# `blade` turns the torso so the support side leads, which is how anyone actually
+# stands behind a weapon. Without it the fighter is square on to the target with a
+# rifle held across a flat chest — technically holding it, and reading as a mannequin.
+# The arms are solved *after* the blade is applied and against world-space targets, so
+# blading the torso does not disturb the grip; the arms simply come out different.
 HOLDS = {
     # Low ready: weapon in tight, muzzle down a little, elbows in.
-    "carry": dict(wrist=(-0.135, -0.20, 1.24), barrel=(0.02, -1.0, -0.16)),
-    # Shouldered: butt into the right pec, barrel level down the sightline.
-    "aim": dict(wrist=(-0.115, -0.235, 1.345), barrel=(0.015, -1.0, 0.0)),
+    "carry": dict(wrist=(-0.135, -0.20, 1.24), barrel=(0.02, -1.0, -0.16),
+                  blade=14, drop=3),
+    # Shouldered: butt into the right pec, barrel level down the sightline, torso
+    # turned further in behind it.
+    "aim": dict(wrist=(-0.115, -0.235, 1.345), barrel=(0.015, -1.0, 0.0),
+                blade=25, drop=5),
 }
 
 
@@ -506,6 +514,28 @@ def _apply(rig, pose):
 # Filled in by `fit_holds` once the armature exists, because they are solved, not typed.
 CARRY_ARMS = {}
 AIM_ARMS = {}
+CARRY_TORSO = {}
+AIM_TORSO = {}
+
+
+def torso_for(blade, drop):
+    """Spine and chest for a bladed stance.
+
+    The blade is split between the two so the twist runs up the back rather than
+    hinging at one joint, and the head is counter-turned by most of it — a fighter
+    keeps his eyes on the target while his chest turns away from it, which is the
+    entire point of blading. Leaving the head to ride the chest is what made the
+    upper body read as one rigid block.
+    """
+    return {
+        "hips": (2, blade * 0.22, 0),
+        "spine": (4 + drop * 0.4, blade * 0.34, 0),
+        "chest": (2 + drop * 0.6, blade * 0.44, 0),
+        "neck": (-3 - drop * 0.3, -blade * 0.55, 0),
+        "head": (0, -blade * 0.45, 0),
+        "shoulder_r": (0, 0, -4), "shoulder_l": (0, 0, 6),
+    }
+
 
 STANCE = {
     "hips": (2, 0, 0), "spine": (4, 0, 0), "chest": (2, 0, 0), "neck": (-3, 0, 0),
@@ -522,14 +552,20 @@ def fit_holds(rig):
     """
     for name, spec in HOLDS.items():
         clear_pose(rig)
-        _apply(rig, {"spine": (4, 0, 0), "chest": (2, 0, 0),
-                     "shoulder_r": (0, 0, -4), "shoulder_l": (0, 0, 6)})
+        torso = torso_for(spec["blade"], spec["drop"])
+        _apply(rig, torso)
         pose, err = solve_hold(rig, Vector(spec["wrist"]), spec["barrel"])
         if err > 0.02:
             raise RuntimeError(f"{name} hold: hands missed the weapon by {err * 1000:.0f} mm")
-        (CARRY_ARMS if name == "carry" else AIM_ARMS).update(pose)
+        if name == "carry":
+            CARRY_ARMS.update(pose)
+            CARRY_TORSO.update(torso)
+        else:
+            AIM_ARMS.update(pose)
+            AIM_TORSO.update(torso)
         log(f"  {name} hold solved, worst hand error {err * 1000:.1f} mm")
     STANCE.update(CARRY_ARMS)
+    STANCE.update(CARRY_TORSO)
     clear_pose(rig)
 
 
@@ -679,13 +715,18 @@ def solve_two_bone(rig, upper_n, lower_n, tip_n, a, b, target, pole, tip_dir):
 # to stay inside a sphere of radius 0.85 m around the hip, and a longer stride pushes
 # the foot further out, so a longer stride *requires* more bend. Too little and the leg
 # hits its limit at the extremes of the step and the stride quietly truncates.
+# `bounce` and `sway` are deliberately below what a real pelvis does. The head sits a
+# metre above the hips and every degree of spine twist multiplies there, so a
+# physically honest pelvis put 9 cm of rise and 10 cm of side-to-side into the head and
+# the fighters read as bobbleheads. Halving it, and counter-turning the neck against
+# the chest, is what game characters have always done.
 GAIT_SPECS = {
     "walk":   dict(length=33, stride=1.32, side_stride=0.86, duty=0.60, lift=0.10,
-                   sag=0.135, bounce=0.022, sway=0.022, arm=20, lean=5, hip_z=0.94),
+                   sag=0.135, bounce=0.013, sway=0.012, arm=20, lean=5, hip_z=0.94),
     "run":    dict(length=33, stride=2.20, side_stride=1.44, duty=0.42, lift=0.20,
-                   sag=0.175, bounce=0.045, sway=0.030, arm=36, lean=12, hip_z=0.94),
+                   sag=0.175, bounce=0.024, sway=0.017, arm=36, lean=12, hip_z=0.94),
     "crouch": dict(length=41, stride=0.84, side_stride=0.60, duty=0.64, lift=0.07,
-                   sag=0.030, bounce=0.012, sway=0.018, arm=9, lean=4, hip_z=0.74),
+                   sag=0.030, bounce=0.008, sway=0.010, arm=9, lean=4, hip_z=0.74),
 }
 
 # The blendspace poles, in order of increasing angle from straight ahead.
@@ -742,7 +783,7 @@ def _foot_path(u, amp, duty, lift, travel):
     return travel[0] * along, travel[1] * along, height
 
 
-def _stride_cycle(rig, name, index, spec, base=None, torso=None):
+def _stride_cycle(rig, name, index, spec, torso=None):
     """One locomotion cycle in one direction of travel.
 
     Directions are `f`, `b`, `l`, `r`. They exist as separate clips because that is
@@ -758,7 +799,6 @@ def _stride_cycle(rig, name, index, spec, base=None, torso=None):
     lateral pair moved both feet the same way at once, and the diagonal blend measured
     0.10 m of foot travel against 0.55 m for the pure forward.
     """
-    base = base or {}
     torso = torso or {}
     new_action(rig, name)
     clear_pose(rig)
@@ -799,10 +839,29 @@ def _stride_cycle(rig, name, index, spec, base=None, torso=None):
         body_lean = spec["lean"] * lean_scale
 
         counter = 1.0 - lateral * 0.6      # arms and shoulders quieten in a shuffle
-        pose = merged(STANCE, torso, {
-            "hips": (body_lean, 0, -swing * 2.0 * counter),
-            "spine": (body_lean * 0.6, swing * 3.0 * counter, -right * 4.0),
-            "chest": (2, -swing * 4.0 * counter, 0),
+        # Counter-rotation runs *on top of* the bladed stance rather than replacing it,
+        # so a walking fighter keeps his weapon-side torso turn instead of squaring up
+        # the moment he takes a step.
+        # Named `rest`, not `base`: `base` is this function's own parameter, and
+        # shadowing it merged the plain stance back over the pose *after* the legs had
+        # been solved against the real one — so the keyed hips and the solved feet
+        # disagreed, and the run came out 66% airborne.
+        rest = merged(STANCE, torso) if torso else STANCE
+        twist = swing * 3.0 * counter
+        # The pelvis rolls and twists; everything above gives most of it back.
+        #
+        # A head that simply rides the chest swung 10 cm side to side at walking pace,
+        # which is the whole of "the heads look funny". The roll terms below sum to
+        # about zero at the neck, so the pelvis still works and the head stays level —
+        # the head sits 1.4 m up, where two degrees of pelvis roll is five centimetres.
+        roll = swing * 1.4 * counter
+        pose = merged(rest, {
+            "hips": (rest["hips"][0] + body_lean, rest["hips"][1], -roll),
+            "spine": (rest["spine"][0] + body_lean * 0.6, rest["spine"][1] + twist,
+                      -right * 4.0 + roll * 0.62),
+            "chest": (rest["chest"][0] + 2, rest["chest"][1] - twist * 1.3, roll * 0.38),
+            "neck": (rest["neck"][0], rest["neck"][1] + twist * 0.5, 0),
+            "head": (rest.get("head", (0, 0, 0))[0], rest.get("head", (0, 0, 0))[1] + twist * 0.15, 0),
             "upperarm_l": arm("upperarm_l", dx=-spec["arm"] * swing * counter),
             "upperarm_r": arm("upperarm_r", dx=spec["arm"] * 0.25 * swing * counter),
         })
@@ -837,7 +896,7 @@ def _stride_cycle(rig, name, index, spec, base=None, torso=None):
             residual = max(residual, err)
             legs.update(solved)
 
-        key(rig, frame, merged(pose, base, legs),
+        key(rig, frame, merged(pose, legs),
             extra_loc={"hips": (sway,) + hips_loc(down=HIP_REST_Z - hips_z)[1:]})
 
     if residual > 2e-3:
@@ -922,12 +981,11 @@ def anim_aim_pose(rig):
     """
     new_action(rig, "aim_pose")
     clear_pose(rig)
-    lift = {"spine": (2, 0, 0), "chest": (2, -5, 0), "neck": (5, 0, 0), "head": (3, -2, 0),
-            "shoulder_r": (0, 0, -9), "shoulder_l": (0, 0, 10)}
-    rest = {k: (0, 0, 0) for k in lift}
-    key(rig, 1, merged(rest, CARRY_ARMS))
-    key(rig, 10, merged(lift, AIM_ARMS))
-    key(rig, 20, merged(lift, AIM_ARMS))
+    lift = {"shoulder_r": (0, 0, -9), "shoulder_l": (0, 0, 10)}
+    rest = {"shoulder_r": (0, 0, -4), "shoulder_l": (0, 0, 6)}
+    key(rig, 1, merged(rest, CARRY_TORSO, CARRY_ARMS))
+    key(rig, 10, merged(lift, AIM_TORSO, AIM_ARMS))
+    key(rig, 20, merged(lift, AIM_TORSO, AIM_ARMS))
 
 
 # Aim offset.

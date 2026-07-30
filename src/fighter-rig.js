@@ -59,7 +59,8 @@ const POLE = DIRS.map((_, i) => [Math.sin(i * Math.PI / 4), Math.cos(i * Math.PI
  *
  * These are measured, not chosen. `npm run fightercheck` walks the rig in every
  * direction, watches what the planted foot actually gives back, and prints this table;
- * these are its numbers. They start life as the strides the clips were authored to in
+ * these are its numbers, with mirror pairs averaged so measurement noise does not end
+ * up baked in as an asymmetry. They start life as the strides the clips were authored to in
  * tools/blender/fighter.py, but authoring rounds them — resampling to whole frames,
  * linear keys clipping a corner, a leg reaching its limit at the extreme of a stride —
  * so the number that belongs here is what came out, not what went in. Re-run the bench
@@ -69,9 +70,9 @@ const POLE = DIRS.map((_, i) => [Math.sin(i * Math.PI / 4), Math.cos(i * Math.PI
 // stride. Combatants move at about 3 m/s and sprint at 4.4, so the walk/run crossover
 // sits low enough that ordinary advancing already reads as a jog.
 const GAITS = {
-  walk: { prefix: 'walk', strides: [1.34, 1.00, 0.84, 1.00, 1.34, 1.00, 0.84, 1.00], speed: 1.5 },
-  run: { prefix: 'run', strides: [2.09, 1.60, 1.35, 1.60, 2.09, 1.60, 1.35, 1.60], speed: 3.6 },
-  crouch: { prefix: 'crouch', strides: [0.84, 0.67, 0.57, 0.67, 0.84, 0.67, 0.57, 0.67], speed: 1.4 },
+  walk: { prefix: 'walk', strides: [1.34, 1.00, 0.85, 1.00, 1.34, 1.00, 0.85, 1.00], speed: 1.5 },
+  run: { prefix: 'run', strides: [2.13, 1.59, 1.40, 1.59, 2.13, 1.59, 1.40, 1.59], speed: 3.6 },
+  crouch: { prefix: 'crouch', strides: [0.81, 0.66, 0.59, 0.66, 0.81, 0.66, 0.59, 0.66], speed: 1.4 },
 };
 
 // Additive poles sampled by aim pitch and yaw, and by lean.
@@ -79,6 +80,9 @@ const AIM_POLES = ['aim_up', 'aim_down', 'aim_left', 'aim_right'];
 const LEAN_POLES = ['lean_l', 'lean_r'];
 // How far the poles were authored to reach, in radians. Aim beyond this clamps.
 const AIM_RANGE = { pitch: 0.42, yaw: 0.50 };
+// Fastest the blendspace heading may swing, in radians per second. A full reversal
+// takes about a third of a second, which is roughly how long it takes a person.
+const MAX_TURN = 10.0;
 
 const BONE_LENGTH = {
   head: 0.22, chest: 0.16, spine: 0.18, hips: 0.14,
@@ -228,11 +232,16 @@ export class FighterRig {
     this.phase = 0;
     this._dirW = new Float32Array(8);
     this._speed = 0;
+    this._speedK = 0;
+    this._moveK = 0;
     this._crouchK = 0;
     this._crouching = false;
-    // Direction of travel in the fighter's own frame: x right, z forward.
-    this._moveX = 0;
-    this._moveZ = 1;
+    // Direction of travel in the fighter's own frame: x right, z forward. `_want` is
+    // what the caller last asked for, `_avg` the smoothed version of it, `_move` the
+    // rate-limited heading the blendspace actually runs on.
+    this._wantX = 0; this._wantZ = 1;
+    this._avgX = 0; this._avgZ = 1;
+    this._moveX = 0; this._moveZ = 1;
 
     // --- additive layer: aim pose, aim offset, lean ---
     this.aimAction = this.actions.get('aim_pose');
@@ -331,7 +340,39 @@ export class FighterRig {
     this._speed = speed;
     this._crouching = crouching;
     const len = Math.hypot(moveX, moveZ);
-    if (len > 1e-4) { this._moveX = moveX / len; this._moveZ = moveZ / len; }
+    if (len > 1e-4) { this._wantX = moveX / len; this._wantZ = moveZ / len; }
+  }
+
+  /**
+   * Turn the blendspace heading toward where the body is actually going.
+   *
+   * The caller hands over one frame's displacement, and one frame of a fighter shoved
+   * sideways by collision resolution points anywhere at all. Fed straight in, the
+   * heading swung more than 60 degrees in a single frame about twice every five
+   * seconds, and since the poles either side of the circle lean opposite ways, that
+   * read as a fighter snapping between leaning left and leaning right — plus a 32 cm
+   * single-frame jump in his head.
+   *
+   * Two damping stages, because one is not enough. Averaging alone still lets a
+   * sustained reversal cut through zero and come out the far side instantly; a rate
+   * limit alone still tracks every jitter, just smoothly. Together the heading turns
+   * the way a body turns, and a genuine 180 takes about a third of a second.
+   */
+  _steerHeading(dt) {
+    const k = Math.min(1, dt * 9);
+    this._avgX += ((this._wantX ?? 0) - this._avgX) * k;
+    this._avgZ += ((this._wantZ ?? 1) - this._avgZ) * k;
+    if (Math.hypot(this._avgX, this._avgZ) < 1e-3) return;   // mid-reversal, hold
+
+    const want = Math.atan2(this._avgX, this._avgZ);
+    const now = Math.atan2(this._moveX, this._moveZ);
+    let d = want - now;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    const step = Math.min(Math.abs(d), MAX_TURN * dt) * Math.sign(d);
+    const a = now + step;
+    this._moveX = Math.sin(a);
+    this._moveZ = Math.cos(a);
   }
 
   /**
@@ -339,14 +380,25 @@ export class FighterRig {
    */
   _updateLocomotion(dt) {
     const speed = this._speed;
+    this._steerHeading(dt);
     // Crouch is eased rather than switched: dropping stance mid-stride otherwise pops
     // the hips down a foot in a single frame.
     this._crouchK += ((this._crouching ? 1 : 0) - this._crouchK) * Math.min(1, dt * 10);
     const crouchK = this._crouchK;
 
-    // How much of the body is moving at all. Smoothstep rather than a threshold, so
-    // starting and stopping eases the walk in instead of snapping it on.
-    const moveK = THREE.MathUtils.smoothstep(speed, 0.25, 0.85);
+    // How much of the body is moving at all.
+    //
+    // Eased over time, not just shaped by speed. Gameplay speed is not continuous —
+    // a fighter who reaches his goal goes from 4.6 m/s to zero in one frame — and
+    // reading it directly cut a deep, leaning run pose straight to idle, which threw
+    // his head 20 cm in a single frame. Every worst-case pop measured in a live match
+    // was this and nothing else.
+    const moveTarget = THREE.MathUtils.smoothstep(speed, 0.25, 0.85);
+    this._moveK += (moveTarget - this._moveK) * Math.min(1, dt * 7);
+    const moveK = this._moveK;
+    // The walk/run split is eased for the same reason: decelerating through the
+    // crossover should be a transition, not a switch.
+    this._speedK += (speed - this._speedK) * Math.min(1, dt * 6);
 
     // Directional weights: the two poles bracketing the heading, blended by angle.
     // Only ever two, so the pose is an interpolation between neighbours rather than a
@@ -363,7 +415,7 @@ export class FighterRig {
     // Gait weights. Walk and run blend against each other on speed; crouch is a
     // separate axis that fades in over both.
     const runK = THREE.MathUtils.clamp(
-      (speed - GAITS.walk.speed) / (GAITS.run.speed - GAITS.walk.speed), 0, 1);
+      (this._speedK - GAITS.walk.speed) / (GAITS.run.speed - GAITS.walk.speed), 0, 1);
     const gaitW = {
       walk: moveK * (1 - crouchK) * (1 - runK),
       run: moveK * (1 - crouchK) * runK,
