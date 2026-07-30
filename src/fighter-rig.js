@@ -22,20 +22,54 @@ import { surface, fighterUniform } from './materials.js';
 const MODEL_URL = '/assets/models/fighter.glb';
 
 // Clips that layer over locomotion. Converted to additive on load.
-const ADDITIVE = new Set(['aim_pose', 'fire', 'reload', 'throw', 'hit_react', 'heal']);
+const ADDITIVE = new Set([
+  'aim_pose', 'fire', 'reload', 'throw', 'hit_react', 'heal',
+  'aim_up', 'aim_down', 'aim_left', 'aim_right', 'lean_l', 'lean_r',
+]);
 // Full-body one-shots that take over completely.
 const DEATHS = ['death_front', 'death_back', 'death_collapse'];
 
 /**
- * How fast each locomotion clip's stride carries the body at timeScale 1, in m/s.
- * The rig scales playback by actual speed over this, which is what stops feet
- * sliding — the single most obvious tell of an unpolished character.
+ * The lower-body blendspace, Unreal-style.
+ *
+ * Each gait has four directional cycles; the runtime weights whichever are adjacent to
+ * the actual direction of travel, so a fighter strafing gets a cross-step rather than
+ * a forward walk played while sliding sideways. `stride` is the ground distance one
+ * full cycle covers, which is what keeps the feet planted: playback is driven by
+ * distance travelled, not by a clock.
  */
-const CLIP_SPEED = {
-  walk: 1.05,
-  run: 2.40,
-  crouch_walk: 0.85,
+// The eight poles, in order of increasing angle from straight ahead. Must match
+// DIRS in tools/blender/fighter.py — the clip names, the order and the strides are one
+// table split across two languages.
+const DIRS = ['f', 'fr', 'r', 'br', 'b', 'bl', 'l', 'fl'];
+// Unit (rightward, forward) for each pole.
+const POLE = DIRS.map((_, i) => [Math.sin(i * Math.PI / 4), Math.cos(i * Math.PI / 4)]);
+
+/**
+ * Ground covered per cycle, per pole, in metres. Ordered as DIRS.
+ *
+ * These are measured, not chosen. `npm run fightercheck` walks the rig in every
+ * direction, watches what the planted foot actually gives back, and prints this table;
+ * these are its numbers. They start life as the strides the clips were authored to in
+ * tools/blender/fighter.py, but authoring rounds them — resampling to whole frames,
+ * linear keys clipping a corner, a leg reaching its limit at the extreme of a stride —
+ * so the number that belongs here is what came out, not what went in. Re-run the bench
+ * after any change to the gait specs and paste the table it prints.
+ */
+// `speed` is where a gait takes over, not how fast it plays -- playback comes from the
+// stride. Combatants move at about 3 m/s and sprint at 4.4, so the walk/run crossover
+// sits low enough that ordinary advancing already reads as a jog.
+const GAITS = {
+  walk: { prefix: 'walk', strides: [1.34, 1.00, 0.84, 1.00, 1.34, 1.00, 0.84, 1.00], speed: 1.5 },
+  run: { prefix: 'run', strides: [2.09, 1.60, 1.35, 1.60, 2.09, 1.60, 1.35, 1.60], speed: 3.6 },
+  crouch: { prefix: 'crouch', strides: [0.84, 0.67, 0.57, 0.67, 0.84, 0.67, 0.57, 0.67], speed: 1.4 },
 };
+
+// Additive poles sampled by aim pitch and yaw, and by lean.
+const AIM_POLES = ['aim_up', 'aim_down', 'aim_left', 'aim_right'];
+const LEAN_POLES = ['lean_l', 'lean_r'];
+// How far the poles were authored to reach, in radians. Aim beyond this clamps.
+const AIM_RANGE = { pitch: 0.42, yaw: 0.50 };
 
 const BONE_LENGTH = {
   head: 0.22, chest: 0.16, spine: 0.18, hips: 0.14,
@@ -145,18 +179,53 @@ export class FighterRig {
       const action = this.mixer.clipAction(clip);
       if (ADDITIVE.has(name)) {
         action.blendMode = THREE.AdditiveAnimationBlendMode;
-        action.loop = name === 'aim_pose' ? THREE.LoopOnce : THREE.LoopOnce;
+        action.loop = THREE.LoopOnce;
         action.clampWhenFinished = true;
       }
       action.enabled = true;
       this.actions.set(name, action);
     }
 
-    // base locomotion layer
-    this.locomotion = null;
-    this._playLocomotion('idle', 0);
+    // --- base layer: the locomotion blendspace ---
+    //
+    // Every cycle in every gait runs at once, at weight zero until it is needed, and
+    // none of them keep their own clock: `timeScale = 0` and `update` writes `.time`
+    // from one shared phase. That is what makes the blend legal. Two clips crossfaded
+    // at independent times will have one foot planting while the other lifts, and the
+    // result slides -- the blend is only a blend if the poses agree about where in the
+    // stride they are.
+    this._loco = [];
+    for (const [gait, spec] of Object.entries(GAITS)) {
+      const entry = { gait, strides: spec.strides, speed: spec.speed, actions: [] };
+      for (const dir of DIRS) {
+        const action = this.actions.get(`${spec.prefix}_${dir}`);
+        if (!action) continue;
+        action.play();
+        action.timeScale = 0;
+        action.setEffectiveWeight(0);
+        entry.actions.push(action);
+        entry.duration = action.getClip().duration;
+      }
+      if (entry.actions.length === DIRS.length) this._loco.push(entry);
+    }
+    this.idleAction = this.actions.get('idle');
+    this.crouchIdleAction = this.actions.get('crouch_idle');
+    for (const a of [this.idleAction, this.crouchIdleAction]) {
+      if (a) { a.play(); a.setEffectiveWeight(0); }
+    }
+    if (this.idleAction) this.idleAction.setEffectiveWeight(1);
+    this.locomotion = this.idleAction;
 
-    // additive aim, held at weight
+    this.phase = 0;
+    this._dirW = new Float32Array(8);
+    this._speed = 0;
+    this._crouchK = 0;
+    this._crouching = false;
+    // Direction of travel in the fighter's own frame: x right, z forward.
+    this._moveX = 0;
+    this._moveZ = 1;
+
+    // --- additive layer: aim pose, aim offset, lean ---
     this.aimAction = this.actions.get('aim_pose');
     this.aimAction.play();
     this.aimAction.paused = true;
@@ -164,14 +233,28 @@ export class FighterRig {
     this.aimAction.setEffectiveWeight(0);
     this.aimWeight = 0;
 
+    // Poles are held at their final frame; only the weight ever changes. Being
+    // additive, they sum onto the locomotion pose instead of replacing it, so the
+    // legs keep walking while the spine turns to follow a target.
+    this._poles = new Map();
+    for (const name of [...AIM_POLES, ...LEAN_POLES]) {
+      const action = this.actions.get(name);
+      if (!action) continue;
+      action.play();
+      action.paused = true;
+      action.time = action.getClip().duration;
+      action.setEffectiveWeight(0);
+      this._poles.set(name, { action });
+    }
+
     this.weaponSocket = this.bones.get('weapon') || this.bones.get('hand_r');
     this.dead = false;
     this.aimPitch = 0;
+    this.aimYaw = 0;
     this._aimPitchTarget = 0;
-    // Bones the procedural aim writes to, and the un-aimed rotation each had last
-    // frame. See `update` for why keeping this is not optional.
-    this._aimBones = ['chest', 'head'].map((n) => this.bones.get(n)).filter(Boolean);
-    this._preAim = this._aimBones.map((b) => b.quaternion.clone());
+    this._aimYawTarget = 0;
+    this.lean = 0;
+    this._leanTarget = 0;
 
     this.hitboxes = this._buildHitboxes(debugHitboxes);
   }
@@ -203,38 +286,108 @@ export class FighterRig {
     for (const m of this.hitboxes) m.userData.combatant = combatant;
   }
 
-  _playLocomotion(name, fade = 0.2, timeScale = 1) {
-    const next = this.actions.get(name);
-    if (!next) return;
-    next.timeScale = timeScale;
-    if (this.locomotion === next) return;
-    next.reset().setEffectiveWeight(1).play();
-    if (this.locomotion) this.locomotion.crossFadeTo(next, fade, true);
-    this.locomotion = next;
+  /**
+   * Drive the base layer from gameplay state.
+   *
+   * @param {number} speed     metres per second, actual
+   * @param {boolean} crouching
+   * @param {number} [moveX]   rightward component of travel, in the fighter's frame
+   * @param {number} [moveZ]   forward component of travel, in the fighter's frame
+   *
+   * `moveX`/`moveZ` need not be normalised -- only the direction is read. Omit them
+   * and the fighter is assumed to be moving where he faces, which is what a rig with
+   * no strafe information used to do.
+   */
+  setStance(speed, crouching, moveX = 0, moveZ = 1) {
+    if (this.dead) return;
+    this._speed = speed;
+    this._crouching = crouching;
+    const len = Math.hypot(moveX, moveZ);
+    if (len > 1e-4) { this._moveX = moveX / len; this._moveZ = moveZ / len; }
   }
 
   /**
-   * Drive the base layer from gameplay state.
-   * @param {number} speed    metres per second, actual
-   * @param {boolean} crouching
+   * Resolve the blendspace and write every base-layer weight. Runs before the mixer.
    */
-  setStance(speed, crouching) {
-    if (this.dead) return;
-    const moving = speed > 0.35;
-    let name;
-    if (crouching) name = moving ? 'crouch_walk' : 'crouch_idle';
-    else if (!moving) name = 'idle';
-    else name = speed > 3.4 ? 'run' : 'walk';
+  _updateLocomotion(dt) {
+    const speed = this._speed;
+    // Crouch is eased rather than switched: dropping stance mid-stride otherwise pops
+    // the hips down a foot in a single frame.
+    this._crouchK += ((this._crouching ? 1 : 0) - this._crouchK) * Math.min(1, dt * 10);
+    const crouchK = this._crouchK;
 
-    // Match playback to real speed so the feet stay planted. Clamped: a heavily
-    // leg-wounded fighter limping at 1 m/s should look slow, not frozen.
-    const ref = CLIP_SPEED[name];
-    const timeScale = ref ? THREE.MathUtils.clamp(speed / ref, 0.45, 1.9) : 1;
-    if (this.locomotion === this.actions.get(name)) {
-      this.locomotion.timeScale = timeScale;
-    } else {
-      this._playLocomotion(name, 0.18, timeScale);
+    // How much of the body is moving at all. Smoothstep rather than a threshold, so
+    // starting and stopping eases the walk in instead of snapping it on.
+    const moveK = THREE.MathUtils.smoothstep(speed, 0.25, 0.85);
+
+    // Directional weights: the two poles bracketing the heading, blended by angle.
+    // Only ever two, so the pose is an interpolation between neighbours rather than a
+    // soup of four, and at a pole it is that clip exactly.
+    const dirW = this._dirW;
+    dirW.fill(0);
+    let a = Math.atan2(this._moveX, this._moveZ) / (Math.PI / 4);
+    if (a < 0) a += 8;
+    const lo = Math.floor(a) % 8;
+    const frac = a - Math.floor(a);
+    dirW[lo] = 1 - frac;
+    dirW[(lo + 1) % 8] = frac;
+
+    // Gait weights. Walk and run blend against each other on speed; crouch is a
+    // separate axis that fades in over both.
+    const runK = THREE.MathUtils.clamp(
+      (speed - GAITS.walk.speed) / (GAITS.run.speed - GAITS.walk.speed), 0, 1);
+    const gaitW = {
+      walk: moveK * (1 - crouchK) * (1 - runK),
+      run: moveK * (1 - crouchK) * runK,
+      crouch: moveK * crouchK,
+    };
+
+    // Advance the shared phase by ground distance, not by elapsed time. This is the
+    // whole reason the feet stay planted: at any speed, one cycle of clip covers one
+    // cycle's worth of ground.
+    //
+    // The stride is blended exactly the way the poses are, over both axes. It has to
+    // be: a cross-step covers less ground than a forward stride, so a single number
+    // per gait is right in one direction and sliding in the other three. The values
+    // in GAITS are not estimates — `npm run fightercheck` solves for them from the
+    // measured motion of the planted foot and prints the table.
+    // The strides are summed as *vectors*, not as scalars, and that distinction is the
+    // whole diagonal problem. Blending a forward cycle with a rightward one produces a
+    // foot that travels the diagonal, and the diagonal of two half-weighted
+    // perpendicular strides is 0.71 of either — not the 1.0 a scalar average gives.
+    // Averaging the numbers instead of the vectors slid every diagonal by 40%.
+    let sx = 0, sz = 0, gaitTotal = 0;
+    for (const entry of this._loco) {
+      const w = gaitW[entry.gait] || 0;
+      if (w <= 1e-4) continue;
+      for (let i = 0; i < 8; i++) {
+        if (dirW[i] <= 0) continue;
+        const k = w * dirW[i] * entry.strides[i];
+        sx += k * POLE[i][0];
+        sz += k * POLE[i][1];
+      }
+      gaitTotal += w;
     }
+    // Projected onto the actual heading, because only the component along it cancels
+    // the body's motion; anything perpendicular is slide the blend cannot avoid.
+    const stride = gaitTotal > 1e-4
+      ? Math.max(0.2, Math.abs(sx * this._moveX + sz * this._moveZ) / gaitTotal)
+      : GAITS.walk.strides[0];
+    this.phase = (this.phase + (speed * dt) / stride) % 1;
+    if (this.phase < 0) this.phase += 1;
+
+    for (const entry of this._loco) {
+      const gw = gaitW[entry.gait] || 0;
+      for (let i = 0; i < 8; i++) {
+        const action = entry.actions[i];
+        action.setEffectiveWeight(gw * dirW[i]);
+        if (gw > 1e-4 && dirW[i] > 0) action.time = this.phase * entry.duration;
+      }
+    }
+
+    const rest = 1 - moveK;
+    if (this.idleAction) this.idleAction.setEffectiveWeight(rest * (1 - crouchK));
+    if (this.crouchIdleAction) this.crouchIdleAction.setEffectiveWeight(rest * crouchK);
   }
 
   /** 0 = weapon down, 1 = shouldered and on target. */
@@ -243,13 +396,33 @@ export class FighterRig {
   }
 
   /**
-   * Where the fighter is looking, as a pitch in radians. Applied procedurally after
-   * the mixer runs, split across chest and head, so a fighter shooting up at a
-   * gantry actually leans back and looks up.
+   * Where the fighter is looking, relative to where his hips face.
+   *
+   * This drives the aim offset -- four authored additive poles blended by pitch and
+   * yaw -- rather than rotating the spine in code. An authored pose distributes the
+   * turn across spine, chest, neck and head the way a body actually does; the
+   * procedural version bent one joint and read as a broken neck. Yaw is what lets a
+   * fighter track a target beside him without turning his feet.
+   *
+   * @param {number} pitch radians, positive is up
+   * @param {number} yaw   radians, positive is to his left
    */
-  setAimPitch(radians) {
-    this._aimPitchTarget = THREE.MathUtils.clamp(radians, -0.6, 0.6);
+  setAim(pitch, yaw = 0) {
+    this._aimPitchTarget = THREE.MathUtils.clamp(pitch, -0.8, 0.8);
+    this._aimYawTarget = THREE.MathUtils.clamp(yaw, -0.9, 0.9);
   }
+
+  /** Back-compat: pitch only. */
+  setAimPitch(radians) { this.setAim(radians, this._aimYawTarget); }
+
+  /**
+   * Lean out from cover. -1 is hard left, +1 hard right.
+   *
+   * Rolling the whole object was what this used to be, which pivots the fighter about
+   * a point between his feet and lifts one boot clear of the floor. A lean is a spine
+   * bend, so it is an authored additive pose like the aim offset.
+   */
+  setLean(k) { this._leanTarget = THREE.MathUtils.clamp(k, -1, 1); }
 
   /** Fire off a one-shot additive clip. Retriggering restarts it. */
   trigger(name, weight = 1) {
@@ -296,45 +469,39 @@ export class FighterRig {
     // Weights are set every frame rather than on transition: aim comes and goes
     // continuously as targets appear, and easing it here keeps the shoulder-up smooth
     // without a state machine for it.
-    const current = this.aimAction.getEffectiveWeight();
-    this.aimAction.setEffectiveWeight(current + (this.aimWeight - current) * Math.min(1, dt * 9));
+    if (!this.dead) {
+      const current = this.aimAction.getEffectiveWeight();
+      this.aimAction.setEffectiveWeight(current + (this.aimWeight - current) * Math.min(1, dt * 9));
 
-    // Undo last frame's procedural aim before the mixer runs.
-    //
-    // The aim pass *multiplies* a pitch onto the chest and head. That is only safe if
-    // the mixer overwrites those bones every frame — and it does not: a clip with no
-    // channel for a bone leaves it untouched, so the offset compounds, and a fighter's
-    // head rotates a little further every frame until it has spun all the way round.
-    // Restoring the pre-aim rotation first makes the pass idempotent. When the mixer
-    // does write the bone, this restore is simply overwritten and costs nothing.
-    for (let i = 0; i < this._aimBones.length; i++) {
-      this._aimBones[i].quaternion.copy(this._preAim[i]);
+      this._updateLocomotion(dt);
+
+      // Ease towards the requested aim, then split it across the poles. Both poles on
+      // an axis are never active at once, so the additive sum stays inside the range
+      // the poses were authored for and the spine cannot fold past its limit.
+      const k = Math.min(1, dt * 9);
+      this.aimPitch += (this._aimPitchTarget - this.aimPitch) * k;
+      this.aimYaw += (this._aimYawTarget - this.aimYaw) * k;
+      this.lean += (this._leanTarget - this.lean) * Math.min(1, dt * 7);
+
+      const p = THREE.MathUtils.clamp(this.aimPitch / AIM_RANGE.pitch, -1, 1);
+      const y = THREE.MathUtils.clamp(this.aimYaw / AIM_RANGE.yaw, -1, 1);
+      this._setPole('aim_up', Math.max(0, p));
+      this._setPole('aim_down', Math.max(0, -p));
+      this._setPole('aim_left', Math.max(0, y));
+      this._setPole('aim_right', Math.max(0, -y));
+      this._setPole('lean_l', Math.max(0, -this.lean));
+      this._setPole('lean_r', Math.max(0, this.lean));
     }
 
     this.mixer.update(dt);
 
-    for (let i = 0; i < this._aimBones.length; i++) {
-      this._preAim[i].copy(this._aimBones[i].quaternion);
-    }
-
-    // Procedural aim, after the mixer so it composes on top of the animation rather
-    // than being overwritten by it.
-    if (!this.dead) {
-      this.aimPitch += (this._aimPitchTarget - this.aimPitch) * Math.min(1, dt * 8);
-      if (Math.abs(this.aimPitch) > 1e-4) {
-        this._pitchBone('chest', this.aimPitch * 0.55);
-        this._pitchBone('head', this.aimPitch * 0.45);
-      }
-      // Pins last: they are absolute, so anything above them is deliberately ignored.
-      if (this.pinned.size) this._applyPins();
-    }
+    // Pins last: they are absolute, so anything above them is deliberately ignored.
+    if (!this.dead && this.pinned.size) this._applyPins();
   }
 
-  _pitchBone(name, radians) {
-    const bone = this.bones.get(name);
-    if (!bone) return;
-    _q.setFromAxisAngle(_X, radians);
-    bone.quaternion.multiply(_q);
+  _setPole(name, weight) {
+    const pole = this._poles.get(name);
+    if (pole) pole.action.setEffectiveWeight(weight);
   }
 
   /**

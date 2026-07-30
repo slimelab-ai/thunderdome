@@ -10,7 +10,7 @@ import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { SpectatorCamera } from './spectator-camera.js';
-import { preloadFighter, fighterReady } from './fighter-rig.js';
+import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
 import { preloadViewmodel } from './viewmodel.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
@@ -2203,6 +2203,7 @@ window.__game = {
   get scene() { return scene; }, get arena() { return arena; },
   get pipeline() { return pipeline; },
   THREE,                                  // capture/diagnostic poses need constructors
+  FighterRig,                             // tools/fightercheck.mjs drives a rig alone
   items: { makeItem, autoPlace },         // capture poses stock a pack to test reloads
   assetsReady,                            // tools/shot.mjs waits on this before posing
   setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },

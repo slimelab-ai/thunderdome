@@ -13,6 +13,7 @@
     "assets:models": "node tools/blender/build.mjs",
     "shot": "node tools/shot.mjs",
     "animcheck": "node tools/animcheck.mjs",
+    "fightercheck": "node tools/fightercheck.mjs",
     "simulate:liquidation": "node tools/liquidation-sim/run.mjs"
   },
   "dependencies": {

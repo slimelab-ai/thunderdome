@@ -33,7 +33,7 @@ import bpy
 import math
 import os
 import sys
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from td_lib import reset, cube, cyl, sphere, export, log, apply_modifiers, auto_smooth  # noqa: E402
@@ -454,53 +454,291 @@ def anim_idle(rig):
         }))
 
 
-def _walk_cycle(rig, name, length, stride, arm, lean, bounce):
-    """Four-key contact/pass walk or run cycle, mirrored at the half-way point."""
+# ---------------------------------------------------------------- leg IK
+#
+# Locomotion legs are solved, not posed.
+#
+# The first version of these clips keyed thigh and knee angles directly, and it was
+# wrong in a way no amount of tweaking fixes: an FK leg has no notion of the floor, so
+# the "planted" foot drifts, and the whole walk skates. Worse, the sliding rate depends
+# on the stride distance the runtime happens to be configured with, so it cannot even
+# be corrected downstream.
+#
+# Solving instead means the trajectory is authored where it is meaningful — as a foot
+# path over the ground, with an explicit stance phase in which the foot does not move
+# at all — and the joint angles fall out. Foot sliding then becomes arithmetic rather
+# than art direction: the stride the runtime advances by is exactly the stride the feet
+# were drawn against, and `npm run fightercheck` measures that it is.
+
+THIGH_LEN, SHIN_LEN = 0.42, 0.43
+ANKLE_Z = 0.09
+HIP_X = 0.105
+# Where the hip joint sits at rest. Every hip height in GAIT_SPECS is an absolute
+# world height, and the drop written into the hips bone is the difference from this.
+# Treating a gait's hip height as a *relative* drop instead put the crouch's hips
+# 20 cm too high, which pushed the ankle targets outside the leg's reach and quietly
+# truncated the step — caught only because the solver checks its own residual.
+HIP_REST_Z = 0.94
+
+
+def parent_frame(rig, name):
+    """The bone's rest frame carried by its posed parent.
+
+    Blender composes a pose bone as `parent.matrix @ parent_rest⁻¹ @ rest @ basis`.
+    Everything up to `basis` is what a solver needs: the frame the bone would sit in
+    if its own pose were identity. Reading it from the *posed* parent is what makes
+    the legs follow the hips instead of fighting them, so the bounce, the sway and the
+    crouch all come out of one solve.
+    """
+    bone = rig.data.bones[name]
+    if bone.parent is None:
+        return bone.matrix_local.copy()
+    return (rig.pose.bones[bone.parent.name].matrix
+            @ bone.parent.matrix_local.inverted()
+            @ bone.matrix_local)
+
+
+def _swing_to(frame, world_dir):
+    """Pose euler that swings a bone's own axis onto `world_dir`.
+
+    Minimal-arc, so the bone picks up no roll it was not asked for — which matters,
+    because an unwanted twist in a thigh shows up as a foot pointing sideways.
+    """
+    local = frame.to_3x3().inverted() @ Vector(world_dir).normalized()
+    return Vector((0.0, 1.0, 0.0)).rotation_difference(local).to_euler("XYZ")
+
+
+def solve_leg(rig, s, ankle, toe_dir):
+    """Two-bone analytic IK for one leg, in armature space.
+
+    `ankle` is where the ankle joint must end up and `toe_dir` which way the foot
+    points. Returns euler triples in degrees, ready for `key`, plus the residual so
+    the caller can assert the solve actually landed — an IK that silently misses is
+    worse than no IK, because the clip still looks plausible in a still frame.
+    """
+    thigh_n, shin_n, foot_n = f"thigh_{s}", f"shin_{s}", f"foot_{s}"
+    bones = rig.data.bones
+    ankle = Vector(ankle)
+
+    f1 = parent_frame(rig, thigh_n)
+    hip = f1.translation
+    v = ankle - hip
+    a, b = THIGH_LEN, SHIN_LEN
+    # Clamp short of full extension: a perfectly straight leg is the singular case
+    # where the knee's direction is undefined, and it also reads as a stiff peg.
+    length = min(v.length, (a + b) * 0.995)
+    vh = v.normalized()
+    cos_a = max(-1.0, min(1.0, (a * a + length * length - b * b) / (2 * a * length)))
+    # Knee leads the way the fighter faces. Degenerate only for a leg pointing dead
+    # forward and level, which no gait here asks for.
+    axis = vh.cross(Vector((0.0, -1.0, 0.0)))
+    if axis.length < 1e-4:
+        axis = Vector((-1.0, 0.0, 0.0))
+    thigh_dir = Matrix.Rotation(math.acos(cos_a), 3, axis.normalized()) @ vh
+    knee = hip + thigh_dir * a
+    shin_dir = (ankle - knee).normalized()
+
+    e_t = _swing_to(f1, thigh_dir)
+    m1 = f1 @ e_t.to_matrix().to_4x4()
+    f2 = m1 @ bones[thigh_n].matrix_local.inverted() @ bones[shin_n].matrix_local
+    e_s = _swing_to(f2, shin_dir)
+    m2 = f2 @ e_s.to_matrix().to_4x4()
+    f3 = m2 @ bones[shin_n].matrix_local.inverted() @ bones[foot_n].matrix_local
+    e_f = _swing_to(f3, toe_dir)
+
+    deg = lambda e: (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
+    return {thigh_n: deg(e_t), shin_n: deg(e_s), foot_n: deg(e_f)}, (f3.translation - ankle).length
+
+
+# ---------------------------------------------------------------- locomotion
+#
+# One entry per gait. `stride` is the ground distance a full cycle covers and it is the
+# same number the runtime is configured with in src/fighter-rig.js — that identity is
+# the whole design. `duty` is the fraction of the cycle each foot spends planted; above
+# 0.5 the two stance windows overlap and the fighter always has a foot down (a walk),
+# below 0.5 there is a flight phase (a run).
+#
+# `sag` lowers the hips off full leg extension. It is not a style choice: the ankle has
+# to stay inside a sphere of radius 0.85 m around the hip, and a longer stride pushes
+# the foot further out, so a longer stride *requires* more bend. Too little and the leg
+# hits its limit at the extremes of the step and the stride quietly truncates.
+GAIT_SPECS = {
+    "walk":   dict(length=33, stride=1.32, side_stride=0.86, duty=0.60, lift=0.10,
+                   sag=0.135, bounce=0.022, sway=0.022, arm=20, lean=5, hip_z=0.94),
+    "run":    dict(length=33, stride=2.20, side_stride=1.44, duty=0.42, lift=0.20,
+                   sag=0.175, bounce=0.045, sway=0.030, arm=36, lean=12, hip_z=0.94),
+    "crouch": dict(length=41, stride=0.84, side_stride=0.60, duty=0.64, lift=0.07,
+                   sag=0.030, bounce=0.012, sway=0.018, arm=9, lean=4, hip_z=0.74),
+}
+
+# The blendspace poles, in order of increasing angle from straight ahead.
+#
+# Eight, not four. Four is enough to *name* every direction but not to represent one:
+# blending a forward cycle with a sideways one gives a foot that travels neither, and
+# the measured mismatch was a diagonal walk sliding 2.9 m/s while both its parents were
+# clean. Eight poles put an authored clip within 22 degrees of any heading, which is
+# what Unreal's standard locomotion blendspace does and for the same reason.
+DIRS = ["f", "fr", "r", "br", "b", "bl", "l", "fl"]
+
+
+def dir_vec(i):
+    """Pole `i` as (rightward, forward) components of travel."""
+    a = i * math.pi / 4
+    return math.sin(a), math.cos(a)
+
+
+def dir_world(i):
+    """Pole `i` in Blender world axes. The fighter faces -Y, so his right is -X."""
+    right, fwd = dir_vec(i)
+    return -right, -fwd
+
+
+def dir_stride(i, spec):
+    """Stride for one pole, off the ellipse through the forward and sideways strides.
+
+    A side shuffle genuinely covers less ground per cycle than a forward stride, so the
+    blendspace is not isotropic; an ellipse is the natural interpolation between the
+    two axes and keeps neighbouring poles close enough that the blend between them
+    stays honest.
+    """
+    right, fwd = dir_vec(i)
+    a, b = spec["stride"], spec["side_stride"]
+    return 1.0 / math.hypot(fwd / a, right / b)
+
+
+def _foot_path(u, amp, duty, lift, travel):
+    """Where one foot is at cycle phase `u`, as an offset from its own centre.
+
+    Stance runs the foot backwards in a straight line at a constant rate; that is the
+    part that has to be exactly right, because it is the part the ground sees. Swing
+    arcs it forward over the top. `amp` is half the stance excursion, and it is tied to
+    the stride by `amp = stride * duty / 2` — during stance the body covers
+    `stride * duty` of ground, and the foot has to give back precisely that much.
+    """
+    u = u % 1.0
+    if u < duty:
+        t = u / duty
+        along, height = amp * (1.0 - 2.0 * t), 0.0
+    else:
+        t = (u - duty) / (1.0 - duty)
+        along, height = amp * (2.0 * t - 1.0), lift * math.sin(math.pi * t)
+    return travel[0] * along, travel[1] * along, height
+
+
+def _stride_cycle(rig, name, index, spec, base=None, torso=None):
+    """One locomotion cycle in one direction of travel.
+
+    Directions are `f`, `b`, `l`, `r`. They exist as separate clips because that is
+    what a blendspace needs: the runtime weights whichever are adjacent to the actual
+    direction of travel, so a fighter strafing gets a real cross-step rather than a
+    forward walk played while sliding sideways.
+
+    **Every clip in a blendspace must share a phase.** All four directions here have
+    the same length and, at phase 0, put the left foot at the leading end of its step —
+    whichever way "leading" happens to point for that clip. The runtime drives them all
+    from one clock. Get this convention wrong in a single clip and that clip still
+    looks fine on its own, while every diagonal that blends it collapses: an earlier
+    lateral pair moved both feet the same way at once, and the diagonal blend measured
+    0.10 m of foot travel against 0.55 m for the pure forward.
+    """
+    base = base or {}
+    torso = torso or {}
     new_action(rig, name)
     clear_pose(rig)
 
-    def half(f, sign):
-        # sign=+1: left leg forward. Arms oppose legs.
-        key(rig, f, merged(STANCE, {
-            "hips": (lean, 0, -sign * 2.5),
-            "spine": (lean * 0.6, sign * 3.0, 0),
-            "chest": (2, -sign * 4.0, 0),
-            "thigh_l": (-stride * sign, 0, 2),
-            "shin_l": (max(4, stride * 0.55 * (1 + sign)), 0, 0),
-            "foot_l": (-6 + stride * 0.25 * sign, 0, 0),
-            "thigh_r": (stride * sign, 0, -2),
-            "shin_r": (max(4, stride * 0.55 * (1 - sign)), 0, 0),
-            "foot_r": (-6 - stride * 0.25 * sign, 0, 0),
-            # The weapon arm keeps the gun up; only the support arm swings fully.
-            "upperarm_l": (ARM_L[0] - arm * sign, ARM_L[1], ARM_L[2]),
-            "upperarm_r": (ARM_R[0] + arm * 0.25 * sign, ARM_R[1], ARM_R[2]),
-        }, ), extra_loc={"hips": hips_loc(down=abs(bounce))})
+    travel = dir_world(index)
+    right, fwd = dir_vec(index)
+    # How sideways this pole is, 0 straight ahead to 1 straight across. Everything that
+    # differs between a stride and a shuffle scales on it, so the eight clips form a
+    # continuum instead of two families with a seam between them.
+    lateral = abs(right)
+    stride = dir_stride(index, spec)
+    duty, lift = spec["duty"], spec["lift"]
+    amp = stride * duty / 2.0
+    length = spec["length"]
+    # Backwards travel gets a smaller body lean and a flatter arm swing; running
+    # backwards while leaning back is how you fall over.
+    lean_scale = (1.0 - lateral * 0.65) * (fwd if fwd > 0 else fwd * 0.4)
 
-    def pass_pose(f, sign):
-        key(rig, f, merged(STANCE, {
-            "hips": (lean, 0, 0),
-            "thigh_l": (-stride * 0.15 * sign, 0, 2),
-            "shin_l": (stride * 0.7, 0, 0),
-            "thigh_r": (stride * 0.15 * sign, 0, -2),
-            "shin_r": (stride * 0.7, 0, 0),
-            "upperarm_l": ARM_L,
-            "upperarm_r": ARM_R,
-        }), extra_loc={"hips": hips_loc(down=-abs(bounce))})
+    # Sample the cycle densely *and* land a sample exactly on every stance/swing
+    # boundary, for both feet. Keys are interpolated linearly, so a boundary that falls
+    # between two samples gets its corner rounded off — which shortens the stance the
+    # whole design is built on, and does it silently.
+    # One sample per exported frame, so nothing is lost to resampling. The clip length
+    # has to be able to hold the keys: a 23-frame run cycle sampled 24 times collapsed
+    # pairs of keys onto the same frame and quietly shortened the stride by 6%.
+    phases = sorted({round(i / (length - 1.0), 6) for i in range(length)}
+                    | {round(duty, 6), round((duty + 0.5) % 1.0, 6), 0.5})
+    residual = 0.0
+    for u in phases:
+        frame = 1 + u * (length - 1)
 
-    q = (length - 1) / 4.0
-    half(1, 1)
-    pass_pose(1 + q, 1)
-    half(1 + 2 * q, -1)
-    pass_pose(1 + 3 * q, -1)
-    half(length, 1)                        # closes the loop exactly
+        # --- hips and torso, posed first so the legs can be solved against them ---
+        hips_z = spec["hip_z"] - spec["sag"] - spec["bounce"] * math.cos(4 * math.pi * u)
+        # Weight shifts toward whichever foot is planted; without it a walk looks like
+        # a puppet sliding along a rail.
+        sway = spec["sway"] * math.cos(2 * math.pi * (u - duty / 2))
+        swing = math.sin(2 * math.pi * u)          # +1 = left leg leading
+        body_lean = spec["lean"] * lean_scale
+
+        counter = 1.0 - lateral * 0.6      # arms and shoulders quieten in a shuffle
+        pose = merged(STANCE, torso, {
+            "hips": (body_lean, 0, -swing * 2.0 * counter),
+            "spine": (body_lean * 0.6, swing * 3.0 * counter, -right * 4.0),
+            "chest": (2, -swing * 4.0 * counter, 0),
+            "upperarm_l": (ARM_L[0] - spec["arm"] * swing * counter, ARM_L[1], ARM_L[2]),
+            "upperarm_r": (ARM_R[0] + spec["arm"] * 0.25 * swing * counter,
+                           ARM_R[1], ARM_R[2]),
+        })
+        for bone_name, rot in pose.items():
+            pb = rig.pose.bones[bone_name]
+            pb.rotation_mode = "XYZ"
+            pb.rotation_euler = (D(rot[0]), D(rot[1]), D(rot[2]))
+        hips_pb = rig.pose.bones["hips"]
+        # Lateral shift goes straight into the bone's local X, which the roll
+        # convention pins to world X.
+        hips_pb.location = (sway,) + hips_loc(down=HIP_REST_Z - hips_z)[1:]
+        # The solve reads the *posed* hips, so the depsgraph has to have caught up.
+        bpy.context.view_layer.update()
+
+        # --- legs, solved against the floor ---
+        legs = {}
+        for side, phase_off, x0 in (("l", 0.0, HIP_X), ("r", 0.5, -HIP_X)):
+            dx, dy, dz = _foot_path(u + phase_off, amp, duty, lift, travel)
+            # Lateral steps bring the feet close together; a small outward bias keeps
+            # them from passing through each other at the crossover.
+            bias = (0.035 if side == "l" else -0.035) * lateral
+            ankle = (x0 + dx + bias, dy, ANKLE_Z + dz)
+            # Toe tips down through the swing so the foot rolls off and lands heel
+            # first rather than slapping down flat.
+            roll = -0.35 if (u + phase_off) % 1.0 > duty else 0.15
+            # Feet stay pointing where he faces as the step goes sideways — nobody
+            # turns their feet out to strafe with a weapon up. Blending the toe
+            # direction on `lateral` is what keeps the eight clips a continuum.
+            aim_y = travel[1] * (1.0 - lateral) - lateral
+            toe = Vector((travel[0] * (1.0 - lateral * 0.65), aim_y, roll)).normalized()
+            solved, err = solve_leg(rig, side, ankle, toe)
+            residual = max(residual, err)
+            legs.update(solved)
+
+        key(rig, frame, merged(pose, base, legs),
+            extra_loc={"hips": (sway,) + hips_loc(down=HIP_REST_Z - hips_z)[1:]})
+
+    if residual > 2e-3:
+        raise RuntimeError(f"{name}: leg IK missed its target by {residual * 1000:.1f} mm")
+    # Linear interpolation between dense samples. Bezier handles overshoot a stance
+    # segment, which puts the planted foot back in motion at exactly the moment the
+    # whole design says it must not move.
+    for fcurve in rig.animation_data.action.fcurves:
+        for kp in fcurve.keyframe_points:
+            kp.interpolation = "LINEAR"
 
 
-def anim_walk(rig):
-    _walk_cycle(rig, "walk", 33, stride=26, arm=20, lean=6, bounce=0.02)
-
-
-def anim_run(rig):
-    _walk_cycle(rig, "run", 23, stride=44, arm=34, lean=13, bounce=0.045)
+def anim_locomotion(rig):
+    """Directional cycles for standing gaits: the lower-body blendspace."""
+    for gait in ("walk", "run"):
+        for i, d in enumerate(DIRS):
+            _stride_cycle(rig, f"{gait}_{d}", i, GAIT_SPECS[gait])
 
 
 # A real combat crouch, not a slight bend. The first pass dropped the head only 25 cm,
@@ -526,7 +764,20 @@ def anim_crouch_idle(rig):
         }), extra_loc={"hips": hips_loc(down=0.42)})
 
 
-def anim_crouch_walk(rig):
+def anim_crouch_locomotion(rig):
+    """Crouched directional cycles. Same blendspace, shorter stride, hips held low.
+
+    Only the *torso* half of CROUCH is passed through. Its leg angles are what a
+    standing-still crouch needs; here the hips are simply dropped to `hip_z` and the
+    legs are solved to reach the floor from there, which is the same thing done
+    honestly — and it keeps the feet planted, which hand-keyed crouch legs did not.
+    """
+    torso = {k: v for k, v in CROUCH.items() if not k.startswith(("thigh", "shin", "foot"))}
+    for i, d in enumerate(DIRS):
+        _stride_cycle(rig, f"crouch_{d}", i, GAIT_SPECS["crouch"], torso=torso)
+
+
+def _unused_anim_crouch_walk(rig):
     new_action(rig, "crouch_walk")
     clear_pose(rig)
     # Duck-walk: short strides, hips stay low the whole cycle.
@@ -562,6 +813,60 @@ def anim_aim_pose(rig):
     key(rig, 1, zero)
     key(rig, 10, aim)
     key(rig, 20, aim)
+
+
+# Aim offset.
+#
+# Unreal builds these as a 2D grid of additive poses sampled by the aim pitch and yaw;
+# this is the same idea with four poles and the runtime doing the bilinear blend. It
+# replaces rotating the spine procedurally, which bent the fighter like a hinge — a
+# real aim offset twists through the whole chain and takes the head and shoulders with
+# it, which is what makes an aiming pose read as aiming rather than as leaning.
+#
+# Every pose here touches spine, chest, neck and head only, so it layers over any
+# locomotion clip without disturbing the legs.
+AIM_POLES = {
+    "aim_up":    {"spine": (-9, 0, 0), "chest": (-13, 0, 0), "neck": (-10, 0, 0), "head": (-8, 0, 0)},
+    "aim_down":  {"spine": (11, 0, 0), "chest": (16, 0, 0), "neck": (9, 0, 0), "head": (7, 0, 0)},
+    "aim_left":  {"spine": (0, 14, 0), "chest": (0, 20, 0), "neck": (0, 10, 0), "head": (0, 9, 0)},
+    "aim_right": {"spine": (0, -14, 0), "chest": (0, -20, 0), "neck": (0, -10, 0), "head": (0, -9, 0)},
+}
+
+
+def anim_aim_offsets(rig):
+    """Four additive poles. Frame 1 is rest so `makeClipAdditive` reads a true delta."""
+    for name, pose in AIM_POLES.items():
+        new_action(rig, name)
+        clear_pose(rig)
+        zero = {k: (0, 0, 0) for k in pose}
+        key(rig, 1, zero)
+        key(rig, 6, pose)
+        key(rig, 12, pose)
+
+
+def anim_lean(rig):
+    """Leaning out from cover, as a spine bend rather than tipping the whole body.
+
+    Rolling the root was what the runtime did before, which pivots the fighter about
+    his feet and lifts one boot off the floor. A lean is a spine action.
+    """
+    # Sign verified by measurement, not by deriving it: it depends on this file's roll
+    # convention, Blender's axes and the glTF Y-up flip all at once, and the first
+    # version had it backwards — which puts a fighter out of the opposite side of cover
+    # from the one combat believes he is exposing. `npm run fightercheck` checks it.
+    for name, sign in (("lean_l", -1), ("lean_r", 1)):
+        new_action(rig, name)
+        clear_pose(rig)
+        # Spine and up only. Keying the hips here bent the legs with the torso and
+        # walked the fighter's feet 6 cm sideways when he leaned — the same class of
+        # fault as rolling the whole object, just one bone further down.
+        pose = {
+            "spine": (0, 0, sign * 14), "chest": (0, 0, sign * 16),
+            "neck": (0, 0, sign * 7), "head": (0, 0, sign * 6),
+        }
+        key(rig, 1, {k: (0, 0, 0) for k in pose})
+        key(rig, 8, pose)
+        key(rig, 14, pose)
 
 
 def anim_fire(rig):
@@ -811,8 +1116,9 @@ def plant_on_floor(rig, body, clip_names=PLANTED, floor=0.0):
         log(f"  planted {name} {' '.join(fixes) if fixes else '(already flat)'}")
 
 CLIPS = [
-    anim_idle, anim_walk, anim_run, anim_crouch_idle, anim_crouch_walk,
-    anim_aim_pose, anim_fire, anim_reload, anim_throw, anim_hit_react, anim_heal,
+    anim_idle, anim_locomotion, anim_crouch_idle, anim_crouch_locomotion,
+    anim_aim_pose, anim_aim_offsets, anim_lean,
+    anim_fire, anim_reload, anim_throw, anim_hit_react, anim_heal,
     anim_death_front, anim_death_back, anim_death_collapse,
 ]
 

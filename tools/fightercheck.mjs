@@ -1,0 +1,424 @@
+/**
+ * Third-person locomotion test bed.
+ *
+ *   node tools/fightercheck.mjs            # every gait, every direction
+ *   node tools/fightercheck.mjs --verbose  # per-case detail
+ *
+ * The first-person bench (`animcheck.mjs`) drives the viewmodel. This one drives a
+ * bare `FighterRig` with no AI, no world and no camera, and measures the things that
+ * make third-person locomotion read as real:
+ *
+ *   stride    the ground distance one authored cycle actually covers, measured from
+ *             the feet. This is not a number you can guess — it falls out of the leg
+ *             swing angles — and getting it wrong is *the* cause of foot sliding,
+ *             because the runtime advances the blendspace by distance travelled.
+ *   slide     how fast the planted foot drifts across the floor. A planted foot that
+ *             moves is a foot on a conveyor belt, which is what the walk looked like.
+ *   jump      largest single-frame move of a foot in rig space. Catches blends that
+ *             pop, which is what happens when two cycles play at different phases.
+ *   ground    no foot below the floor, and never both feet airborne in a walk.
+ *   locked    feet must not move at all when only the aim offset or lean changes.
+ *             This is the check that would have caught the old lean, which rolled the
+ *             whole fighter about his feet and lifted a boot into the air.
+ *
+ * The rig is stepped by hand, so every measurement is of the *final* world transform
+ * after the mixer, the blendspace weights and the additive layer have all composed —
+ * which is the only place any of these faults are visible.
+ */
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import puppeteer from 'puppeteer-core';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const CHROME = process.env.CHROME_PATH
+  || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+
+function arg(name, fallback) {
+  const i = process.argv.indexOf(`--${name}`);
+  return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--')
+    ? process.argv[i + 1] : fallback;
+}
+const verbose = process.argv.includes('--verbose');
+const url = arg('url', 'http://localhost:5173');
+
+// A foot at a brisk 2 m/s covers 0.033 m per frame at 60 fps.
+const LIMITS = {
+  slide: 0.07,     // m the planted foot may wander across the floor in one stance
+  jump: 6.0,       // biggest single-frame foot move, as a multiple of the typical one
+  sink: 0.035,     // m a foot may pass below the floor
+  locked: 0.012,   // m a foot may move when only the upper body is asked to change
+};
+
+const browser = await puppeteer.launch({
+  executablePath: CHROME,
+  headless: true,
+  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--use-gl=angle',
+    '--mute-audio', '--no-first-run', '--window-size=800,600'],
+});
+const page = await browser.newPage();
+await page.setViewport({ width: 800, height: 600 });
+const pageErrors = [];
+page.on('pageerror', (e) => pageErrors.push(e.message));
+await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await page.waitForFunction('!!window.__game', { timeout: 30000 });
+await page.evaluate('window.__game.assetsReady');
+
+const report = await page.evaluate(async () => {
+  const g = window.__game;
+  const T = g.THREE;
+  const DT = 1 / 60;
+
+  const rig = new g.FighterRig({ scale: 1 });
+  rig.group.position.set(0, 0, 0);
+  g.scene.add(rig.group);
+
+  const feet = ['foot_l', 'foot_r'].map((n) => rig.bones.get(n));
+  const world = new T.Vector3();
+  const local = new T.Vector3();
+
+  /** World and rig-space position of both feet, right now. */
+  function sampleFeet() {
+    rig.group.updateMatrixWorld(true);
+    return feet.map((b) => {
+      world.setFromMatrixPosition(b.matrixWorld);
+      local.copy(world);
+      rig.group.worldToLocal(local);
+      return { wx: world.x, wy: world.y, wz: world.z, lx: local.x, ly: local.y, lz: local.z };
+    });
+  }
+
+  /**
+   * Walk the rig in a straight line and record the feet every frame.
+   *
+   * The rig has no root motion, so the harness supplies it: the group is translated
+   * at `speed` while `setStance` is told the same speed. That is exactly what the
+   * game does, so any disagreement between the two shows up here as slide.
+   *
+   * Local +Z is forward and local +X is his *left*, so a rightward `moveX` sends the
+   * body along world −X when yaw is zero.
+   */
+  function run({ speed, crouching, moveX, moveZ, frames = 260, aim = null, lean = 0 }) {
+    const len = Math.hypot(moveX, moveZ) || 1;
+    const nx = moveX / len, nz = moveZ / len;
+    rig.group.position.set(0, 0, 0);
+    rig.phase = 0;
+    rig._crouchK = crouching ? 1 : 0;   // start settled; the ease is tested separately
+    const trace = [];
+    for (let i = 0; i < frames; i++) {
+      const t = i * DT;
+      rig.group.position.x += -nx * speed * DT;
+      rig.group.position.z += nz * speed * DT;
+      rig.setStance(speed, crouching, moveX, moveZ);
+      if (aim) rig.setAim(aim.pitch(t), aim.yaw(t));
+      rig.setLean(typeof lean === 'function' ? lean(t) : lean);
+      rig.update(DT);
+      trace.push({ t, phase: rig.phase, feet: sampleFeet() });
+    }
+    return { trace, nx, nz };
+  }
+
+  /**
+   * Turn a trace into the numbers that matter. Only the back half is measured: the
+   * first second is the blend easing in from idle, which is meant to move.
+   */
+  function measure({ trace, nx, nz }, speed, usedStride) {
+    const half = trace.slice(Math.floor(trace.length / 2));
+    const out = { stride: 0, want: 0, slide: 0, jump: 0, jumpRatio: 0, sink: 0, airborne: 0 };
+
+    // Travel direction in rig space, to project the foot swing onto.
+    const dirLX = -nx, dirLZ = nz;
+
+    let wantSum = 0, wantN = 0;
+    for (let f = 0; f < 2; f++) {
+      const proj = half.map((s) => s.feet[f].lx * dirLX + s.feet[f].lz * dirLZ);
+      const excursion = Math.max(...proj) - Math.min(...proj);
+      out.stride = Math.max(out.stride, excursion);
+
+      // Stance is found from *motion*, not from height.
+      //
+      // Height thresholds do not survive a blend: two clips whose planted foot sits at
+      // exactly the same level produce a blended foot that wobbles a few millimetres,
+      // so a tight window rejects the real stance and a loose one accepts the start of
+      // the swing. Either way the number comes out confidently wrong, and both did.
+      // The foot is planted exactly when it is travelling backwards, which is a
+      // property of the pose and survives any blend.
+      let backFrames = 0;
+      for (let i = 1; i < proj.length; i++) if (proj[i] < proj[i - 1]) backFrames++;
+      const beta = backFrames / (proj.length - 1);
+
+      // Over the phase fraction `beta` the foot gives back `excursion` of ground, so
+      // the stride that makes it stationary is excursion / beta. No height, no
+      // threshold, no tuning.
+      if (beta > 0.05) { wantSum += excursion / beta; wantN++; }
+
+      const mid = (xs) => {
+        if (!xs.length) return 0;
+        const t = [...xs].sort((p, q) => p - q);
+        return t[t.length >> 1];
+      };
+
+      // How far the planted foot wanders across the floor, in metres, over one stance.
+      //
+      // Measured as a *displacement from where it landed*, not as a per-frame speed.
+      // A per-frame speed cannot tell drift from ripple, and at a run there is plenty
+      // of ripple: the clip plays 2.8x faster than it was authored, so consecutive
+      // render frames cross a varying number of keys and the instantaneous velocity
+      // alternates around the correct mean. That is invisible. A foot that creeps
+      // across the floor is not, and only this measures it.
+      const slips = [];
+      let anchor = null, worst = 0;
+      for (let i = 1; i < half.length; i++) {
+        const b = half[i].feet[f];
+        if (proj[i] < proj[i - 1]) {
+          if (!anchor) { anchor = b; worst = 0; }
+          worst = Math.max(worst, Math.hypot(b.wx - anchor.wx, b.wz - anchor.wz));
+        } else if (anchor) {
+          slips.push(worst);
+          anchor = null;
+        }
+        out.sink = Math.max(out.sink, -Math.min(b.ly, 0));
+      }
+      out.slide = Math.max(out.slide, mid(slips));
+
+      // Pops are measured against the clip's own tempo, not an absolute distance: a
+      // run legitimately throws a foot four times faster than a walk does, so a fixed
+      // threshold either misses pops in a run or fails every clean one.
+      const steps = [];
+      for (let i = 1; i < half.length; i++) {
+        const a = half[i - 1].feet[f], b = half[i].feet[f];
+        steps.push(Math.hypot(b.lx - a.lx, b.ly - a.ly, b.lz - a.lz));
+      }
+      out.jumpRatio = Math.max(out.jumpRatio, Math.max(...steps) / (mid(steps) || 1e-6));
+    }
+    if (wantN) out.want = wantSum / wantN;
+
+    // Airborne fraction: how much of the cycle has neither foot down. A run is meant
+    // to have one; a walk, by definition, is not.
+    const fl = Math.min(...half.map((q) => q.feet[0].ly));
+    const fr = Math.min(...half.map((q) => q.feet[1].ly));
+    let up = 0;
+    for (const s of half) {
+      if (s.feet[0].ly - fl > 0.05 && s.feet[1].ly - fr > 0.05) up++;
+    }
+    out.airborne = up / half.length;
+    return out;
+  }
+
+  /**
+   * The stride the runtime is currently configured to use for one direction. Mirrors
+   * `_updateLocomotion` exactly, vector sum included — a bench that models the runtime
+   * differently from the runtime is measuring something nobody ships.
+   */
+  function configuredStride(gait, mx, mz) {
+    const len = Math.hypot(mx, mz) || 1;
+    const st = rig._loco.find((e) => e.gait === gait).strides;
+    let a = Math.atan2(mx, mz) / (Math.PI / 4);
+    if (a < 0) a += 8;
+    const lo = Math.floor(a) % 8, frac = a - Math.floor(a);
+    let sx = 0, sz = 0;
+    for (const [i, w] of [[lo, 1 - frac], [(lo + 1) % 8, frac]]) {
+      const ang = i * Math.PI / 4;
+      sx += w * st[i] * Math.sin(ang);
+      sz += w * st[i] * Math.cos(ang);
+    }
+    return Math.abs(sx * mx / len + sz * mz / len);
+  }
+
+  const cases = [];
+  // Every pole, plus the midpoint between each adjacent pair — the midpoints are
+  // where a blendspace is at its worst and a pole-only sweep would never look.
+  const NAMES = ['f', 'f+', 'fr', 'fr+', 'r', 'r+', 'br', 'br+',
+                 'b', 'b+', 'bl', 'bl+', 'l', 'l+', 'fl', 'fl+'];
+  const DIRS = {};
+  NAMES.forEach((n, i) => { const a = i * Math.PI / 8; DIRS[n] = [Math.sin(a), Math.cos(a)]; });
+  const GAITS = [
+    ['walk', 1.6, false], ['run', 4.0, false], ['crouch', 1.2, true],
+  ];
+  for (const [gait, speed, crouching] of GAITS) {
+    for (const [dir, [mx, mz]] of Object.entries(DIRS)) {
+      const used = configuredStride(gait, mx, mz);
+      const r = run({ speed, crouching, moveX: mx, moveZ: mz });
+      cases.push({ name: `${gait}_${dir}`, gait, dir, speed, used, ...measure(r, speed, used) });
+    }
+  }
+
+  // Direction sweep: rotate the travel direction a full turn while walking, and watch
+  // for a pop. Blending four poles should be continuous everywhere; it is not if two
+  // of them disagree about phase.
+  {
+    rig.group.position.set(0, 0, 0);
+    rig.phase = 0;
+    const speed = 1.6;
+    let maxJump = 0;
+    let prev = null;
+    for (let i = 0; i < 480; i++) {
+      const a = (i / 480) * Math.PI * 2;
+      const mx = Math.sin(a), mz = Math.cos(a);
+      rig.group.position.x += -mx * speed * DT;
+      rig.group.position.z += mz * speed * DT;
+      rig.setStance(speed, false, mx, mz);
+      rig.update(DT);
+      const s = sampleFeet();
+      if (prev && i > 60) {
+        for (let f = 0; f < 2; f++) {
+          maxJump = Math.max(maxJump, Math.hypot(
+            s[f].lx - prev[f].lx, s[f].ly - prev[f].ly, s[f].lz - prev[f].lz));
+        }
+      }
+      prev = s;
+    }
+    cases.push({ name: 'sweep_360', speed, stride: null, slide: null, sweepJump: maxJump, sink: 0, airborne: 0 });
+  }
+
+  // Upper body in isolation. Standing still, sweep aim and lean through their full
+  // range: the feet must not move a millimetre. Anything that shows up here is the
+  // upper body leaking into the legs.
+  const locked = {};
+  for (const [name, drive] of [
+    ['aim_pitch', { aim: { pitch: (t) => Math.sin(t * 1.5) * 0.7, yaw: () => 0 }, lean: 0 }],
+    ['aim_yaw', { aim: { pitch: () => 0, yaw: (t) => Math.sin(t * 1.5) * 0.8 }, lean: 0 }],
+    ['lean', { aim: null, lean: (t) => Math.sin(t * 1.5) }],
+  ]) {
+    rig.group.position.set(0, 0, 0);
+    rig.setStance(0, false, 0, 1);
+    for (let i = 0; i < 60; i++) rig.update(DT);   // settle
+    const base = sampleFeet();
+    let worst = 0;
+    for (let i = 0; i < 240; i++) {
+      const t = i * DT;
+      rig.setStance(0, false, 0, 1);
+      if (drive.aim) rig.setAim(drive.aim.pitch(t), drive.aim.yaw(t));
+      rig.setLean(typeof drive.lean === 'function' ? drive.lean(t) : drive.lean);
+      rig.update(DT);
+      const s = sampleFeet();
+      for (let f = 0; f < 2; f++) {
+        worst = Math.max(worst, Math.hypot(
+          s[f].wx - base[f].wx, s[f].wy - base[f].wy, s[f].wz - base[f].wz));
+      }
+    }
+    locked[name] = worst;
+    rig.setAim(0, 0); rig.setLean(0);
+    for (let i = 0; i < 60; i++) rig.update(DT);
+  }
+
+  // Does the aim offset actually turn the head, and the right way?
+  //
+  // Measured as a *direction*, not a position. A spine twist rotates the head almost
+  // in place, so a position probe reads nothing and reports a working aim offset as
+  // broken — which is exactly what the first version of this check did.
+  const aimRange = {};
+  {
+    const head = rig.bones.get('head');
+    const read = () => {
+      rig.group.updateMatrixWorld(true);
+      const m = new T.Matrix4().copy(rig.group.matrixWorld).invert().multiply(head.matrixWorld);
+      const q = new T.Quaternion().setFromRotationMatrix(m);
+      // The head bone points up its own +Y, so its facing is local +Z... in rig space
+      // after the bind rotation, what matters is only that this vector swings
+      // consistently, so take the full basis and read the two axes we care about.
+      return {
+        fwd: new T.Vector3(0, 0, 1).applyQuaternion(q),
+        up: new T.Vector3(0, 1, 0).applyQuaternion(q),
+      };
+    };
+    const hold = (pitch, yaw) => {
+      rig.setAim(pitch, yaw);
+      for (let i = 0; i < 90; i++) { rig.setStance(0, false, 0, 1); rig.update(DT); }
+      return read();
+    };
+    const rest = hold(0, 0);
+    const up = hold(0.7, 0), down = hold(-0.7, 0);
+    const left = hold(0, 0.8), right = hold(0, -0.8);
+    // Total angle swept between the two poles, and its sign about the expected axis.
+    const ang = (a, b) => a.angleTo(b);
+    aimRange.pitchSweep = ang(up.fwd, down.fwd);
+    aimRange.yawSweep = ang(left.fwd, right.fwd);
+    // Sign: looking up must raise the head's facing relative to looking down.
+    aimRange.pitchSign = Math.sign(up.fwd.y - down.fwd.y);
+    // Positive yaw is to his left, and local +X is his left.
+    aimRange.yawSign = Math.sign(left.fwd.x - right.fwd.x);
+    aimRange.restSanity = ang(rest.fwd, rest.up);
+    hold(0, 0);
+
+    // Which way a lean actually leans.
+    //
+    // Worth measuring rather than deriving: the sign depends on a bone roll, a Blender
+    // axis convention and a glTF axis flip, and getting any one of the three backwards
+    // gives a fighter who peeks out of the opposite side of cover from the one combat
+    // thinks he is exposing. Rig-space local +X is his left.
+    const headPos = () => {
+      rig.group.updateMatrixWorld(true);
+      return rig.group.worldToLocal(
+        new T.Vector3().setFromMatrixPosition(rig.bones.get('head').matrixWorld));
+    };
+    const settle = (k) => {
+      rig.setLean(k);
+      for (let i = 0; i < 90; i++) { rig.setStance(0, false, 0, 1); rig.update(DT); }
+      return headPos();
+    };
+    const outR = settle(1), outL = settle(-1);
+    aimRange.leanSpread = Math.abs(outL.x - outR.x);
+    // setLean(+1) means lean right, and his right is -X.
+    aimRange.leanSign = Math.sign(outL.x - outR.x);
+    settle(0);
+  }
+
+  g.scene.remove(rig.group);
+  return { cases, locked, aimRange };
+});
+
+await browser.close();
+
+// ---- report ----
+let failures = 0;
+const bad = (cond, msg) => { if (cond) { failures++; return ` FAIL(${msg})`; } return ''; };
+
+console.log('\nlocomotion blendspace');
+console.log('  case           speed    used    want   swing    slip     pop    sink   air');
+for (const c of report.cases) {
+  const n = (v, d = 3) => (v == null ? '   -  ' : v.toFixed(d).padStart(6));
+  let flags = '';
+  if (c.slide != null) flags += bad(c.slide > LIMITS.slide, `slip ${(c.slide * 100).toFixed(1)} cm`);
+  if (c.jumpRatio != null) flags += bad(c.jumpRatio > LIMITS.jump, `pop ${c.jumpRatio.toFixed(1)}x typical`);
+  flags += bad(c.sink > LIMITS.sink, `sink ${c.sink.toFixed(3)} m`);
+  // A run is *supposed* to have a flight phase. A walk keeps a foot down.
+  const airLimit = c.gait === 'run' ? 0.42 : 0.12;
+  if (c.airborne != null && c.gait) flags += bad(c.airborne > airLimit, `airborne ${(c.airborne * 100) | 0}%`);
+  console.log(`  ${c.name.padEnd(13)} ${c.speed.toFixed(1).padStart(5)}  ${n(c.used)}  ${n(c.want)}  ${n(c.stride)}  ${n(c.slide)}  ${n(c.jumpRatio, 2)}  ${n(c.sink)}  ${(c.airborne * 100).toFixed(0).padStart(3)}%${flags}`);
+}
+const sweep = report.cases.find((c) => c.name === 'sweep_360');
+console.log(`  turning full circle at a walk, worst single-frame foot move ${sweep.sweepJump.toFixed(3)} m`
+  + bad(sweep.sweepJump > 0.06, `sweep pop ${sweep.sweepJump.toFixed(3)} m`));
+console.log('  (`used` is what the runtime is configured with; `want` is what the feet ask for)');
+
+// The stride table the runtime should be carrying, straight out of the measurement.
+const solved = {};
+for (const c of report.cases) {
+  if (!c.gait || c.dir.endsWith('+')) continue;
+  (solved[c.gait] ||= {})[c.dir] = c.want;
+}
+console.log('\nsolved stride table');
+for (const [gait, dirs] of Object.entries(solved)) {
+  const parts = ['f', 'fr', 'r', 'br', 'b', 'bl', 'l', 'fl'].map((d) => `${d}: ${dirs[d].toFixed(2)}`).join(', ');
+  console.log(`  ${gait.padEnd(7)} { ${parts} }`);
+}
+
+console.log('\nupper body must not move the feet');
+for (const [k, v] of Object.entries(report.locked)) {
+  console.log(`  ${k.padEnd(12)} ${v.toFixed(4)} m${bad(v > LIMITS.locked, `${v.toFixed(4)} m`)}`);
+}
+
+console.log('\naim offset reach');
+const a = report.aimRange;
+console.log(`  pitch sweep  ${(a.pitchSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.pitchSign > 0 ? 'up' : 'DOWN'}${bad(a.pitchSweep < 0.35, `pitch sweep only ${(a.pitchSweep * 57.3).toFixed(1)} deg`)}${bad(a.pitchSign <= 0, 'aim pitch is inverted')}`);
+console.log(`  lean spread  ${(a.leanSpread * 100).toFixed(1).padStart(6)} cm   sign ${a.leanSign > 0 ? 'right' : 'LEFT'}${bad(a.leanSpread < 0.10, `lean spread only ${(a.leanSpread * 100).toFixed(1)} cm`)}${bad(a.leanSign <= 0, 'setLean(+1) leans him left, not right')}`);
+console.log(`  yaw sweep    ${(a.yawSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.yawSign > 0 ? 'left' : 'RIGHT'}${bad(a.yawSweep < 0.35, `yaw sweep only ${(a.yawSweep * 57.3).toFixed(1)} deg`)}${bad(a.yawSign <= 0, 'aim yaw is inverted')}`);
+
+if (pageErrors.length) {
+  failures += pageErrors.length;
+  console.log('\npage errors');
+  for (const e of pageErrors) console.log(`  ${e}`);
+}
+
+console.log(failures ? `\n${failures} failure(s)\n` : '\nall clean\n');
+process.exit(failures ? 1 : 0);

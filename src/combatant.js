@@ -140,6 +140,10 @@ export class Combatant {
     this.stanceTimer = 0.5 + Math.random() * 2;
     this.leanK = 0;
     this.peekSide = 0;
+    // Last frame's world displacement, kept so the locomotion blendspace can be told
+    // which way he is actually travelling rather than assuming it is where he faces.
+    this._moveDX = 0;
+    this._moveDZ = 0;
     this.sprintNow = false;
     this.openingGoal = new THREE.Vector3();
     this.openingT = 0;
@@ -859,6 +863,8 @@ export class Combatant {
       // Speed *actually achieved*, not speed intended: a fighter grinding along a wall
       // should not play a full-speed run cycle on the spot.
       this.currentSpeed = dt > 0 ? Math.hypot(this.pos.x - px, this.pos.z - pz) / dt : 0;
+      this._moveDX = this.pos.x - px;
+      this._moveDZ = this.pos.z - pz;
       moving = true;
       this.animPhase += dt * spd * 2.6;
       this.moveAmount = Math.min(1, this.moveAmount + dt * 6);
@@ -882,19 +888,29 @@ export class Combatant {
     // roughly the same head height.
     const wantCrouch = this.healingT > 0 || this.mendT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
-    // peeking leans harder than plain strafing. Sign: positive rotation.z tilts the
-    // head toward local −X, which is exactly where the peek eye offsets for side=+1.
-    const leanTarget = this.peekSide ? this.peekSide * 0.26 : (this._strafing ? this.strafeDir * 0.09 : 0);
+    // peeking leans harder than plain strafing. Sign: positive is to his right, which
+    // is exactly where the peek eye offsets for side=+1.
+    const leanTarget = this.peekSide ? this.peekSide : (this._strafing ? this.strafeDir * 0.35 : 0);
     this.leanK += (leanTarget - this.leanK) * Math.min(1, dt * 6);
 
     this.group.position.copy(this.pos);
     this.group.rotation.y = this.yaw;
-    this.group.rotation.z = this.leanK;
 
     // ---- drive the animation rig ----
-    // A limping fighter's clip slows with him, because setStance scales playback by
-    // real speed — the leg wound is visible in the walk, not just in the numbers.
-    this.rig.setStance(this.currentSpeed || 0, this.crouchK < 0.9);
+    // Which way he is travelling *in his own frame*, so the blendspace can pick a
+    // cross-step over a forward walk. Local +Z is forward (see the yaw convention at
+    // the top of the steering code); local +X is therefore his left, so the rightward
+    // component carries a minus sign.
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const wdx = this._moveDX || 0, wdz = this._moveDZ || 0;
+    const localF = wdx * sy + wdz * cy;
+    const localR = -(wdx * cy - wdz * sy);
+    // A limping fighter's stride slows with him, because the blendspace advances on
+    // distance travelled — the leg wound is visible in the walk, not just the numbers.
+    this.rig.setStance(this.currentSpeed || 0, this.crouchK < 0.9, localR, localF);
+    // Lean is a spine bend in the rig now, not a roll of the whole object: rolling
+    // pivoted him about his feet and lifted a boot off the floor.
+    this.rig.setLean(this.leanK);
     // Weapon comes up when there is something to shoot and he is not sprinting.
     this.rig.setAimWeight(this.target && !this.sprintNow ? 1 : 0);
     if (this.target) {
@@ -902,9 +918,15 @@ export class Combatant {
         ? _aimTmp.set(this.target.pos.x, this.target.pos.y + 1.25, this.target.pos.z)
         : this.target.aimPoint(_aimTmp);
       const flat = Math.hypot(tp.x - this.pos.x, tp.z - this.pos.z);
-      this.rig.setAimPitch(Math.atan2(tp.y - (this.pos.y + 1.35 * this.scale), Math.max(0.4, flat)));
+      // Yaw is what the hips have not caught up to yet. Feeding it to the aim offset
+      // means he tracks a target beside him by twisting, then turns his feet — rather
+      // than the whole body snapping round as one rigid piece.
+      let dy = Math.atan2(tp.x - this.pos.x, tp.z - this.pos.z) - this.yaw;
+      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      this.rig.setAim(
+        Math.atan2(tp.y - (this.pos.y + 1.35 * this.scale), Math.max(0.4, flat)), dy);
     } else {
-      this.rig.setAimPitch(0);
+      this.rig.setAim(0, 0);
     }
     // Bandaging is a sustained additive clip; start it once on the rising edge.
     const patching = this.healingT > 0 || this.mendT > 0;
