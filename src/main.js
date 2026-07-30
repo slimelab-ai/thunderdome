@@ -118,7 +118,7 @@ const world = {
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
-const spectatorCamera = new SpectatorCamera(camera, arena.colliders);
+const spectatorCamera = new SpectatorCamera(camera);
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
 const touchMode = isTouchDevice();
@@ -2095,7 +2095,7 @@ function updateSpectatorCamera(dt) {
   if (!match.spectatorTarget?.alive) cycleSpectator(1);
   const target = match.spectatorTarget;
   if (!target) return;
-  spectatorCamera.follow(target, dt);
+  spectatorCamera.follow(target, dt, world.combatants);
   const alive = livingCrew();
   ui.showSpectator(target.name, Math.max(0, alive.indexOf(target)), alive.length);
 }
