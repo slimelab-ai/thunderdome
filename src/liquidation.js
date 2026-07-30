@@ -436,7 +436,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     const candidates = plan.recruits
       .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
       .filter(candidate => Number.isFinite(candidate.cost) && cheapestGun
-        && candidate.cost + cheapestGun.cost <= spendable)
+        && candidate.cost + cheapestGun.cost <= readinessSpendable)
       .sort((a, b) => a.order - b.order || a.cost - b.cost);
     const recruit = candidates[recruits.length - 1] || candidates[0];
     if (recruit) {
@@ -446,7 +446,9 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
       const label = `${HIRE_TYPES[recruit.type].name} CONTRACT`;
       recordMarketTrade(state, 'rival', 'hire', null, cost, label);
       return {
-        kind: 'hire', type: recruit.type, cost, risk,
+        kind: 'hire', type: recruit.type, cost, risk, priority: 'combat_readiness',
+        readinessBefore,
+        readinessAfter: rivalSquadReadiness(state),
         action: `${state.enemy.strategy.toUpperCase()}: hired ${label} for $${cost}`,
       };
     }
@@ -454,8 +456,13 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   // Establish a working weapon first, then deliberately stock combat supplies.
   // Without explicit goals these items never entered the old candidate list.
   const supplies = { medkit: 2, grenade: 2, splint: 1 };
+  const soldThisRound = new Set((state.marketLog || [])
+    .filter(entry => entry.kind === 'trade' && entry.round === state.round
+      && entry.side === 'rival' && entry.action === 'sell')
+    .map(entry => entry.type));
   target = null;
-  if (!target) target = Object.keys(supplies).find(t => owned(t) < supplies[t] && affordable(t));
+  if (!target) target = Object.keys(supplies)
+    .find(t => !soldThisRound.has(t) && owned(t) < supplies[t] && affordable(t));
   if (!target) target = plan.armor.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.guns.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.ammo.find(t => owned(t) < 4 && affordable(t));

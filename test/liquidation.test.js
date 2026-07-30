@@ -197,6 +197,35 @@ test('rival keeps an off-strategy usable gun and restores whole-squad DPS before
   assert.ok(decision.readinessAfter.squadDps > decision.readinessBefore.squadDps);
 });
 
+test('rival buys a complete reinforcement package through an impossible future reserve', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 2410;
+  state.enemyLossStreak = 3;
+  state.draft.fundedRounds = 4;
+  state.enemy.inventory = { smg: 1, ammo_9mm: 1 };
+
+  const risk = liquidationRiskModel(state, { opponentPower: 600, expectedStake: 250 });
+  assert.ok(risk.reserveTarget > state.enemyMoney);
+  const decision = runLiquidationAI(state, market, { opponentPower: 600, expectedStake: 250 });
+  assert.equal(decision.kind, 'hire');
+  assert.equal(decision.priority, 'combat_readiness');
+  assert.equal(state.enemy.recruits.length, 2);
+  assert.ok(state.enemyMoney >= 250);
+});
+
+test('rival does not sell and rebuy the same speculative supply in one round', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 10000;
+  state.enemy.inventory = {
+    smg: 1, ammo_9mm: 1, medkit: 1, grenade: 2, splint: 1,
+  };
+  recordMarketTrade(state, 'rival', 'sell', 'medkit', market.quoteSell(makeItem('medkit')));
+  const decision = runLiquidationAI(state, market);
+  assert.notEqual(decision.type, 'medkit');
+});
+
 test('rival reserve responds to confidence, loss exposure, win income, and remaining draft income', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
