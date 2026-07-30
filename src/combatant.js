@@ -172,6 +172,7 @@ export class Combatant {
 
   // out of rounds for the current gun: fall back to a fed gun, or the knife
   _switchDry(world) {
+    const previous = this.weaponId;
     let next = 'knife';
     let bestTier = -2;
     for (const id of this.gunOptions) {
@@ -185,6 +186,7 @@ export class Combatant {
     this.rig.trigger('reload');       // swapping to a fed gun reads as working the weapon
     this.burstLeft = this._burstSize();
     this.cooldown = 0.5;
+    world.onCombatEvent?.('weapon_switch', this, { from: previous, to: next, reason: 'dry' });
   }
 
   _buildBody() {
@@ -572,6 +574,7 @@ export class Combatant {
           const jit = () => 1 + (Math.random() - 0.5) * 0.14;
           this.rig.trigger('throw');
           world.throwGrenade(this.eyePos(), new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
+          world.onCombatEvent?.('grenade_throw', this, { target: this.target?.name || null, range: dist });
         } else {
           this.nadeCd = 2; // re-evaluate shortly
         }
@@ -736,6 +739,10 @@ export class Combatant {
         this.rig.trigger('fire');
 
         this.shotsFired = (this.shotsFired || 0) + 1;
+        world.onCombatEvent?.('shot', this, {
+          target: this.target?.name || null, weapon: this.weaponId, range: dist,
+          line_of_sight: los, role: this.role,
+        });
         const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
         if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
         this.burstLeft--;

@@ -2138,6 +2138,148 @@ camera.lookAt(0, 1, 0);
 const clock = new THREE.Clock();
 
 const _aimTmp = new THREE.Vector3();
+let headlessSimulation = null;
+
+function startHeadlessBotMatch(config = {}) {
+  if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    throw new Error('headless simulation is local-only');
+  }
+  clearCombatants();
+  match = makeMatch();
+  const defaults = [
+    { w: 'rifle', hp: 100, sp: 1.2, re: 0.55, arch: 'marksman', ammo: 120 },
+    { w: 'smg', hp: 100, sp: 1.35, re: 0.58, arch: 'rusher', ammo: 180 },
+    { w: 'pistol', hp: 100, sp: 1.3, re: 0.6, arch: 'medic', ammo: 90 },
+  ];
+  const alpha = config.alpha || defaults;
+  const bravo = config.bravo || defaults;
+  const swapped = config.sideSwap === true;
+  const north = swapped ? alpha : bravo;
+  const south = swapped ? bravo : alpha;
+  analytics.setSimulationContext({
+    batchId: config.batchId,
+    seed: config.seed,
+    pairId: config.pairId,
+    sideSwap: swapped,
+    bots: ['alpha', 'bravo'],
+  });
+  const spawnSquad = (roster, team, bot, spawns) => roster.forEach((r, index) => {
+    const fighter = new Combatant({
+      name: `${bot.toUpperCase()} ${index + 1}`, team, weaponId: r.w,
+      skill: { spreadMult: r.sp || 1.3, reaction: r.re || 0.58, speedMult: r.speed || 1 },
+      hp: r.hp || 100, shirt: bot === 'alpha' ? 0x2e5d33 : 0x5b2434,
+      armor: r.ar || 0, archetype: r.arch || null,
+    });
+    fighter.simulationBot = bot;
+    fighter.ammoPools[ITEM_TYPES[r.w].ammo] = r.ammo || 120;
+    fighter.healKits = r.medkit || 0;
+    fighter.splints = r.splint || 0;
+    fighter.nades = r.grenade || 0;
+    fighter.addTo(world, spawns[index % spawns.length]);
+    (team === 'player' ? match.crew : match.enemies).push(fighter);
+  });
+  spawnSquad(south, 'player', swapped ? 'bravo' : 'alpha', arena.spawns.playerCrew);
+  spawnSquad(north, 'enemy', swapped ? 'alpha' : 'bravo', arena.spawns.enemy);
+  match.enemiesAlive = match.enemies.length;
+  player.alive = false;
+  player.vmRoot.visible = false;
+  world.playerProxy.alive = false;
+  world.enemyDmgScale = 1;
+  world.globalDmgMult = 1;
+  assignRoles();
+  assignOpeningPlays();
+  const original = {
+    onKill: world.onKill, onDamage: world.onDamage, onSupport: world.onSupport,
+    onCombatEvent: world.onCombatEvent,
+  };
+  headlessSimulation = {
+    config, original, elapsed: 0, nextFrame: 0, done: false, result: null,
+    events: 0,
+  };
+  const emit = (type, payload) => {
+    headlessSimulation.events++;
+    analytics.emit(type, { simulation_match_id: match.analyticsId, time: +headlessSimulation.elapsed.toFixed(3), ...payload });
+  };
+  world.onDamage = (shooter, victim, amount) => emit('combat_damage', {
+    shooter: shooter?.name, shooter_bot: shooter?.simulationBot,
+    victim: victim?.name, victim_bot: victim?.simulationBot,
+    amount: +amount.toFixed(2), weapon: shooter?.weaponId,
+    range: shooter?.pos && victim?.pos ? +shooter.pos.distanceTo(victim.pos).toFixed(2) : null,
+  });
+  world.onSupport = (supporter, amount) => emit('combat_support', {
+    supporter: supporter?.name, bot: supporter?.simulationBot, amount: +amount.toFixed(2),
+  });
+  world.onCombatEvent = (type, fighter, detail) => emit(`combat_${type}`, {
+    fighter: fighter?.name, bot: fighter?.simulationBot,
+    position: fighter?.pos ? [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2)) : null,
+    ...detail,
+  });
+  world.onKill = (killer, victim, part) => {
+    emit('combat_kill', {
+      killer: killer?.name, killer_bot: killer?.simulationBot,
+      victim: victim?.name, victim_bot: victim?.simulationBot,
+      weapon: killer?.weaponId, part,
+    });
+    const living = world.combatants.filter(fighter => fighter.alive);
+    const teams = new Set(living.map(fighter => fighter.simulationBot));
+    if (teams.size <= 1) {
+      headlessSimulation.done = true;
+      headlessSimulation.result = {
+        winner: living[0]?.simulationBot || null,
+        duration: +headlessSimulation.elapsed.toFixed(3),
+        survivors: living.length,
+      };
+    }
+  };
+  emit('match_enter', {
+    game_mode: 'liquidation',
+    opening_plays: world.combatants.map(fighter => ({
+      fighter: fighter.name, bot: fighter.simulationBot, role: fighter.role,
+      goal: fighter.openingGoal.toArray(), weapon: fighter.weaponId,
+    })),
+  });
+  return { matchId: match.analyticsId };
+}
+
+function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
+  if (!headlessSimulation) throw new Error('no headless simulation match');
+  const emitFrame = () => analytics.emit('combat_frame', {
+    simulation_match_id: match.analyticsId,
+    time: +headlessSimulation.elapsed.toFixed(3),
+    fighters: world.combatants.map(fighter => ({
+      name: fighter.name, bot: fighter.simulationBot, alive: fighter.alive,
+      hp: +Math.max(0, fighter.hp).toFixed(2), weapon: fighter.weaponId,
+      role: fighter.role, target: fighter.target?.name || null,
+      position: [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2)),
+      ammo: { ...fighter.ammoPools }, medkit: fighter.healKits, grenade: fighter.nades,
+      pushing: fighter.pushT > 0, stalled_seconds: +fighter.stallT.toFixed(2),
+    })),
+  });
+  for (let step = 0; step < maxSteps && !headlessSimulation.done; step++) {
+    headlessSimulation.elapsed += dt;
+    for (const fighter of world.combatants) fighter.update(world, dt);
+    updateGrenades(dt);
+    if (headlessSimulation.elapsed >= headlessSimulation.nextFrame) {
+      emitFrame();
+      headlessSimulation.nextFrame += 0.5;
+    }
+    if (headlessSimulation.elapsed >= 180) {
+      headlessSimulation.done = true;
+      headlessSimulation.result = { winner: null, duration: 180, survivors: world.combatants.filter(f => f.alive).length };
+    }
+  }
+  if (headlessSimulation.done && !headlessSimulation.terminalEmitted) {
+    headlessSimulation.terminalEmitted = true;
+    analytics.emit('match_terminal', {
+      simulation_match_id: match.analyticsId,
+      terminal_reason: headlessSimulation.result.winner ? 'team_elimination' : 'timeout',
+      ...headlessSimulation.result,
+    });
+    Object.assign(world, headlessSimulation.original);
+  }
+  return { done: headlessSimulation.done, result: headlessSimulation.result, events: headlessSimulation.events };
+}
+
 function updateSpectatorCamera(dt) {
   if (!match.spectatorTarget?.alive) cycleSpectator(1);
   const target = match.spectatorTarget;
@@ -2210,6 +2352,10 @@ window.__game = {
   get stats() { return pipeline.stats(); },
   tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
+  startHeadlessBotMatch,
+  stepHeadlessBotMatch,
+  flushAnalytics() { return analytics.flush(); },
+  get analyticsPending() { return analytics.queue.length; },
   setLocked(v) { locked = v; },
   // ---- capture harness (tools/shot.mjs) ----
   // freeCam parks the camera and stops the loop from driving it, so a captured
