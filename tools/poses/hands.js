@@ -55,6 +55,25 @@ p.mag = p.weapon.mag;
 g.step(1 / 60, 150);
 
 const vm = p.arms;
+// Arm crossing is the failure mode these grips keep hitting: a pose can put the hand
+// in exactly the right place by routing the whole arm through the other one. Compare
+// the elbows, not the hands.
+const camInv = new T.Matrix4().copy(g.camera.matrixWorld).invert();
+const local = (n) => {
+  const v = new T.Vector3();
+  vm.bones.get(n).getWorldPosition(v);
+  return v.applyMatrix4(camInv);
+};
+const elbowL = local('forearm_l');
+const elbowR = local('forearm_r');
+const handL = local('hand_l');
+const handR = local('hand_r');
+console.log('DIAG grip ' + JSON.stringify({
+  crossed: elbowL.x > elbowR.x - 0.02,
+  elbowL: +elbowL.x.toFixed(3),
+  elbowR: +elbowR.x.toFixed(3),
+  handGap: +handL.distanceTo(handR).toFixed(3),
+}));
 console.log('DIAG hands ' + JSON.stringify({
   weapon: p.weapon.id,
   ready: vm.ready,

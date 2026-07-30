@@ -32,13 +32,16 @@ const SUPPORT_ARM_CLIPS = new Set(['reload', 'melee', 'draw']);
  * so that arm swings down out of frame rather than hovering emptily beside the blade.
  */
 const SUPPORT_POSE = {
-  // Fitted, not guessed. A two-handed pistol grip needs the support hand just below
-  // and behind the firing hand, and one joint cannot get there: lowering the shoulder
-  // alone also swings the hand forward past the muzzle. These came out of a grid fit
-  // against that target — see the probe in tools/poses/hands.js.
+  // Fitted under constraints, not just fitted. A two-handed pistol grip needs the
+  // support hand at the firing hand, and one joint cannot get there — lowering the
+  // shoulder alone swings the hand forward past the muzzle. But solving for hand
+  // *position* alone is not enough either: the first fit reached the target by
+  // folding the left arm across the right one, which looked like the fighter had tied
+  // himself in a knot. The search now rejects any pose whose left elbow is not
+  // clearly left of the right elbow, and prefers small angles among what is left.
   pistol: {
-    upperarm_l: [-0.30, 0, -0.70],
-    forearm_l: [1.30, 0, 0.10],
+    upperarm_l: [-0.20, 0.50, -0.30],
+    forearm_l: [1.50, 0, 0],
     hand_l: [-0.30, 0, 0],
   },
   shotgun: {

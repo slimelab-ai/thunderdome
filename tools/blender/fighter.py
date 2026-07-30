@@ -636,6 +636,13 @@ def anim_hit_react(rig):
     key(rig, 20, zero)
 
 
+# Abduction sign: on these bones a *positive* Z rotation pulls the limb toward the
+# midline. The death clips were authored with the opposite assumption, so the splay
+# that was meant to fling arms and legs apart drove them across each other — the
+# corpse ended up with its wrists and ankles swapped. Verified by measuring hand and
+# foot X in the fighter's own frame; see tools/poses/stances.js.
+
+
 def anim_death_front(rig):
     """Shot from the front: knees buckle, body folds backwards flat onto its back.
 
@@ -654,25 +661,25 @@ def anim_death_front(rig):
     key(rig, 1, STANCE, extra_loc={"hips": hips_loc()})
     key(rig, 7, merged(STANCE, {
         "chest": (-22, 0, 0), "spine": (-14, 0, 0), "neck": (-18, 0, 0), "head": (-10, 0, 0),
-        "upperarm_r": (24, 0, -20), "upperarm_l": (22, 0, 20),
-        "thigh_l": (-26, 0, 4), "shin_l": (34, 0, 0),
-        "thigh_r": (-24, 0, -4), "shin_r": (30, 0, 0),
+        "upperarm_r": (24, 0, 20), "upperarm_l": (22, 0, -20),
+        "thigh_l": (-26, 0, -4), "shin_l": (34, 0, 0),
+        "thigh_r": (-24, 0, 4), "shin_r": (30, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.10)})
     key(rig, 20, merged(STANCE, {
         "hips": (-55, 0, 0), "spine": (-8, 0, 0), "chest": (-12, 0, 0),
         "neck": (-18, 0, 0), "head": (-14, 0, 0),
-        "upperarm_r": (40, 0, -46), "forearm_r": (-20, 0, 0),
-        "upperarm_l": (38, 0, 46), "forearm_l": (-24, 0, 0),
-        "thigh_l": (20, 0, 8), "shin_l": (40, 0, 0),
-        "thigh_r": (18, 0, -8), "shin_r": (36, 0, 0),
+        "upperarm_r": (40, 0, 46), "forearm_r": (-20, 0, 0),
+        "upperarm_l": (38, 0, -46), "forearm_l": (-24, 0, 0),
+        "thigh_l": (20, 0, -8), "shin_l": (40, 0, 0),
+        "thigh_r": (18, 0, 8), "shin_r": (36, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.45, forward=-0.20)})
     key(rig, 34, merged(STANCE, {
         "hips": (-90, 0, 3), "spine": (-4, 0, 0), "chest": (-6, 4, 0),
         "neck": (-12, 6, 0), "head": (-8, 8, 0),
-        "upperarm_r": (46, 0, -66), "forearm_r": (-12, 0, 0),
-        "upperarm_l": (44, 0, 62), "forearm_l": (-16, 0, 0),
-        "thigh_l": (8, 0, 12), "shin_l": (12, 0, 0), "foot_l": (-25, 0, 0),
-        "thigh_r": (6, 0, -10), "shin_r": (10, 0, 0), "foot_r": (-25, 0, 0),
+        "upperarm_r": (46, 0, 66), "forearm_r": (-12, 0, 0),
+        "upperarm_l": (44, 0, -62), "forearm_l": (-16, 0, 0),
+        "thigh_l": (8, 0, -12), "shin_l": (12, 0, 0), "foot_l": (-25, 0, 0),
+        "thigh_r": (6, 0, 10), "shin_r": (10, 0, 0), "foot_r": (-25, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.80, forward=-0.35)})
 
 
@@ -688,25 +695,25 @@ def anim_death_back(rig):
     key(rig, 1, STANCE, extra_loc={"hips": hips_loc()})
     key(rig, 8, merged(STANCE, {
         "hips": (18, 0, 0), "chest": (26, 0, 0), "spine": (18, 0, 0), "neck": (14, 0, 0),
-        "upperarm_r": (-28, 0, -16), "upperarm_l": (-26, 0, 16),
-        "thigh_l": (-34, 0, 4), "shin_l": (48, 0, 0),
-        "thigh_r": (-30, 0, -4), "shin_r": (44, 0, 0),
+        "upperarm_r": (-28, 0, 16), "upperarm_l": (-26, 0, -16),
+        "thigh_l": (-34, 0, -4), "shin_l": (48, 0, 0),
+        "thigh_r": (-30, 0, 4), "shin_r": (44, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.18)})
     key(rig, 22, merged(STANCE, {
         "hips": (60, 0, 0), "spine": (8, 0, 0), "chest": (12, 0, 0),
         "neck": (22, 0, 0), "head": (16, 0, 0),
-        "upperarm_r": (-58, 0, -40), "forearm_r": (-26, 0, 0),
-        "upperarm_l": (-56, 0, 40), "forearm_l": (-28, 0, 0),
-        "thigh_l": (-10, 0, 6), "shin_l": (26, 0, 0),
-        "thigh_r": (-8, 0, -6), "shin_r": (22, 0, 0),
+        "upperarm_r": (-58, 0, 40), "forearm_r": (-26, 0, 0),
+        "upperarm_l": (-56, 0, -40), "forearm_l": (-28, 0, 0),
+        "thigh_l": (-10, 0, -6), "shin_l": (26, 0, 0),
+        "thigh_r": (-8, 0, 6), "shin_r": (22, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.42, forward=0.24)})
     key(rig, 36, merged(STANCE, {
         "hips": (90, 0, -4), "spine": (3, 0, 0), "chest": (6, -5, 0),
         "neck": (20, 0, 0), "head": (12, -6, 0),
-        "upperarm_r": (-66, 0, -56), "forearm_r": (-18, 0, 0),
-        "upperarm_l": (-64, 0, 54), "forearm_l": (-20, 0, 0),
-        "thigh_l": (-6, 0, 8), "shin_l": (10, 0, 0), "foot_l": (-14, 0, 0),
-        "thigh_r": (-4, 0, -8), "shin_r": (8, 0, 0), "foot_r": (-14, 0, 0),
+        "upperarm_r": (-66, 0, 56), "forearm_r": (-18, 0, 0),
+        "upperarm_l": (-64, 0, -54), "forearm_l": (-20, 0, 0),
+        "thigh_l": (-6, 0, -8), "shin_l": (10, 0, 0), "foot_l": (-14, 0, 0),
+        "thigh_r": (-4, 0, 8), "shin_r": (8, 0, 0), "foot_r": (-14, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.80, forward=0.40)})
 
 
@@ -718,17 +725,17 @@ def anim_death_collapse(rig):
     key(rig, 10, merged(STANCE, {
         "hips": (26, 0, 8), "spine": (14, 0, 0), "chest": (18, 8, 0),
         "neck": (16, 0, 0), "head": (20, 10, 0),
-        "upperarm_r": (-12, 0, -26), "upperarm_l": (-10, 0, 26),
-        "thigh_l": (-84, 0, 8), "shin_l": (96, 0, 0),
-        "thigh_r": (-80, 0, -8), "shin_r": (92, 0, 0),
+        "upperarm_r": (-12, 0, 26), "upperarm_l": (-10, 0, -26),
+        "thigh_l": (-84, 0, -8), "shin_l": (96, 0, 0),
+        "thigh_r": (-80, 0, 8), "shin_r": (92, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.50)})
     key(rig, 26, merged(STANCE, {
         "hips": (62, 0, 18), "spine": (14, 0, 0), "chest": (20, 14, 0),
         "neck": (20, 0, 0), "head": (24, 16, 0),
-        "upperarm_r": (-26, 0, -52), "forearm_r": (-34, 0, 0),
-        "upperarm_l": (-22, 0, 48), "forearm_l": (-30, 0, 0),
-        "thigh_l": (-70, 0, 16), "shin_l": (100, 0, 0), "foot_l": (-8, 0, 0),
-        "thigh_r": (-66, 0, -14), "shin_r": (96, 0, 0), "foot_r": (-8, 0, 0),
+        "upperarm_r": (-26, 0, 52), "forearm_r": (-34, 0, 0),
+        "upperarm_l": (-22, 0, -48), "forearm_l": (-30, 0, 0),
+        "thigh_l": (-70, 0, -16), "shin_l": (100, 0, 0), "foot_l": (-8, 0, 0),
+        "thigh_r": (-66, 0, 14), "shin_r": (96, 0, 0), "foot_r": (-8, 0, 0),
     }), extra_loc={"hips": hips_loc(down=0.86, forward=0.10)})
 
 
