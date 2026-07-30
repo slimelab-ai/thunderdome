@@ -1,62 +1,109 @@
 import * as THREE from 'three';
+import { wallHit } from './combat.js';
 
-const AERIAL_FOV = 64;
-const CAMERA_WORLD_Y = 24;
-const CAMERA_OFFSET_X = 6;
-const CAMERA_OFFSET_Z = 8;
-const LOOK_HEIGHT = 0.8;
-const FOLLOW_DEAD_ZONE = 4.5;
+const SPECTATOR_FOV = 70;
+const CAMERA_HEIGHT = 4.4;
+const CAMERA_DISTANCE = 6.2;
+const CAMERA_SIDE = 1.7;
+const TARGET_LOOK_HEIGHT = 1.15;
+const ACTION_LOOK_AHEAD = 0.22;
+
+function nearestOpponent(target, combatants) {
+  let nearest = null;
+  let bestDistance = Infinity;
+  for (const combatant of combatants) {
+    if (!combatant?.alive || combatant.team === target.team) continue;
+    const distance = target.pos.distanceToSquared(combatant.pos);
+    if (distance < bestDistance) {
+      nearest = combatant;
+      bestDistance = distance;
+    }
+  }
+  return nearest;
+}
 
 export class SpectatorCamera {
-  constructor(camera) {
+  constructor(camera, colliders = []) {
     this.camera = camera;
+    this.colliders = colliders;
     this.target = null;
-    this.anchor = new THREE.Vector2();
+    this.smoothedTarget = new THREE.Vector3();
+    this.smoothedOpponent = new THREE.Vector3();
+    this.heading = new THREE.Vector3(0, 0, 1);
     this.focus = new THREE.Vector3();
+    this.desiredFocus = new THREE.Vector3();
     this.desiredPosition = new THREE.Vector3();
+    this.ray = new THREE.Vector3();
+    this.right = new THREE.Vector3();
+    this.side = 1;
   }
 
   reset() {
     this.target = null;
   }
 
-  follow(target, dt) {
-    const switched = target !== this.target;
+  follow(target, dt, combatants = []) {
+    const firstFrame = this.target === null;
+    const switched = !firstFrame && target !== this.target;
     this.target = target;
+    const opponent = nearestOpponent(target, combatants);
 
-    if (switched) {
-      this.anchor.set(target.pos.x, target.pos.z);
+    if (firstFrame || switched) {
+      this.smoothedTarget.copy(target.pos);
+      this.smoothedOpponent.copy(opponent?.pos || target.pos);
+      this.side = ((target.navSeed || 0) & 1) ? -1 : 1;
     } else {
-      const dx = target.pos.x - this.anchor.x;
-      const dz = target.pos.z - this.anchor.y;
-      const distance = Math.hypot(dx, dz);
-      // The target can move freely inside a wide broadcast frame. The camera
-      // only pans once they leave it, so animation/nav jitter never reaches the shot.
-      if (distance > FOLLOW_DEAD_ZONE) {
-        const overflow = distance - FOLLOW_DEAD_ZONE;
-        this.anchor.x += (dx / distance) * overflow;
-        this.anchor.y += (dz / distance) * overflow;
-      }
+      this.smoothedTarget.lerp(target.pos, 1 - Math.exp(-dt * 3.2));
+      this.smoothedOpponent.lerp(opponent?.pos || target.pos, 1 - Math.exp(-dt * 2));
     }
 
-    this.focus.set(this.anchor.x, LOOK_HEIGHT, this.anchor.y);
-    this.desiredPosition.set(
-      this.anchor.x + CAMERA_OFFSET_X,
-      CAMERA_WORLD_Y,
-      this.anchor.y + CAMERA_OFFSET_Z,
-    );
+    const desiredHeading = this.ray.copy(this.smoothedOpponent).sub(this.smoothedTarget);
+    desiredHeading.y = 0;
+    if (desiredHeading.lengthSq() < 0.01) {
+      desiredHeading.set(Math.sin(target.yaw || 0), 0, Math.cos(target.yaw || 0));
+    } else {
+      desiredHeading.normalize();
+    }
+    if (firstFrame) this.heading.copy(desiredHeading);
+    else this.heading.lerp(desiredHeading, 1 - Math.exp(-dt * 1.8)).normalize();
 
-    if (switched) {
+    const actionDistance = opponent
+      ? Math.min(5, this.smoothedTarget.distanceTo(this.smoothedOpponent))
+      : 0;
+    this.desiredFocus.copy(this.smoothedTarget)
+      .addScaledVector(this.heading, actionDistance * ACTION_LOOK_AHEAD);
+    this.desiredFocus.y = this.smoothedTarget.y + TARGET_LOOK_HEIGHT;
+    if (firstFrame || switched) this.focus.copy(this.desiredFocus);
+    else this.focus.lerp(this.desiredFocus, 1 - Math.exp(-dt * 3.5));
+
+    this.right.set(this.heading.z, 0, -this.heading.x);
+    this.desiredPosition.copy(this.smoothedTarget)
+      .addScaledVector(this.heading, -CAMERA_DISTANCE)
+      .addScaledVector(this.right, CAMERA_SIDE * this.side);
+    this.desiredPosition.y = this.smoothedTarget.y + CAMERA_HEIGHT;
+
+    // If the preferred broadcast angle sits behind solid cover, lift and tighten
+    // the shot instead of placing the camera inside the obstacle.
+    this.ray.copy(this.desiredPosition).sub(this.focus);
+    const desiredDistance = this.ray.length();
+    this.ray.normalize();
+    const obstruction = wallHit(this.colliders, this.focus, this.ray, desiredDistance);
+    if (obstruction.dist < desiredDistance - 0.3) {
+      this.desiredPosition.copy(this.smoothedTarget)
+        .addScaledVector(this.heading, -3.2)
+        .addScaledVector(this.right, 1.1 * this.side);
+      this.desiredPosition.y = this.smoothedTarget.y + 5;
+    }
+
+    if (firstFrame) {
       this.camera.position.copy(this.desiredPosition);
     } else {
-      this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-dt * 2.5));
-      // Never allow another system's low camera transform to leak into a
-      // spectator frame, even during a transition.
-      this.camera.position.y = CAMERA_WORLD_Y;
+      const moveRate = switched ? 6 : 2.6;
+      this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-dt * moveRate));
     }
 
-    if (this.camera.fov !== AERIAL_FOV) {
-      this.camera.fov = AERIAL_FOV;
+    if (this.camera.fov !== SPECTATOR_FOV) {
+      this.camera.fov = SPECTATOR_FOV;
       this.camera.updateProjectionMatrix?.();
     }
     this.camera.lookAt(this.focus);

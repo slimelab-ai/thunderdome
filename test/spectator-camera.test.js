@@ -13,58 +13,55 @@ function fakeCamera() {
   };
 }
 
-const fighter = (x, y, z) => ({
+const fighter = (x, y, z, team = 'player', navSeed = 0) => ({
   pos: new THREE.Vector3(x, y, z),
+  team,
+  navSeed,
+  yaw: 0,
   alive: true,
 });
 
-test('spectator camera uses a fixed high world-space aerial position', () => {
+test('spectator camera begins five to ten feet above the selected fighter’s head', () => {
   const camera = fakeCamera();
-  const target = fighter(0, -50, 0);
+  const target = fighter(0, 2, 0);
   const spectator = new SpectatorCamera(camera);
-  spectator.follow(target, 1 / 60);
-  assert.equal(camera.position.y, 24, 'bad target height cannot drag the camera to the floor');
-  assert.equal(camera.fov, 64);
-  assert.equal(camera.projectionUpdates, 1);
+  spectator.follow(target, 1 / 60, [target]);
+  assert.equal(camera.position.y, 6.4);
+  assert.equal(camera.fov, 70);
+  assert.ok(camera.position.distanceTo(target.pos) < 9);
 });
 
-test('target animation jitter inside the broadcast dead zone cannot shake the camera', () => {
+test('camera sets its angle behind the selected fighter relative to nearby action', () => {
   const camera = fakeCamera();
   const target = fighter(0, 0, 0);
+  const opponent = fighter(8, 0, 0, 'enemy');
   const spectator = new SpectatorCamera(camera);
-  spectator.follow(target, 1 / 60);
-  const beforePosition = camera.position.clone();
-  const beforeLook = camera.lastLook.clone();
-  for (const [x, z] of [[0.2, -0.1], [-0.3, 0.25], [0.15, 0.4], [-0.2, -0.35]]) {
-    target.pos.x = x;
-    target.pos.z = z;
-    spectator.follow(target, 1 / 60);
-  }
-  assert.ok(camera.position.distanceTo(beforePosition) < 0.001);
-  assert.ok(camera.lastLook.distanceTo(beforeLook) < 0.001);
+  spectator.follow(target, 1 / 60, [target, opponent]);
+  assert.ok(camera.position.x < -5, 'camera sits behind the fighter with the opponent ahead');
+  assert.ok(camera.lastLook.x > 0, 'framing looks slightly into the play');
 });
 
-test('camera pans only after the fighter exits the wide aerial frame', () => {
+test('sub-frame target jitter is strongly smoothed instead of shaking the shot', () => {
   const camera = fakeCamera();
   const target = fighter(0, 0, 0);
+  const opponent = fighter(8, 0, 0, 'enemy');
   const spectator = new SpectatorCamera(camera);
-  spectator.follow(target, 1 / 60);
-  target.pos.x = 10;
-  spectator.follow(target, 1);
-  assert.ok(camera.position.x > 6);
-  assert.equal(camera.position.y, 24);
-  assert.ok(camera.lastLook.x > 5);
-});
-
-test('switching characters immediately cuts the aerial camera to the new fighter', () => {
-  const camera = fakeCamera();
-  const first = fighter(-10, 0, 0);
-  const second = fighter(10, 0, 0);
-  const spectator = new SpectatorCamera(camera);
-  spectator.follow(first, 1 / 60);
+  spectator.follow(target, 1 / 60, [target, opponent]);
   const before = camera.position.clone();
-  spectator.reset();
-  spectator.follow(second, 1 / 60);
-  assert.ok(camera.position.distanceTo(before) > 15);
-  assert.ok(camera.lastLook.x > 9);
+  target.pos.set(0.25, 0, -0.2);
+  spectator.follow(target, 1 / 60, [target, opponent]);
+  assert.ok(camera.position.distanceTo(before) < 0.08);
+});
+
+test('switching characters creates a fast move to a genuinely different angle', () => {
+  const camera = fakeCamera();
+  const first = fighter(-8, 0, 0, 'player', 0);
+  const second = fighter(8, 0, 0, 'player', 1);
+  const opponent = fighter(0, 0, -4, 'enemy');
+  const spectator = new SpectatorCamera(camera);
+  spectator.follow(first, 1 / 60, [first, second, opponent]);
+  const before = camera.position.clone();
+  for (let i = 0; i < 20; i++) spectator.follow(second, 1 / 60, [first, second, opponent]);
+  assert.ok(camera.position.distanceTo(before) > 8);
+  assert.ok(camera.position.y >= 4.4 && camera.position.y <= 5);
 });
