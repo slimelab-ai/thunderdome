@@ -627,6 +627,31 @@ function startMatch() {
   match = makeMatch();
   spectatorCamera.reset();
   const liquidation = career.mode === 'liquidation';
+  world.onDamage = liquidation ? (shooter, victim, amount) => emitCareerEvent('combat_damage', {
+    time: +match.time.toFixed(3),
+    shooter: shooter?.isPlayer ? 'YOU' : shooter?.name,
+    shooter_team: shooter?.team,
+    victim: victim?.name,
+    victim_team: victim?.team,
+    weapon: shooter?.weaponId || player?.weaponId || null,
+    amount: +amount.toFixed(2),
+    range: shooter?.pos && victim?.pos ? +shooter.pos.distanceTo(victim.pos).toFixed(2) : null,
+  }) : null;
+  world.onSupport = liquidation ? (supporter, amount) => emitCareerEvent('combat_support', {
+    time: +match.time.toFixed(3),
+    supporter: supporter?.name,
+    supporter_team: supporter?.team,
+    amount: +amount.toFixed(2),
+  }) : null;
+  world.onCombatEvent = liquidation ? (type, fighter, detail) => emitCareerEvent(`combat_${type}`, {
+    time: +match.time.toFixed(3),
+    fighter: fighter?.isPlayer ? 'YOU' : fighter?.name,
+    fighter_team: fighter?.team,
+    position: fighter?.pos
+      ? [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2))
+      : null,
+    ...detail,
+  }) : null;
   const squad = liquidation
     ? { name: 'THE RIVAL SYNDICATE', shirt: 0x5b2434, roster: enemyRoster(career.liquidation) }
     : SQUADS[career.rank];

@@ -9,6 +9,7 @@ import {
   resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
   liquidationRivalStake,
+  rivalSquadReadiness,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -174,6 +175,26 @@ test('rival roster assigns only owned guns and compatible ammunition', () => {
   const roster = enemyRoster(state);
   assert.deepEqual(roster.map(fighter => fighter.w), ['rifle', 'smg', 'pistol']);
   assert.ok(roster.every(fighter => fighter.ammo > 0));
+});
+
+test('rival keeps an off-strategy usable gun and restores whole-squad DPS before reserving cash', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemy.strategy = 'rifle';
+  state.enemyMoney = 2285;
+  state.enemyLossStreak = 1;
+  state.draft.fundedRounds = 2;
+  state.enemy.inventory = { smg: 1, ammo_9mm: 0, ammo_762: 1 };
+  for (let i = 0; i < 7; i++) market.buy('ammo_9mm');
+
+  assert.equal(rivalSquadReadiness(state).fieldable, 0);
+  const decision = runLiquidationAI(state, market, { opponentPower: 500, expectedStake: 250 });
+  assert.equal(decision.kind, 'buy');
+  assert.equal(decision.type, 'ammo_9mm');
+  assert.equal(decision.priority, 'combat_readiness');
+  assert.equal(rivalSquadReadiness(state).fieldable, 1);
+  assert.equal(enemyRoster(state)[0].w, 'smg');
+  assert.ok(decision.readinessAfter.squadDps > decision.readinessBefore.squadDps);
 });
 
 test('rival reserve responds to confidence, loss exposure, win income, and remaining draft income', () => {

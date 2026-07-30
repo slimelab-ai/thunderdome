@@ -172,6 +172,27 @@ export function allocateRivalSupply(inventory, type, fighterIndex, rosterSize, c
 }
 
 const WEAPON_POWER = { knife: 0.55, pistol: 1, smg: 1.25, shotgun: 1.35, rifle: 1.6, dmr: 1.75 };
+const RIVAL_GUNS = ['smg', 'shotgun', 'rifle', 'dmr'];
+
+function ammoForGun(type) {
+  return `ammo_${ITEM_TYPES[type].ammo}`;
+}
+
+export function rivalSquadReadiness(state) {
+  const roster = enemyRoster(state);
+  const fighters = roster.map(fighter => ({
+    weapon: fighter.w,
+    ammo: fighter.ammo,
+    fieldable: fighter.w !== 'pistol' && fighter.ammo > 0,
+    dps: +(fighter.hp * (WEAPON_POWER[fighter.w] || 1) * (fighter.ammo > 0 ? 1 : 0.55)).toFixed(1),
+  }));
+  return {
+    rosterSize: fighters.length,
+    fieldable: fighters.filter(fighter => fighter.fieldable).length,
+    squadDps: Math.round(fighters.reduce((sum, fighter) => sum + fighter.dps, 0)),
+    fighters,
+  };
+}
 
 export function liquidationRiskModel(state, playerSignals = {}) {
   const envelope = draftShare(state);
@@ -261,11 +282,14 @@ const STRATEGIES = {
 function strategyNeeds(state, plan) {
   const inventory = state.enemy.inventory;
   const rosterSize = Math.max(1, (state.enemy.recruits || []).length);
-  const guns = plan.guns.filter(type => type !== 'pistol');
+  const guns = RIVAL_GUNS;
   const gunTarget = rosterSize;
   const gunCount = guns.reduce((total, type) => total + Math.floor(inventory[type] || 0), 0);
-  const ammoTarget = Math.max(1, gunCount);
-  const ammoCount = plan.ammo.reduce((total, type) => total + (inventory[type] || 0), 0);
+  const ammoTarget = Math.max(1, Math.min(gunTarget, gunCount));
+  const ammoCount = guns.reduce((total, type) => {
+    const users = Math.floor(inventory[type] || 0);
+    return total + Math.min(users, Math.floor(inventory[ammoForGun(type)] || 0));
+  }, 0);
   return { rosterSize, guns, gunTarget, gunCount, ammoTarget, ammoCount };
 }
 
@@ -349,18 +373,31 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   ));
   const needs = strategyNeeds(state, plan);
   // Readiness purchases may use the speculative reserve, but never the next
-  // minimum stake plus the already-visible margin call.
-  const combatFloor = Math.max(250, risk.expectedStake + risk.streakPenalty);
+  // minimum stake. A stranded squad must be allowed to spend through its future
+  // margin-call reserve: preserving cash while fielding knives guarantees that
+  // the margin call arrives.
+  const combatFloor = Math.max(250, risk.expectedStake);
   const readinessSpendable = Math.max(0, state.enemyMoney - combatFloor);
   const readinessAffordable = t => Number.isFinite(price(t)) && price(t) <= readinessSpendable;
   const gunCandidates = [
     ...plan.guns.filter(type => type !== 'pistol'),
     ...['smg', 'shotgun', 'rifle', 'dmr'].filter(type => !plan.guns.includes(type)),
   ];
-  let target = needs.gunCount < needs.gunTarget
+  const readinessBefore = rivalSquadReadiness(state);
+  // First complete an owned gun. This is the cheapest immediate increase to
+  // fielded squad DPS and lets the bot counter an ammo squeeze by comparing all
+  // four ammunition families instead of clinging to its strategy label.
+  const dryGunAmmo = RIVAL_GUNS
+    .filter(type => owned(type) > 0 && owned(ammoForGun(type)) < owned(type))
+    .map(type => ({ type: ammoForGun(type), power: WEAPON_POWER[type], cost: price(ammoForGun(type)) }))
+    .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= readinessSpendable)
+    .sort((a, b) => (b.power / b.cost) - (a.power / a.cost));
+  let target = dryGunAmmo[0]?.type || null;
+  if (!target) target = needs.gunCount < needs.gunTarget
     ? gunCandidates.find(type => {
-      const ammo = `ammo_${ITEM_TYPES[type].ammo}`;
-      return readinessAffordable(type) && price(type) + price(ammo) <= readinessSpendable;
+      const ammo = ammoForGun(type);
+      const kitCost = price(type) + (owned(ammo) > owned(type) ? 0 : price(ammo));
+      return readinessAffordable(type) && kitCost <= readinessSpendable;
     })
     : null;
   if (!target && needs.ammoCount < needs.ammoTarget) {
@@ -378,6 +415,8 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     recordMarketTrade(state, 'rival', 'buy', target, cost);
     return {
       kind: 'buy', type: target, cost, reserveTarget, risk, priority: 'combat_readiness',
+      readinessBefore,
+      readinessAfter: rivalSquadReadiness(state),
       action: `${state.enemy.strategy.toUpperCase()}: readiness buy ${ITEM_TYPES[target].name} for $${cost}`,
     };
   }
@@ -385,7 +424,8 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     return {
       kind: 'hold', reason: 'readiness_unaffordable', reserveTarget, risk,
       cash: state.enemyMoney, spendable: readinessSpendable,
-      action: `HOLD: cannot complete the active roster's next combat kit without breaching the $${combatFloor} floor`,
+      readiness: readinessBefore,
+      action: `HOLD: cannot increase fielded squad DPS without breaching the $${combatFloor} stake floor`,
     };
   }
 
@@ -447,16 +487,18 @@ export function enemyRoster(state) {
     .filter(type => HIRE_TYPES[type])
     .slice(0, 5);
   if (!recruits.length) recruits = ['enforcer'];
-  const available = Object.fromEntries(plan.guns
-    .filter(type => type !== 'pistol')
-    .map(type => [type, Math.floor(inv[type] || 0)]));
+  const available = Object.fromEntries(RIVAL_GUNS.map(type => [type, Math.floor(inv[type] || 0)]));
+  const preference = [
+    ...plan.guns.filter(type => type !== 'pistol'),
+    ...RIVAL_GUNS.filter(type => !plan.guns.includes(type)),
+  ];
   const assignments = recruits.map((_, index) => {
     const preferred = plan.guns[index % plan.guns.length];
-    if (preferred !== 'pistol' && available[preferred] > 0) {
+    if (preferred !== 'pistol' && available[preferred] > 0 && inv[ammoForGun(preferred)] > 0) {
       available[preferred]--;
       return preferred;
     }
-    const substitute = plan.guns.find(type => type !== 'pistol' && available[type] > 0);
+    const substitute = preference.find(type => available[type] > 0 && inv[ammoForGun(type)] > 0);
     if (substitute) {
       available[substitute]--;
       return substitute;

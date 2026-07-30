@@ -754,15 +754,26 @@ export class Player {
     const muzzle = new THREE.Vector3();
     this.currentVM.muzzle.getWorldPosition(muzzle);
 
+    let hits = 0;
+    let nearest = Infinity;
     for (let i = 0; i < w.pellets; i++) {
       const dir = applySpread(baseDir, spread);
       const res = fireRay(this.world, this.world.playerShooter, origin, dir, w);
+      if (res.type === 'flesh' || res.type === 'player') hits++;
+      if (Number.isFinite(res.dist)) nearest = Math.min(nearest, res.dist);
       this.world.fx.tracer(muzzle, res.point);
       if (res.type === 'wall') {
         this.world.fx.sparks(res.point, dir);
         if (Math.random() < 0.35) audio.ricochet();
       }
     }
+    this.world.onCombatEvent?.('shot', this.world.playerShooter, {
+      weapon: w.id,
+      target: null,
+      range: Number.isFinite(nearest) ? +nearest.toFixed(2) : null,
+      pellets: w.pellets,
+      hits,
+    });
 
     audio.shot(w.sound, 1);
     this.arms.fire();
