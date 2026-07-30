@@ -567,6 +567,9 @@ function runTrackedLiquidationAI(reason) {
   const signals = {
     hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     opponentPower: playerSquadReadinessPower(),
+    opponentRoster: 1 + career.crew
+      .filter(candidate => !candidate.benched && (candidate.hp == null || candidate.hp > 0))
+      .slice(0, DEPLOYED_CREW_CAP).length,
     expectedStake: Math.max(250, Math.floor(Math.max(0, career.money) * 0.1 / 50) * 50),
   };
   const result = runLiquidationAI(career.liquidation, market, signals);

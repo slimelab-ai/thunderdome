@@ -183,7 +183,7 @@ export function rivalSquadReadiness(state) {
   const fighters = roster.map(fighter => ({
     weapon: fighter.w,
     ammo: fighter.ammo,
-    fieldable: fighter.w !== 'pistol' && fighter.ammo > 0,
+    fieldable: fighter.ammo > 0,
     dps: +(fighter.hp * (WEAPON_POWER[fighter.w] || 1) * (fighter.ammo > 0 ? 1 : 0.55)).toFixed(1),
   }));
   return {
@@ -305,7 +305,14 @@ function chooseLiquidationSale(state, market, plan, emergency = false) {
   const needs = strategyNeeds(state, plan);
   const keep = {};
   for (const type of needs.guns) keep[type] = Math.min(needs.rosterSize, inv[type] || 0);
-  for (const type of plan.ammo) keep[type] = Math.min(needs.ammoTarget, inv[type] || 0);
+  const ammoUsers = {};
+  for (const fighter of enemyRoster(state)) {
+    const ammo = ammoForGun(fighter.w);
+    ammoUsers[ammo] = (ammoUsers[ammo] || 0) + 1;
+  }
+  for (const [type, users] of Object.entries(ammoUsers)) {
+    keep[type] = Math.min(Math.max(1, users), inv[type] || 0);
+  }
   for (const [type, count] of Object.entries({ medkit: 1, grenade: 1, splint: 1 })) {
     keep[type] = Math.min(count, inv[type] || 0);
   }
@@ -370,6 +377,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   const desiredRoster = fundedRounds <= 0 ? 1 : Math.min(5, Math.max(
     plan.desiredRoster,
     1 + Math.floor(fundedRounds / 2),
+    Math.floor(Number(playerSignals.opponentRoster) || 1),
   ));
   const needs = strategyNeeds(state, plan);
   // Readiness purchases may use the speculative reserve, but never the next
@@ -384,6 +392,31 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     ...['smg', 'shotgun', 'rifle', 'dmr'].filter(type => !plan.guns.includes(type)),
   ];
   const readinessBefore = rivalSquadReadiness(state);
+  // A contract includes the same starter pistol and 9mm box that a player hire
+  // receives. When outnumbered, another armed body adds far more squad damage
+  // per dollar than replacing a working pistol with a slightly stronger gun.
+  if (readinessBefore.fieldable >= recruits.length && recruits.length < desiredRoster) {
+    const candidates = plan.recruits
+      .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
+      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= readinessSpendable)
+      .sort((a, b) => a.order - b.order || a.cost - b.cost);
+    const recruit = candidates[recruits.length - 1] || candidates[0];
+    if (recruit) {
+      const cost = market.buyRecruit(recruit.type);
+      state.enemyMoney -= cost;
+      recruits.push(recruit.type);
+      inv.ammo_9mm = owned('ammo_9mm') + 1;
+      const label = `${HIRE_TYPES[recruit.type].name} CONTRACT`;
+      recordMarketTrade(state, 'rival', 'hire', null, cost, `${label} + SIDEARM KIT`);
+      return {
+        kind: 'hire', type: recruit.type, cost, risk, priority: 'combat_readiness',
+        included: ['pistol', 'ammo_9mm'],
+        readinessBefore,
+        readinessAfter: rivalSquadReadiness(state),
+        action: `${state.enemy.strategy.toUpperCase()}: hired ${label} with sidearm kit for $${cost}`,
+      };
+    }
+  }
   // First complete an owned gun. This is the cheapest immediate increase to
   // fielded squad DPS and lets the bot counter an ammo squeeze by comparing all
   // four ammunition families instead of clinging to its strategy label.
@@ -392,7 +425,9 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     .map(type => ({ type: ammoForGun(type), power: WEAPON_POWER[type], cost: price(ammoForGun(type)) }))
     .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= readinessSpendable)
     .sort((a, b) => (b.power / b.cost) - (a.power / a.cost));
-  let target = dryGunAmmo[0]?.type || null;
+  const dryPistolAmmo = readinessBefore.fieldable < recruits.length
+    && readinessAffordable('ammo_9mm') ? 'ammo_9mm' : null;
+  let target = dryPistolAmmo || dryGunAmmo[0]?.type || null;
   if (!target) target = needs.gunCount < needs.gunTarget
     ? gunCandidates.find(type => {
       const ammo = ammoForGun(type);
@@ -429,30 +464,6 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     };
   }
 
-  if (recruits.length < desiredRoster) {
-    const cheapestGun = gunCandidates
-      .map(type => ({ type, cost: price(type) + price(`ammo_${ITEM_TYPES[type].ammo}`) }))
-      .sort((a, b) => a.cost - b.cost)[0];
-    const candidates = plan.recruits
-      .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
-      .filter(candidate => Number.isFinite(candidate.cost) && cheapestGun
-        && candidate.cost + cheapestGun.cost <= readinessSpendable)
-      .sort((a, b) => a.order - b.order || a.cost - b.cost);
-    const recruit = candidates[recruits.length - 1] || candidates[0];
-    if (recruit) {
-      const cost = market.buyRecruit(recruit.type);
-      state.enemyMoney -= cost;
-      recruits.push(recruit.type);
-      const label = `${HIRE_TYPES[recruit.type].name} CONTRACT`;
-      recordMarketTrade(state, 'rival', 'hire', null, cost, label);
-      return {
-        kind: 'hire', type: recruit.type, cost, risk, priority: 'combat_readiness',
-        readinessBefore,
-        readinessAfter: rivalSquadReadiness(state),
-        action: `${state.enemy.strategy.toUpperCase()}: hired ${label} for $${cost}`,
-      };
-    }
-  }
   // Establish a working weapon first, then deliberately stock combat supplies.
   // Without explicit goals these items never entered the old candidate list.
   const supplies = { medkit: 2, grenade: 2, splint: 1 };
