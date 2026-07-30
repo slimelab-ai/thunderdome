@@ -305,6 +305,41 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
   background: linear-gradient(135deg, rgba(24,22,22,0.94), rgba(12,12,18,0.94));
   box-shadow: inset 0 1px rgba(255,255,255,0.04);
 }
+#touch-settings {
+  display: none;
+  margin: 0 auto 14px; padding: 12px 14px 14px; max-width: 820px;
+  text-align: left; border: 1px solid rgba(227,36,43,0.32); border-radius: 7px;
+  background: linear-gradient(135deg, rgba(27,16,18,0.95), rgba(12,12,18,0.94));
+}
+body.touch-mode #touch-settings { display: block; }
+.touch-settings-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
+}
+.touch-settings-head b { display: block; color: #ff7277; font-size: 13px; letter-spacing: 2px; }
+.touch-settings-head span { display: block; margin-top: 2px; color: #858590; font-size: 11px; }
+.touch-settings-head .btn { padding: 6px 11px; font-size: 10px; }
+.touch-layout-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.touch-layout-option {
+  min-width: 0; padding: 10px; text-align: left; color: #aaaab4;
+  border: 1px solid #393943; border-radius: 6px; background: rgba(4,4,7,0.62);
+  cursor: pointer;
+}
+.touch-layout-option b { display: block; color: #e6e6eb; font-size: 11px; letter-spacing: 1.5px; }
+.touch-layout-option span { display: block; margin-top: 4px; font-size: 9px; line-height: 1.35; }
+.touch-layout-option.selected {
+  color: #fff; border-color: var(--blood); background: rgba(227,36,43,0.19);
+  box-shadow: inset 0 0 0 1px rgba(255,110,115,0.12);
+}
+.touch-layout-option.selected b { color: #ff7b80; }
+.touch-assist-control { display: grid; gap: 3px; margin-top: 11px; }
+.touch-assist-control > span {
+  display: flex; justify-content: space-between; color: #c9c9d0;
+  font-size: 10px; font-weight: 900; letter-spacing: 1.2px;
+}
+.touch-assist-control output { color: var(--acid); }
+.touch-assist-control input { width: 100%; accent-color: var(--blood); }
+.touch-assist-control small { color: #70707a; font-size: 9px; }
 .controller-settings-head {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
@@ -364,6 +399,7 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .settings-dialog-head > div > span { color: var(--blood); font-size: 9px; font-weight: 900; letter-spacing: 2px; }
 .settings-dialog h2 { margin: 2px 0 0; font: 900 clamp(34px, 5vw, 56px)/1 Impact, sans-serif; letter-spacing: 3px; }
 .settings-dialog #controller-settings { max-width: none; margin-bottom: 0; }
+.settings-dialog #touch-settings { max-width: none; }
 .settings-controller-guide {
   width: 100%; justify-content: center; align-items: center; gap: 5px;
   margin-top: 12px; color: #8c8c96; font-size: 9px; font-weight: 900;
@@ -927,10 +963,21 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
  * and left bezels. The bottom-center lean pair is reachable by either thumb.
  */
 #t-fire {
-  width: 82px; height: 82px;
-  right: var(--touch-safe-right); top: clamp(118px, 37%, 230px);
+  width: 86px; height: 86px;
   font-size: 13px; border-width: 2px;
   border-color: rgba(255,82,89,0.72); background: rgba(227,36,43,0.24);
+}
+#t-fire span { display: grid; gap: 2px; place-items: center; }
+#t-fire small { font-size: 7px; letter-spacing: 1.5px; color: rgba(255,255,255,0.56); }
+#touch-ui[data-layout="thumbs"] #t-fire {
+  right: clamp(64px, 8vw, 96px); top: clamp(124px, 43%, 260px);
+}
+#touch-ui[data-layout="left"] #t-fire {
+  left: var(--touch-safe-left); right: auto; top: clamp(120px, 36%, 220px);
+}
+#touch-ui[data-layout="claw"] #t-fire {
+  width: 72px; height: 48px; left: calc(var(--touch-safe-left) + 120px); right: auto;
+  top: var(--touch-safe-top); border-radius: 11px;
 }
 #t-ads {
   width: 58px; height: 58px;
@@ -998,12 +1045,19 @@ body.touch-mode #hud-bottomleft {
 
 @media (max-height: 430px) {
   #touch-ui { --touch-scale: 0.88; }
-  #t-fire { width: 72px; height: 72px; top: 35%; }
+  #t-fire { width: 74px; height: 74px; }
+  #touch-ui[data-layout="thumbs"] #t-fire { top: 39%; }
+  #touch-ui[data-layout="left"] #t-fire { top: 34%; }
+  #touch-ui[data-layout="claw"] #t-fire { width: 66px; height: 42px; top: var(--touch-safe-top); }
   #t-ads { width: 52px; height: 52px; top: calc(35% - 62px); }
   #t-reload { width: 46px; height: 46px; top: calc(35% + 80px); }
   #t-jump { width: 58px; height: 58px; }
   #t-crouch { width: 48px; height: 48px; right: calc(var(--touch-safe-right) + 68px); }
   .t-lean { height: 38px; }
+}
+
+@media (max-width: 700px) {
+  .touch-layout-options { grid-template-columns: 1fr; }
 }
 
 /* spectating (touch): collapse the control cluster to just pause; taps cycle fighters */

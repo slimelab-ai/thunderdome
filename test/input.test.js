@@ -198,6 +198,32 @@ test('aim magnetism never steers an idle crosshair just because fire or ADS is h
   assert.equal(player.pitch, 0);
 });
 
+test('touch movement alone never rotates the camera toward an aim-assist target', () => {
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(0, 1.62, 0);
+  camera.updateMatrixWorld();
+  const player = {
+    yaw: 0, pitch: 0, ads: 0, alive: true,
+    padMoveX: 0, padMoveZ: 0, sprintHeld: false,
+    addLook(dYaw, dPitch) { this.yaw += dYaw; this.pitch += dPitch; },
+  };
+  const touch = {
+    enabled: true, moveX: 0, moveY: -1, sprint: false,
+    consumeLook: () => ({ dx: 0, dy: 0 }),
+    sync: () => {},
+  };
+  const hub = new InputHub(
+    player,
+    { combatants: [enemyAt(0.35, 1.62, -12)], colliders: [] },
+    camera,
+    { touch }
+  );
+  hub._pad = () => null;
+  hub.update(1 / 60, 'match');
+  assert.equal(player.yaw, 0);
+  assert.equal(player.pitch, 0);
+});
+
 test('while dead, d-pad and bumpers cycle spectator targets instead of gameplay actions', () => {
   const { hub, player } = makeHub();
   player.alive = false;

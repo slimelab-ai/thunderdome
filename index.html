@@ -238,6 +238,34 @@
         </div>
         <button id="btn-settings-close" class="btn btn-ghost"><span class="pad-key pad-b controller-only" aria-hidden="true">B</span> BACK</button>
       </div>
+      <section id="touch-settings" aria-label="Touch control setup">
+        <div class="touch-settings-head">
+          <div>
+            <b>📱 TOUCH CONTROL DECK</b>
+            <span>Choose how you hold the phone. Your layout is saved on this device.</span>
+          </div>
+          <button id="touch-settings-reset" class="btn btn-ghost">RESET</button>
+        </div>
+        <div class="touch-layout-options" role="group" aria-label="Fire button layout">
+          <button type="button" class="touch-layout-option" data-touch-layout="thumbs" aria-pressed="true">
+            <b>THUMBS</b>
+            <span>Reachable right fire. Hold FIRE and drag to track.</span>
+          </button>
+          <button type="button" class="touch-layout-option" data-touch-layout="left" aria-pressed="false">
+            <b>LEFT FIRE</b>
+            <span>Right thumb keeps aiming; left thumb pauses movement to shoot.</span>
+          </button>
+          <button type="button" class="touch-layout-option" data-touch-layout="claw" aria-pressed="false">
+            <b>CLAW</b>
+            <span>Top-left fire for an index finger; both thumbs stay active.</span>
+          </button>
+        </div>
+        <label class="touch-assist-control" for="touch-aim-assist">
+          <span><b>TOUCH AIM ASSIST</b><output id="touch-aim-assist-value">35%</output></span>
+          <input id="touch-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
+          <small>Slowdown and gentle pull only while your aiming finger is moving.</small>
+        </label>
+      </section>
       <section id="controller-settings" aria-label="Controller aim calibration">
         <div class="controller-settings-head">
           <div>
