@@ -342,18 +342,22 @@ export class Player {
   }
 
   // ---------- update ----------
-  update(dt, locked) {
+  update(dt, locked, spectating = false) {
     const w = this.weapon;
 
     if (!this.alive) {
       // release the world proxy — a corpse must not soak bullets or draw AI fire
       // while the spectator phase keeps the match running
       this.world.playerProxy.alive = false;
-      // death cam: slump to floor
-      this.deathT += dt;
-      const t = Math.min(1, this.deathT / 0.8);
-      this.camera.position.set(this.pos.x, THREE.MathUtils.lerp(this.eyeHeight, 0.25, t * t) + this.pos.y, this.pos.z);
-      this.camera.rotation.set(this.pitch, this.yaw, t * 0.9);
+      // Only drive the short death slump before spectator mode takes ownership.
+      // Otherwise this would reset the camera to the corpse every frame before
+      // the aerial camera runs, trapping an interpolated shot near the floor.
+      if (!spectating) {
+        this.deathT += dt;
+        const t = Math.min(1, this.deathT / 0.8);
+        this.camera.position.set(this.pos.x, THREE.MathUtils.lerp(this.eyeHeight, 0.25, t * t) + this.pos.y, this.pos.z);
+        this.camera.rotation.set(this.pitch, this.yaw, t * 0.9);
+      }
       return;
     }
 

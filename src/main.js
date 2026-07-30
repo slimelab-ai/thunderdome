@@ -2095,14 +2095,14 @@ function updateSpectatorCamera(dt) {
   if (!match.spectatorTarget?.alive) cycleSpectator(1);
   const target = match.spectatorTarget;
   if (!target) return;
-  spectatorCamera.follow(target, dt, world.combatants);
+  spectatorCamera.follow(target, dt);
   const alive = livingCrew();
   ui.showSpectator(target.name, Math.max(0, alive.indexOf(target)), alive.length);
 }
 
 function stepMatch(dt) {
   match.time += dt;
-  player.update(dt, locked || touchMode || input.gamepadActive);
+  player.update(dt, locked || touchMode || input.gamepadActive, !!match.spectating);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);

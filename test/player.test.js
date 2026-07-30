@@ -47,6 +47,8 @@ test('death releases the world proxy so the corpse cannot soak bullets while spe
 
   player.takeDamage(10000, 'torso', new THREE.Vector3());
   assert.equal(player.alive, false);
-  player.update(1 / 60, true); // spectator phase keeps ticking the dead player
+  camera.position.set(100, 24, 100);
+  player.update(1 / 60, true, true); // spectator phase keeps ticking without stealing the camera
   assert.equal(world.playerProxy.alive, false);
+  assert.deepEqual(camera.position.toArray(), [100, 24, 100]);
 });

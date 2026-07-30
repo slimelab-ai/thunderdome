@@ -1,32 +1,18 @@
 import * as THREE from 'three';
 
-const AERIAL_FOV = 60;
-const AERIAL_HEIGHT = 14;
-const AERIAL_OFFSET_X = 6;
-const AERIAL_OFFSET_Z = 7;
-const ENGAGEMENT_RANGE = 20;
-const TARGET_WEIGHT = 0.72;
-
-function nearestOpponent(target, combatants) {
-  let nearest = null;
-  let nearestDistance = ENGAGEMENT_RANGE * ENGAGEMENT_RANGE;
-  for (const combatant of combatants) {
-    if (!combatant?.alive || combatant.team === target.team) continue;
-    const distance = target.pos.distanceToSquared(combatant.pos);
-    if (distance < nearestDistance) {
-      nearest = combatant;
-      nearestDistance = distance;
-    }
-  }
-  return nearest;
-}
+const AERIAL_FOV = 64;
+const CAMERA_WORLD_Y = 24;
+const CAMERA_OFFSET_X = 6;
+const CAMERA_OFFSET_Z = 8;
+const LOOK_HEIGHT = 0.8;
+const FOLLOW_DEAD_ZONE = 4.5;
 
 export class SpectatorCamera {
   constructor(camera) {
     this.camera = camera;
     this.target = null;
+    this.anchor = new THREE.Vector2();
     this.focus = new THREE.Vector3();
-    this.desiredFocus = new THREE.Vector3();
     this.desiredPosition = new THREE.Vector3();
   }
 
@@ -34,35 +20,39 @@ export class SpectatorCamera {
     this.target = null;
   }
 
-  follow(target, dt, combatants = []) {
+  follow(target, dt) {
     const switched = target !== this.target;
     this.target = target;
 
-    const opponent = nearestOpponent(target, combatants);
-    this.desiredFocus.copy(target.pos);
-    if (opponent) {
-      this.desiredFocus.multiplyScalar(TARGET_WEIGHT)
-        .addScaledVector(opponent.pos, 1 - TARGET_WEIGHT);
+    if (switched) {
+      this.anchor.set(target.pos.x, target.pos.z);
+    } else {
+      const dx = target.pos.x - this.anchor.x;
+      const dz = target.pos.z - this.anchor.y;
+      const distance = Math.hypot(dx, dz);
+      // The target can move freely inside a wide broadcast frame. The camera
+      // only pans once they leave it, so animation/nav jitter never reaches the shot.
+      if (distance > FOLLOW_DEAD_ZONE) {
+        const overflow = distance - FOLLOW_DEAD_ZONE;
+        this.anchor.x += (dx / distance) * overflow;
+        this.anchor.y += (dz / distance) * overflow;
+      }
     }
-    this.desiredFocus.y = Math.max(
-      target.pos.y,
-      opponent?.pos.y ?? target.pos.y
-    ) + 0.8;
 
-    const engagementDistance = opponent ? target.pos.distanceTo(opponent.pos) : 0;
-    const extraHeight = Math.min(4, engagementDistance * 0.18);
+    this.focus.set(this.anchor.x, LOOK_HEIGHT, this.anchor.y);
     this.desiredPosition.set(
-      this.desiredFocus.x + AERIAL_OFFSET_X,
-      this.desiredFocus.y + AERIAL_HEIGHT + extraHeight,
-      this.desiredFocus.z + AERIAL_OFFSET_Z,
+      this.anchor.x + CAMERA_OFFSET_X,
+      CAMERA_WORLD_Y,
+      this.anchor.y + CAMERA_OFFSET_Z,
     );
 
     if (switched) {
-      this.focus.copy(this.desiredFocus);
       this.camera.position.copy(this.desiredPosition);
     } else {
-      this.focus.lerp(this.desiredFocus, 1 - Math.exp(-dt * 5));
-      this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-dt * 4));
+      this.camera.position.lerp(this.desiredPosition, 1 - Math.exp(-dt * 2.5));
+      // Never allow another system's low camera transform to leak into a
+      // spectator frame, even during a transition.
+      this.camera.position.y = CAMERA_WORLD_Y;
     }
 
     if (this.camera.fov !== AERIAL_FOV) {
