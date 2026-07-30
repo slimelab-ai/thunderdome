@@ -13,6 +13,9 @@ export class CircuitMarket {
   quoteBuy(type, quantity = 1, multiplier = 1) {
     return Math.round(ITEM_TYPES[type].price * multiplier * quantity);
   }
+  quoteBuySeries(type, quantity = 1, multiplier = 1) {
+    return this.quoteBuy(type, 1, multiplier) * quantity;
+  }
   quoteSell(item, multiplier = 1) {
     const def = ITEM_TYPES[item.type];
     const fraction = def.kind === 'ammo' ? item.rounds / AMMO_TYPES[def.ammoType].box : 1;
@@ -52,6 +55,20 @@ export class LiquidationMarket {
     return p.cash * quantity / (p.units - quantity);
   }
   quoteBuy(type, quantity = 1) { return Math.max(1, Math.ceil(this._buyRaw(type, quantity))); }
+  quoteBuySeries(type, quantity = 1) {
+    const pool = this.pools[type];
+    if (!pool || quantity <= 0 || pool.units <= quantity) return quantity <= 0 ? 0 : Infinity;
+    let units = pool.units;
+    let cash = pool.cash;
+    let total = 0;
+    for (let i = 0; i < quantity; i++) {
+      const cost = Math.max(1, Math.ceil(cash / (units - 1)));
+      units--;
+      cash += cost;
+      total += cost;
+    }
+    return total;
+  }
   buy(type, quantity = 1) {
     const cost = this.quoteBuy(type, quantity);
     if (!Number.isFinite(cost)) return Infinity;

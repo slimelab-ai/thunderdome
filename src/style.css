@@ -539,6 +539,23 @@ body.touch-mode #touch-settings { display: block; }
 .shop-turn-status.turn-open { color: var(--gold); }
 .shop-turn-status.turn-second { color: var(--acid); }
 .shop-turn-status.turn-committed { color: #ff777c; }
+.squad-auto-actions {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px; margin-bottom: 9px;
+}
+.squad-auto-btn {
+  min-width: 0; padding: 7px 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 7px;
+  text-align: left;
+}
+.squad-auto-btn > span { min-width: 0; display: grid; gap: 2px; }
+.squad-auto-btn b { font-size: 9px; letter-spacing: 0.8px; white-space: nowrap; }
+.squad-auto-btn small {
+  overflow: hidden; color: #7f7f89; font-size: 6px; font-weight: 800;
+  letter-spacing: 0.35px; line-height: 1.2;
+}
+.squad-auto-btn strong { flex: none; color: var(--gold); font-size: 11px; }
+.squad-auto-btn:disabled strong { color: #686872; }
 #screen-shop.turn-locked .shop-cols button,
 #screen-shop.turn-locked .shop-cols .inv-item,
 #screen-shop.turn-locked #sell-bin {

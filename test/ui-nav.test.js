@@ -500,6 +500,7 @@ test('dynamic shop controls retain stable semantic focus identities', () => {
   });
   assert.equal(controlIdentity(element('btn-next-fight')), 'id:btn-next-fight');
   assert.equal(controlIdentity(element('', { 'data-char': '2' })), 'data-char:2');
+  assert.equal(controlIdentity(element('', { 'data-auto-squad': 'autoAmmo' })), 'data-auto-squad:autoAmmo');
   assert.equal(controlIdentity(element('', { 'data-patch': '2' })), 'data-patch:2');
   assert.equal(controlIdentity(element('', {
     'data-controller-item': '',
