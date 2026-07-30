@@ -118,7 +118,7 @@ const world = {
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
-const spectatorCamera = new SpectatorCamera(camera);
+const spectatorCamera = new SpectatorCamera(camera, arena.colliders);
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
 const touchMode = isTouchDevice();
@@ -576,6 +576,7 @@ function startMatch() {
   }
   clearCombatants();
   match = makeMatch();
+  spectatorCamera.reset();
   const liquidation = career.mode === 'liquidation';
   const squad = liquidation
     ? { name: 'THE RIVAL SYNDICATE', shirt: 0x5b2434, roster: enemyRoster(career.liquidation) }
@@ -760,7 +761,6 @@ function cycleSpectator(direction = 1) {
   const current = alive.indexOf(match.spectatorTarget);
   const next = current < 0 ? 0 : (current + direction + alive.length) % alive.length;
   match.spectatorTarget = alive[next];
-  spectatorCamera.reset();
   ui.showSpectator(match.spectatorTarget.name, next, alive.length);
 }
 
@@ -2102,7 +2102,7 @@ function updateSpectatorCamera(dt) {
 
 function stepMatch(dt) {
   match.time += dt;
-  player.update(dt, locked || touchMode || input.gamepadActive);
+  player.update(dt, locked || touchMode || input.gamepadActive, !!match.spectating);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);
