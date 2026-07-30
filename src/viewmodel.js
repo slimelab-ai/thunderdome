@@ -266,6 +266,7 @@ export class ViewModel {
 
     this.reloadClip = RELOAD_CLIP[id] || 'reload';
     this._ikWarm = null;      // a new weapon means a new grip; do not resume the old one
+    this._smoothed = null;    // nor smooth from the old weapon's hand position
     this.play('draw', 1);
   }
 
@@ -287,11 +288,21 @@ export class ViewModel {
     this.current = action;
   }
 
-  /** Recoil impulse, layered over whatever else is running. */
+  /**
+   * Recoil impulse, layered over whatever else is running.
+   *
+   * Restarting mid-deflection is a discontinuity: the clip snaps from 7 degrees of
+   * kick back to zero, which on a rifle throws the muzzle 8 cm in a single frame. An
+   * automatic weapon retriggers faster than the clip runs, so the restart is only
+   * taken once the pose has come back down; before that the shot rides the existing
+   * deflection, which is what sustained fire looks like anyway.
+   */
   fire() {
     if (!this.ready) return;
     const action = this.actions.get('fire');
-    action.reset();
+    const clip = action.getClip();
+    const settled = !action.isRunning() || action.time > clip.duration * 0.45;
+    if (settled) action.reset();
     action.setEffectiveWeight(1);
     action.play();
   }
@@ -367,8 +378,20 @@ export class ViewModel {
    * the target across the weapon in a single frame.
    */
   _solveSupportHand() {
-    const target = this._supportTarget();
-    if (!target) return;
+    const raw = this._supportTarget();
+    if (!raw) { this._smoothed = null; return; }
+
+    // Low-pass the target.
+    //
+    // Phases are a step function — the hand's destination jumps from the magazine
+    // well to the slide between one frame and the next — and the solver follows
+    // instantly, so the hand teleported. Smoothing the *target* rather than the pose
+    // fixes every such jump at once, including any added later, and 60 ms is short
+    // enough that a deliberate fast move still reads as fast.
+    if (!this._smoothed) this._smoothed = raw.clone();
+    else if (this._smoothed.distanceToSquared(raw) > 0.36) this._smoothed.copy(raw);
+    else this._smoothed.lerp(raw, Math.min(1, this._smoothDt * 11));
+    const target = this._smoothed;
     const chain = this._ikChain;
     const hand = this.bones.get('hand_l');
     if (!chain || !hand) return;
@@ -428,6 +451,7 @@ export class ViewModel {
     if (this.pinWeight > 0.002) this._applyPose(this.pinned, this.pinWeight);
 
     // Aim the support hand at whatever it should be holding right now.
+    this._smoothDt = dt;
     this._solveSupportHand();
   }
 }

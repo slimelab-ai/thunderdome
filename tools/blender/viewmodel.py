@@ -250,18 +250,23 @@ def anim_idle(rig):
 
 
 def anim_fire(rig):
-    """Recoil. Additive at runtime, so these are deltas from the rest pose."""
+    """Recoil. Additive at runtime, so these are deltas from the rest pose.
+
+    Sign matters and was wrong: `vm_root` points forward, so a *positive* X rotation
+    takes the muzzle up. The original keys were negative, which pitched every weapon's
+    barrel down under recoil while the camera kicked up — the two fighting each other.
+    """
     new_action(rig, "fire")
     clear_pose(rig)
     z = {"vm_root": (0, 0, 0), "upperarm_r": (0, 0, 0), "upperarm_l": (0, 0, 0),
          "forearm_r": (0, 0, 0), "forearm_l": (0, 0, 0)}
     key(rig, 1, z, loc={"vm_root": (0, 0, 0)})
-    key(rig, 3, {"vm_root": (-7.0, 1.6, 0), "upperarm_r": (-4.5, 0, 0),
-                 "upperarm_l": (-3.5, 0, 0), "forearm_r": (3.0, 0, 0),
-                 "forearm_l": (2.4, 0, 0)}, loc={"vm_root": (0, -0.030, 0.008)})
-    key(rig, 9, {"vm_root": (-1.8, 0.4, 0), "upperarm_r": (-1.2, 0, 0),
-                 "upperarm_l": (-0.9, 0, 0), "forearm_r": (0.8, 0, 0),
-                 "forearm_l": (0.6, 0, 0)}, loc={"vm_root": (0, -0.008, 0.002)})
+    key(rig, 3, {"vm_root": (7.0, 1.6, 0), "upperarm_r": (4.5, 0, 0),
+                 "upperarm_l": (3.5, 0, 0), "forearm_r": (-3.0, 0, 0),
+                 "forearm_l": (-2.4, 0, 0)}, loc={"vm_root": (0, -0.030, 0.008)})
+    key(rig, 9, {"vm_root": (1.8, 0.4, 0), "upperarm_r": (1.2, 0, 0),
+                 "upperarm_l": (0.9, 0, 0), "forearm_r": (-0.8, 0, 0),
+                 "forearm_l": (-0.6, 0, 0)}, loc={"vm_root": (0, -0.008, 0.002)})
     key(rig, 16, z, loc={"vm_root": (0, 0, 0)})
 
 

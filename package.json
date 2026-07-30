@@ -12,6 +12,7 @@
     "assets:tex": "node tools/textures/generate.mjs",
     "assets:models": "node tools/blender/build.mjs",
     "shot": "node tools/shot.mjs",
+    "animcheck": "node tools/animcheck.mjs",
     "simulate:liquidation": "node tools/liquidation-sim/run.mjs"
   },
   "dependencies": {

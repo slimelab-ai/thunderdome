@@ -64,7 +64,8 @@ export class Player {
     this.bloom = 0;          // recoil bloom
     this.recoilPitch = 0;
     this.recoilYaw = 0;
-    this.kick = 0;           // viewmodel kick
+    this.kick = 0;           // viewmodel kick (eased toward kickTarget)
+    this.kickTarget = 0;
     this.bobT = 0;
     this.stepAcc = 0;
     this.deathT = 0;
@@ -250,7 +251,7 @@ export class Player {
     const vel = dir.clone().multiplyScalar(11.5);
     vel.y += 3.6;
     this.world.throwGrenade(origin, vel, this.world.playerShooter);
-    this.kick = Math.min(1, this.kick + 0.7);
+    this.kickTarget = Math.min(1, (this.kickTarget ?? 0) + 0.7);
   }
 
   // scroll cycles GUNS only; scrolling while the knife is out returns to the last gun
@@ -268,7 +269,7 @@ export class Player {
     this.slotIdx = n;
     this.mag = this.magBySlot[n] ?? 0;
     this.reloading = 0;
-    this.kick = 0.6;
+    this.kickTarget = 0.6;
     this._mountViewmodel();
     audio.reload(0);
   }
@@ -278,7 +279,7 @@ export class Player {
     if (this.slots.length) this.magBySlot[this.slotIdx] = this.mag;
     this.knifeOut = true;
     this.reloading = 0;
-    this.kick = 0.8;
+    this.kickTarget = 0.8;
     this._mountViewmodel();
     audio.slash(0.4);
   }
@@ -556,7 +557,11 @@ export class Player {
     // recoil recovery
     this.recoilPitch *= Math.pow(0.001, dt);
     this.recoilYaw *= Math.pow(0.001, dt);
-    this.kick = Math.max(0, this.kick - dt * 6);
+    // Ease toward the impulse rather than snapping to it. Setting `kick` directly
+    // moved the muzzle ~0.14 m in a single frame, which reads as a cut rather than a
+    // kick; two or three frames of rise is still instant to the eye.
+    this.kickTarget = Math.max(0, (this.kickTarget ?? 0) - dt * 6);
+    this.kick += (this.kickTarget - this.kick) * Math.min(1, dt * 20);
     if (this.shakeT > 0) this.shakeT -= dt;
 
     // ---- lean (Q/E, toggle) ----
@@ -780,7 +785,7 @@ export class Player {
     this.recoilPitch += 0.011 * r;
     this.recoilYaw += (Math.random() - 0.5) * 0.008 * r;
     this.bloom += w.recoil * 0.45;
-    this.kick = Math.min(1, this.kick + 0.55);
+    this.kickTarget = Math.min(1, (this.kickTarget ?? 0) + 0.55);
 
     if (this.mag <= 0) this.startReload();
   }

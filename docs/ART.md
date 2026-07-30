@@ -200,7 +200,56 @@ emitters a second, and a garbage collection in the middle of one is a visible hi
   world-plausible size fills a third of the screen and blinds the shot being placed.
   The point light does the work of making it feel bright.
 
-## 8. Traps
+## 8. Verifying an animation
+
+Do not sign off an animation from a screenshot. A still frame cannot show the two
+faults that matter most, and both of them shipped: a pose can be correct at every
+keyframe and still *teleport* between them, and a recoil that kicks the muzzle the
+wrong way looks perfectly fine frozen. Both are only visible in the change over time.
+
+```sh
+npm run dev                     # in one terminal
+npm run animcheck               # every weapon, every action
+npm run animcheck -- --weapon rifle --verbose
+```
+
+`tools/animcheck.mjs` plays each first-person action frame by frame and measures the
+**final world transform** of what the player actually looks at — the muzzle, both
+fists, the moving parts — then asserts:
+
+| Check | Catches |
+| --- | --- |
+| `jump` | largest single-frame movement of any tracked point — snapping |
+| `reach` | distance from the support fist to the thing it should be holding |
+| `recoil` | which way the barrel *and* the camera pitch when the weapon fires |
+| `fired` | that the weapon discharged at all, so the rest means something |
+| `finite` | no NaN reached the final transform |
+
+It exits non-zero, so it gates an asset change.
+
+**Measure the composed result, not the inputs.** Every one of these bugs was invisible
+in the thing being edited and obvious in the final transform. A keyframe that looks
+sensible in isolation composes with a bind pose, a parent bone's roll, an additive
+layer, an IK pass and a camera transform before a player sees it; check the end of
+that chain.
+
+Four traps live in the harness itself, and each one produced confident, wrong output
+before it was found — a test bed that lies is worse than none:
+
+- **Force `camera.updateMatrixWorld` before sampling.** `step` simulates but does not
+  render, and `camera.matrixWorld` only refreshes at render time — so viewmodel
+  transforms read one frame stale while IK-updated bones read current. That mismatch
+  reported a perfectly placed hand as 30 cm off.
+- **Isolate the bench from the match.** A live bout shoots back, and a dead player's
+  update returns early. Every measurement after the first weapon silently froze, and
+  the stuck pose was reported as a targeting error.
+- **Baseline before the trigger, not after.** Sampling only after firing meant frame 0
+  already held the recoil at full deflection, so the series that followed was the kick
+  *decaying* — and every weapon read as recoiling downwards.
+- **Automatic weapons read `triggerHeld`, semi-automatics `triggerQueued`.** Setting
+  only one meant half the armoury was never tested while reporting clean.
+
+## 9. Traps
 
 Every one of these shipped a visible bug before it was understood. They are recorded
 because each cost a full round of "fixed it" / "no you didn't", and every one of them
@@ -258,7 +307,7 @@ loading port from above, the pump hand did not move with the pump. Targets are d
 as points on the weapon (`SUPPORT_TARGET`) and the arm is solved to reach them, so they
 are right by construction and survive the weapon geometry changing.
 
-## 9. Pipeline
+## 10. Pipeline
 
 Nothing in `public/assets/` is hand-edited; it is all reproducible output.
 
