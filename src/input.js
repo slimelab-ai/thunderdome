@@ -25,7 +25,9 @@ export const AIM_ASSIST = {
   // Gamepad deliberately stays Halo-like: a narrow, mild slowdown with only
   // enough rotational pull to soften micro-corrections, never steer the aim.
   gamepad: { friction: 0.78, rotation: 1.0, slowCone: 0.105, pullCone: 0.04 },
-  touch: { friction: 0.42, rotation: 6.0, slowCone: 0.15, pullCone: 0.085 },
+  // Touch gets a slightly wider slowdown window, but no longer receives the
+  // strong magnetic pull that used to steer fights for the player.
+  touch: { friction: 0.7, rotation: 2.2, slowCone: 0.115, pullCone: 0.038 },
   range: 42,            // meters; no assist past this
   pullMaxRate: 1.5,     // rad/s cap on the pull
 };
@@ -34,6 +36,11 @@ export const DEFAULT_CONTROLLER_SETTINGS = Object.freeze({
   sensitivity: 0.65,
   cursorSensitivity: 0.8,
   exponent: 2.15,
+  aimAssist: 0.35,
+});
+
+export const DEFAULT_TOUCH_SETTINGS = Object.freeze({
+  layout: 'thumbs',
   aimAssist: 0.35,
 });
 
@@ -71,6 +78,7 @@ export class InputHub {
     this.onControllerActive = onControllerActive;
     this.onControllerSample = onControllerSample;
     this.controllerSettings = { ...DEFAULT_CONTROLLER_SETTINGS, ...controllerSettings };
+    this.touchSettings = { ...DEFAULT_TOUCH_SETTINGS };
     this.prevButtons = [];
     this.menuYHeldFor = 0;
     this.menuYHoldFired = false;
@@ -90,6 +98,10 @@ export class InputHub {
 
   setControllerSettings(settings) {
     this.controllerSettings = { ...this.controllerSettings, ...settings };
+  }
+
+  setTouchSettings(settings) {
+    this.touchSettings = { ...this.touchSettings, ...settings };
   }
 
   update(dt, phase) {
@@ -215,13 +227,11 @@ export class InputHub {
     // -------- touch --------
     const touchOn = !!(this.touch && this.touch.enabled);
     let touchLook = { dx: 0, dy: 0 };
-    let touchMoveMag = 0;
     if (touchOn && inMatch && p.alive) {
       touchLook = this.touch.consumeLook();
       const mv = stickCurve(this.touch.moveX, this.touch.moveY, 0.06, TOUCH.stickExpo);
       p.padMoveX += mv.x;
       p.padMoveZ += mv.y;
-      touchMoveMag = mv.mag;
     } else if (this.touch) {
       this.touch.consumeLook(); // don't bank aim deltas while paused
     }
@@ -237,7 +247,9 @@ export class InputHub {
     // -------- aim assist + look --------
     const usingTouchAssist = touchOn && !this.gamepadActive;
     const assistCfg = usingTouchAssist ? AIM_ASSIST.touch : AIM_ASSIST.gamepad;
-    const assistStrength = usingTouchAssist ? 1 : this.controllerSettings.aimAssist;
+    const assistStrength = usingTouchAssist
+      ? this.touchSettings.aimAssist
+      : this.controllerSettings.aimAssist;
     const target = (this.gamepadActive || touchOn) ? this._assistTarget(assistCfg) : null;
 
     if (padLook.mag > 0) {
@@ -249,7 +261,7 @@ export class InputHub {
       );
     }
     if (touchLook.dx || touchLook.dy) {
-      const mult = this._friction(target, AIM_ASSIST.touch);
+      const mult = this._friction(target, AIM_ASSIST.touch, this.touchSettings.aimAssist);
       const adsK = 1 - p.ads * (1 - TOUCH.adsSlow);
       p.addLook(
         -touchLook.dx * TOUCH.lookSens * adsK * mult,
@@ -257,10 +269,11 @@ export class InputHub {
       );
     }
 
-    // Rotational pull only while the player is actively steering. Merely
-    // aiming or firing never makes an idle crosshair track by itself.
-    const activeIntent = padLook.mag > 0 || padMove.mag > 0.15 || touchMoveMag > 0.15
-      || touchLook.dx !== 0 || touchLook.dy !== 0;
+    // Rotational pull requires active camera input. Movement alone must never
+    // turn the camera toward a target.
+    const activeIntent = usingTouchAssist
+      ? touchLook.dx !== 0 || touchLook.dy !== 0
+      : padLook.mag > 0;
     if (target && activeIntent && target.ang < assistCfg.pullCone) {
       this._applyPull(target, assistCfg, dt, assistStrength);
     }

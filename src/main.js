@@ -18,6 +18,7 @@ import {
 import { createMarket } from './market.js';
 import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
 import { TouchControls, isTouchDevice } from './touch.js';
+import { TouchSettingsPanel } from './touch-settings.js';
 import { MenuNavigator } from './ui-nav.js';
 import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
@@ -124,6 +125,7 @@ const input = new InputHub(player, world, camera, {
   onMenuInput: (action) => menuNavigator.handle(action),
   onControllerActive: () => menuNavigator.activate(),
 });
+new TouchSettingsPanel(touch, input);
 const controllerSettingsPanel = new ControllerSettingsPanel(input);
 const matchLifecycle = new MatchLifecycle({ analytics });
 

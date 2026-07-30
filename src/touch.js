@@ -81,6 +81,10 @@ export class TouchControls {
     if (v) this._resetAll();
   }
 
+  setLayout(layout) {
+    this.root.dataset.layout = ['thumbs', 'left', 'claw'].includes(layout) ? layout : 'thumbs';
+  }
+
   // toggle-button highlights follow the player's real state
   sync() {
     const p = this.player;
@@ -94,11 +98,12 @@ export class TouchControls {
     const root = document.createElement('div');
     root.id = 'touch-ui';
     root.className = 'hidden';
+    root.dataset.layout = 'thumbs';
     root.innerHTML = `
       <div id="t-look-hint" aria-hidden="true"><span>DRAG TO LOOK</span></div>
       <div id="t-stick"><div id="t-stick-nub"></div></div>
       <button id="t-pause" class="t-btn t-square" aria-label="Pause">❚❚</button>
-      <button id="t-fire" class="t-btn" aria-label="Fire">FIRE</button>
+      <button id="t-fire" class="t-btn" aria-label="Fire and drag to aim"><span>FIRE<small>DRAG</small></span></button>
       <button id="t-ads" class="t-btn" aria-label="Aim down sights">ADS</button>
       <button id="t-jump" class="t-btn" aria-label="Jump">JUMP</button>
       <button id="t-reload" class="t-btn" aria-label="Reload">RLD</button>
