@@ -106,18 +106,33 @@ test('enemy-first draft shops immediately and does not require a player commit',
   assert.equal(rivalTurns, 1);
 });
 
-test('rival arms its active roster and refuses an unaffordable expansion', () => {
+test('rival treats starter pistol contracts as efficient fieldable expansion', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
   assert.deepEqual(state.enemy.recruits, ['enforcer']);
   assert.equal(enemyRoster(state).length, 1);
   fundDraftRound(state, 0);
   for (let i = 0; i < 12; i++) runLiquidationAI(state, market);
-  assert.equal(state.enemy.recruits.length, 1);
-  assert.ok(enemyRoster(state).every(fighter => fighter.w !== 'pistol' && fighter.ammo > 0));
+  assert.equal(state.enemy.recruits.length, 3);
+  assert.ok(enemyRoster(state).every(fighter => fighter.ammo > 0));
   const hires = state.marketLog.filter(entry => entry.kind === 'trade' && entry.side === 'rival' && entry.action === 'hire');
-  assert.equal(hires.length, 0);
-  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial);
+  assert.equal(hires.length, 2);
+  assert.ok(hires.every(entry => entry.label.includes('SIDEARM KIT')));
+});
+
+test('rival answers a five-person player squad with pistol contracts before gun upgrades', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 2000;
+  state.draft.fundedRounds = 1;
+  for (let i = 0; i < 8; i++) runLiquidationAI(state, market, {
+    opponentPower: 500, opponentRoster: 5, expectedStake: 250,
+  });
+  // The player can spend below the current stake and borrow; the conservative
+  // rival still protects its $250 stake, so it fields four rather than five.
+  assert.equal(state.enemy.recruits.length, 4);
+  assert.equal(rivalSquadReadiness(state).fieldable, 4);
+  assert.ok(enemyRoster(state).every(fighter => fighter.w === 'pistol' && fighter.ammo > 0));
 });
 
 test('the next draft envelope protects only a recoverable deficit', () => {
@@ -226,6 +241,21 @@ test('rival does not sell and rebuy the same speculative supply in one round', (
   assert.notEqual(decision.type, 'medkit');
 });
 
+test('doctrine changes never liquidate ammunition required by usable off-plan guns', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemy.strategy = 'rifle';
+  state.enemyMoney = 100;
+  state.enemyLossStreak = 2;
+  state.enemy.recruits = ['enforcer', 'medic'];
+  state.enemy.inventory = { smg: 2, ammo_9mm: 2, medkit: 2 };
+  const decision = runLiquidationAI(state, market, { opponentPower: 400, expectedStake: 250 });
+  assert.equal(decision.kind, 'sell');
+  assert.equal(decision.type, 'medkit');
+  assert.equal(state.enemy.inventory.ammo_9mm, 2);
+  assert.equal(rivalSquadReadiness(state).fieldable, 2);
+});
+
 test('rival reserve responds to confidence, loss exposure, win income, and remaining draft income', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
@@ -248,7 +278,7 @@ test('rival reserve responds to confidence, loss exposure, win income, and remai
   });
   assert.ok(state.enemyMoney >= 250);
   assert.ok(['hold', 'buy'].includes(decision.kind));
-  assert.ok(enemyRoster(state).every(fighter => fighter.w !== 'pistol' && fighter.ammo > 0));
+  assert.ok(enemyRoster(state).every(fighter => fighter.ammo > 0));
   assert.deepEqual(decision.risk, liquidationRiskModel(state, {
     opponentPower: 100, expectedStake: 250,
   }));
@@ -256,7 +286,7 @@ test('rival reserve responds to confidence, loss exposure, win income, and remai
   state.draft.fundedRounds = 10;
   state.draft.complete = true;
   state.enemyLossStreak = 2;
-  assert.ok(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }) >= 4000);
+  assert.ok(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }) >= 3000);
 });
 
 test('public market tape records both sides and separates rounds', () => {

@@ -154,7 +154,8 @@ const world = {
   playerProxy: { isPlayer: true, team: 'player', alive: true, pos: new THREE.Vector3(), heightScale: 1, name: 'YOU' },
   playerAim: new THREE.Vector3(0, 0, -1),
   playerShooter: { isPlayer: true, team: 'player', name: 'YOU' },
-  onPlayerDamaged: (dmg, part, fromPos) => handlePlayerDamaged(dmg, part, fromPos),
+  onPlayerDamaged: (dmg, part, fromPos, shooter, range) =>
+    handlePlayerDamaged(dmg, part, fromPos, shooter, range),
   onKill: (killer, victim, part) => handleKill(killer, victim, part),
   onDamage: (shooter, victim, amount) => handleXpDamage(shooter, victim, amount),
   onSupport: (supporter, amount) => handleXpSupport(supporter, amount),
@@ -566,6 +567,9 @@ function runTrackedLiquidationAI(reason) {
   const signals = {
     hoarded9mm: market.info('ammo_9mm').pressure > 1.4,
     opponentPower: playerSquadReadinessPower(),
+    opponentRoster: 1 + career.crew
+      .filter(candidate => !candidate.benched && (candidate.hp == null || candidate.hp > 0))
+      .slice(0, DEPLOYED_CREW_CAP).length,
     expectedStake: Math.max(250, Math.floor(Math.max(0, career.money) * 0.1 / 50) * 50),
   };
   const result = runLiquidationAI(career.liquidation, market, signals);
@@ -627,22 +631,28 @@ function startMatch() {
   match = makeMatch();
   spectatorCamera.reset();
   const liquidation = career.mode === 'liquidation';
-  world.onDamage = liquidation ? (shooter, victim, amount) => emitCareerEvent('combat_damage', {
-    time: +match.time.toFixed(3),
-    shooter: shooter?.isPlayer ? 'YOU' : shooter?.name,
-    shooter_team: shooter?.team,
-    victim: victim?.name,
-    victim_team: victim?.team,
-    weapon: shooter?.weaponId || player?.weaponId || null,
-    amount: +amount.toFixed(2),
-    range: shooter?.pos && victim?.pos ? +shooter.pos.distanceTo(victim.pos).toFixed(2) : null,
-  }) : null;
-  world.onSupport = liquidation ? (supporter, amount) => emitCareerEvent('combat_support', {
-    time: +match.time.toFixed(3),
-    supporter: supporter?.name,
-    supporter_team: supporter?.team,
-    amount: +amount.toFixed(2),
-  }) : null;
+  world.onDamage = (shooter, victim, amount) => {
+    handleXpDamage(shooter, victim, amount);
+    if (liquidation) emitCareerEvent('combat_damage', {
+      time: +match.time.toFixed(3),
+      shooter: shooter?.isPlayer ? 'YOU' : shooter?.name,
+      shooter_team: shooter?.team,
+      victim: victim?.name,
+      victim_team: victim?.team,
+      weapon: shooter?.weaponId || (shooter?.isPlayer ? player.weapon.id : null),
+      amount: +amount.toFixed(2),
+      range: shooter?.pos && victim?.pos ? +shooter.pos.distanceTo(victim.pos).toFixed(2) : null,
+    });
+  };
+  world.onSupport = (supporter, amount) => {
+    handleXpSupport(supporter, amount);
+    if (liquidation) emitCareerEvent('combat_support', {
+      time: +match.time.toFixed(3),
+      supporter: supporter?.name,
+      supporter_team: supporter?.team,
+      amount: +amount.toFixed(2),
+    });
+  };
   world.onCombatEvent = liquidation ? (type, fighter, detail) => emitCareerEvent(`combat_${type}`, {
     time: +match.time.toFixed(3),
     fighter: fighter?.isPlayer ? 'YOU' : fighter?.name,
@@ -943,10 +953,22 @@ function handleKill(killer, victim, part) {
   }
 }
 
-function handlePlayerDamaged(dmg, part, fromPos) {
+function handlePlayerDamaged(dmg, part, fromPos, shooter = null, range = null) {
   if (sandbox.active && sandbox.god) return;   // the point of the bench is not dying
   if (!player.alive) return;
+  const hpBefore = player.hp;
   player.takeDamage(dmg, part, fromPos);
+  if (career.mode === 'liquidation') emitCareerEvent('combat_damage', {
+    time: +match.time.toFixed(3),
+    shooter: shooter?.name || null,
+    shooter_team: shooter?.team || 'enemy',
+    victim: 'YOU',
+    victim_team: 'player',
+    weapon: shooter?.weaponId || null,
+    part,
+    amount: +Math.min(hpBefore, Math.max(0, hpBefore - player.hp)).toFixed(2),
+    range: Number.isFinite(range) ? +range.toFixed(2) : null,
+  });
   ui.damageFlash();
   fx.blood(new THREE.Vector3(player.pos.x, player.pos.y + 1.2, player.pos.z));
   audio.crowdRoar(0.25);
