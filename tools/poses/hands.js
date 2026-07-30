@@ -64,15 +64,33 @@ const local = (n) => {
   vm.bones.get(n).getWorldPosition(v);
   return v.applyMatrix4(camInv);
 };
+// Measure the *fist* (the hand bone's tail), not the bone position — a hand bone sits
+// at the wrist, and two wrists can be 3 cm apart while the fists are 20 cm apart.
+// Sample along both forearms too: a forearm can sweep across its opposite number
+// while both endpoints stay on their own side.
+const HAND_LEN = 0.123;
+const tip = (n) => {
+  const v = new T.Vector3(0, HAND_LEN, 0);
+  vm.bones.get(n).localToWorld(v);
+  return v.applyMatrix4(camInv);
+};
 const elbowL = local('forearm_l');
 const elbowR = local('forearm_r');
-const handL = local('hand_l');
-const handR = local('hand_r');
+const wristL = local('hand_l');
+const wristR = local('hand_r');
+let overlap = -Infinity;
+for (let t = 0; t <= 1.001; t += 0.125) {
+  overlap = Math.max(overlap, elbowL.clone().lerp(wristL, t).x - elbowR.clone().lerp(wristR, t).x);
+}
+const fistGap = tip('hand_l').distanceTo(tip('hand_r'));
 console.log('DIAG grip ' + JSON.stringify({
-  crossed: elbowL.x > elbowR.x - 0.02,
-  elbowL: +elbowL.x.toFixed(3),
-  elbowR: +elbowR.x.toFixed(3),
-  handGap: +handL.distanceTo(handR).toFixed(3),
+  // `crossed` is only meaningful when both hands grip the *same* place. On a rifle or
+  // shotgun the hands are legitimately far apart along the weapon, so the forearms
+  // converge from opposite sides and this sampling flags a perfectly correct pose.
+  crossed: fistGap < 0.15 ? overlap > -0.015 : 'n/a (hands apart)',
+  forearmOverlap: +overlap.toFixed(3),
+  fistGap: +fistGap.toFixed(3),
+  wristGapX: +(wristR.x - wristL.x).toFixed(3),
 }));
 console.log('DIAG hands ' + JSON.stringify({
   weapon: p.weapon.id,

@@ -168,6 +168,10 @@ export class FighterRig {
     this.dead = false;
     this.aimPitch = 0;
     this._aimPitchTarget = 0;
+    // Bones the procedural aim writes to, and the un-aimed rotation each had last
+    // frame. See `update` for why keeping this is not optional.
+    this._aimBones = ['chest', 'head'].map((n) => this.bones.get(n)).filter(Boolean);
+    this._preAim = this._aimBones.map((b) => b.quaternion.clone());
 
     this.hitboxes = this._buildHitboxes(debugHitboxes);
   }
@@ -295,7 +299,23 @@ export class FighterRig {
     const current = this.aimAction.getEffectiveWeight();
     this.aimAction.setEffectiveWeight(current + (this.aimWeight - current) * Math.min(1, dt * 9));
 
+    // Undo last frame's procedural aim before the mixer runs.
+    //
+    // The aim pass *multiplies* a pitch onto the chest and head. That is only safe if
+    // the mixer overwrites those bones every frame — and it does not: a clip with no
+    // channel for a bone leaves it untouched, so the offset compounds, and a fighter's
+    // head rotates a little further every frame until it has spun all the way round.
+    // Restoring the pre-aim rotation first makes the pass idempotent. When the mixer
+    // does write the bone, this restore is simply overwritten and costs nothing.
+    for (let i = 0; i < this._aimBones.length; i++) {
+      this._aimBones[i].quaternion.copy(this._preAim[i]);
+    }
+
     this.mixer.update(dt);
+
+    for (let i = 0; i < this._aimBones.length; i++) {
+      this._preAim[i].copy(this._aimBones[i].quaternion);
+    }
 
     // Procedural aim, after the mixer so it composes on top of the animation rather
     // than being overwritten by it.

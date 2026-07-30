@@ -44,16 +44,23 @@ const RELOAD_CLIP = { pistol: 'reload_pistol', shotgun: 'reload_shell' };
  * so that arm swings down out of frame rather than hovering emptily beside the blade.
  */
 const SUPPORT_POSE = {
-  // Fitted under constraints, not just fitted. A two-handed pistol grip needs the
-  // support hand at the firing hand, and one joint cannot get there — lowering the
-  // shoulder alone swings the hand forward past the muzzle. But solving for hand
-  // *position* alone is not enough either: the first fit reached the target by
-  // folding the left arm across the right one, which looked like the fighter had tied
-  // himself in a knot. The search now rejects any pose whose left elbow is not
-  // clearly left of the right elbow, and prefers small angles among what is left.
+  // Fitted against the *fists*, under a no-crossing constraint.
+  //
+  // Two earlier attempts at this were wrong in instructive ways. The first solved for
+  // hand position with no constraint at all and reached the target by folding the left
+  // arm across the right one. The second added an elbow check — but compared bone
+  // *positions*, which for a hand bone is the wrist, not where the hand closes. That
+  // pose scored 3.5 cm of "hand gap" while the fists were actually 20 cm apart and the
+  // forearms still swept across each other.
+  //
+  // The fit that produced these numbers measures the fist (the hand bone's tail),
+  // samples both forearms along their length to reject any overlap, and requires the
+  // left wrist to stay 10 cm clear to the left. Result: fists 1 cm apart, forearms
+  // 10 cm clear. `tools/poses/armsrig.js` reports all three from outside the
+  // viewmodel, which is the only place the arm paths are actually legible.
   pistol: {
-    upperarm_l: [-0.20, 0.50, -0.30],
-    forearm_l: [1.50, 0, 0],
+    upperarm_l: [-0.75, 0.35, -0.20],
+    forearm_l: [1.80, 0, 0],
     hand_l: [-0.30, 0, 0],
   },
   shotgun: {
