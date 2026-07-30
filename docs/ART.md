@@ -200,7 +200,65 @@ emitters a second, and a garbage collection in the middle of one is a visible hi
   world-plausible size fills a third of the screen and blinds the shot being placed.
   The point light does the work of making it feel bright.
 
-## 8. Pipeline
+## 8. Traps
+
+Every one of these shipped a visible bug before it was understood. They are recorded
+because each cost a full round of "fixed it" / "no you didn't", and every one of them
+will recur the moment someone adds a weapon or a clip.
+
+**Forward is −Z, rearward is +Z.** Barrels point down −Z (every entry in `MUZZLE` is
+negative). A slide, bolt or pump being worked therefore travels **+Z**. This was
+inverted for the whole life of the mechanism — with a comment cheerfully asserting
+the opposite — so every gun in the game pushed its action forward when it cycled.
+
+**A hand bone sits at the wrist, not where the hand closes.** Measure the fist: the
+bone position plus its length along local Y. A grip check that compared bone positions
+reported two hands 3.5 cm apart while the fists were 20 cm apart and the forearms were
+crossed. If a metric cannot distinguish the fault from success, it is worse than no
+metric, because it ends arguments in the wrong direction.
+
+**Verify from a view where the fault is visible.** From inside the viewmodel the two
+forearms overlap in screen space no matter how they are routed, so a crossed arm and a
+correct one look identical. `tools/poses/armsrig.js` exists solely because there was
+no such view, and the bug survived three "fixes" as a result.
+
+**Pose-bone location is in the bone's own axes.** The hips bone points up, so its local
+Y is up and its local Z is *forward*. Writing a "drop" into Z slides the fighter
+backwards: the crouch folded the legs while the hips stayed put and the feet came off
+the floor, and the death clips slid bodies backwards instead of laying them down.
+
+**Bone roll decides which euler component is flexion.** Left to Blender's automatic
+roll, rotating an arm bone about local X *abducted* it sideways, and the fighter built
+in a splayed T-pose no matter what the animation data said. Every rig here pins local X
+to world X explicitly (`set_roll`).
+
+**Positive Z abduction pulls a limb toward the midline**, not away. The death clips were
+authored assuming the opposite, so the splay meant to fling limbs apart drove them
+across each other and the corpse came out with its wrists and ankles swapped.
+
+**Blender and three.js do not compose euler rotations the same way.** Angles fitted in
+the runtime do not survive being transplanted into Blender pose keys: a rack grip
+measured 2 cm off the slide in the browser landed 24 cm off once baked into the clip.
+Fit in the space you will apply in.
+
+**Procedural offsets that multiply onto a bone compound.** The aim pass multiplied a
+pitch onto the chest and head each frame, which is only safe if the mixer overwrites
+those bones each frame — and a clip with no channel for a bone does not. Heads rotated
+a little further every frame until they had spun all the way around. Restore the
+pre-offset rotation before the mixer runs.
+
+**IK must warm-start.** The mixer rewrites the arm from the clip every frame, so a
+solver that cold-starts from the animation pose closes only part of the gap and is
+reset before it finishes — the support hand trailed the magazine well by 11 cm forever
+while converging perfectly in isolation. Resume from last frame's solution.
+
+**Aim the hand; do not pose it.** Every support-hand position that was posed by hand in
+Blender missed its mark — the magazine hand grabbed at air, the shell hand came at the
+loading port from above, the pump hand did not move with the pump. Targets are declared
+as points on the weapon (`SUPPORT_TARGET`) and the arm is solved to reach them, so they
+are right by construction and survive the weapon geometry changing.
+
+## 9. Pipeline
 
 Nothing in `public/assets/` is hand-edited; it is all reproducible output.
 

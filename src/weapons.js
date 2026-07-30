@@ -97,9 +97,12 @@ const MUZZLE = {
   knife: [0, 0.010, -0.28],
 };
 
-// How far each moving part travels when the weapon is worked, in metres along -Z
-// (rearward). A cycling slide is the cheapest thing that makes a gun read as a
-// mechanism rather than a prop.
+// How far each moving part travels when the weapon is worked, in metres.
+//
+// Rearward is **+Z**. Barrels point down -Z (see MUZZLE above, all negative), so a
+// slide, bolt or pump being worked travels the other way. This was inverted for the
+// whole life of the mechanism — the comment here even claimed -Z was rearward — and
+// every gun in the game pushed its action *forward* when it cycled.
 const CYCLE_TRAVEL = { slide: 0.035, bolt: 0.045, pump: 0.075 };
 
 const weaponAssets = new Map();
@@ -168,7 +171,7 @@ export function animateWeaponParts(model, cycle, magDrop = 0, pump = 0) {
     // The pump runs off its own stroke, not the recoil impulse: a pump action is a
     // deliberate back-and-forward between shots, not a flinch during one.
     const k = name === 'pump' ? pump : cycle;
-    part.position.z = part.userData.restZ - travel * k;
+    part.position.z = part.userData.restZ + travel * k;
   }
   const mag = model.parts.mag;
   if (mag) {

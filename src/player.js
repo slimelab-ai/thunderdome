@@ -132,7 +132,7 @@ export class Player {
     if (!this.viewmodels[id]) this.viewmodels[id] = buildViewmodel(id);
     this.currentVM = this.viewmodels[id];
     // The arms take ownership of the weapon group and play the draw.
-    this.arms.setWeapon(id, this.currentVM.group);
+    this.arms.setWeapon(id, this.currentVM.group, this.currentVM.parts);
   }
 
   resetForMatch(spawn, yaw = 0) {

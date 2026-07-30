@@ -36,25 +36,65 @@ const FIST = [0.012, -0.050, 0.075];
 const RELOAD_CLIP = { pistol: 'reload_pistol', shotgun: 'reload_shell' };
 
 /**
- * Where the support hand grips to rack a pistol's slide, and when.
+ * Where the support hand belongs, per weapon and per phase, in the weapon's own
+ * model space. The arm is then solved to reach it.
  *
- * This lives here rather than in the authored clip because the two systems do not
- * agree on euler composition: angles fitted in the runtime do not reproduce when
- * transplanted into Blender pose keys, and the transplanted version put the hand
- * 24 cm off the slide instead of 2 cm. Fitting and applying in the same space removes
- * the conversion entirely. The clip still carries the weapon roll, the magazine work
- * and the timing; only the support arm's rack grip is overridden.
+ * This replaced a growing pile of hand-authored angles. Every support-hand pose that
+ * was posed by hand in Blender missed its mark — the magazine hand grabbed at air
+ * beside the well, the shell hand came at the loading port from above, the pump hand
+ * did not move with the pump — while the two that were numerically fitted against a
+ * real target landed. Rather than fit each remaining case by hand, the hand now
+ * *aims* at a point on the weapon, so it is right by construction and stays right
+ * when the weapon geometry changes.
  *
- * The window is the fraction of `reload_pistol` during which the hand is on the
- * slide, and matches `WEAPONS.pistol.slideRack` so the hand and the mechanism move
- * together.
+ * `carry` is where the hand rides normally. `pump`/`mag`/`port`/`rack` are the phase
+ * targets. A missing phase falls back to `carry`.
  */
-const RACK_POSE = {
-  upperarm_l: [-0.50, 0.30, 0],
-  forearm_l: [1.25, 0, 0],
-  hand_l: [0.30, 0, 0],
+const SUPPORT_TARGET = {
+  pistol: {
+    carry: [0.012, -0.050, 0.075],   // wrapped around the firing hand at the grip
+    mag: [0.012, -0.130, 0.060],     // magazine well, below the grip
+    rack: [0.012, 0.040, 0.040],     // over the top of the slide, at its rear
+  },
+  smg: {
+    carry: [0, 0.028, -0.24],
+    mag: [0, -0.070, -0.055],
+  },
+  rifle: {
+    carry: [0, 0.036, -0.20],   // near end of the handguard — the far end is past the arm's reach
+    mag: [0, -0.078, -0.02],
+  },
+  dmr: {
+    carry: [0, 0.038, -0.21],   // ditto; a DMR handguard is longer than an arm
+    mag: [0, -0.075, -0.01],
+  },
+  shotgun: {
+    carry: [0, 0.012, -0.24],        // on the pump
+    port: [0, -0.012, -0.02],        // loading port, on the underside of the receiver
+  },
 };
-const RACK_WINDOW = [0.62, 0.88];
+
+/** Phase windows within a reload clip, as fractions of its duration. */
+const RELOAD_PHASES = {
+  reload_pistol: [
+    { until: 0.30, target: 'mag' },   // hand to the magazine well
+    { until: 0.42, target: 'away' },  // out of frame for a fresh magazine
+    { until: 0.60, target: 'mag' },   // seat it
+    { until: 0.90, target: 'rack' },  // over the top, work the slide
+  ],
+  reload_shell: [
+    { until: 0.32, target: 'away' },  // down to the belt for a shell
+    { until: 0.62, target: 'port' },  // up into the loading port
+  ],
+  reload: [
+    { until: 0.30, target: 'mag' },
+    { until: 0.46, target: 'away' },
+    { until: 0.66, target: 'mag' },
+  ],
+};
+
+// Where "away" is: down and back, out of the bottom of the frame.
+const AWAY_OFFSET = [0.02, -0.34, 0.16];
 
 /**
  * Where the support hand goes, per weapon, as bone rotations in radians.
@@ -156,6 +196,8 @@ export class ViewModel {
     });
 
     this.socket = this.bones.get('weapon');
+    // Solved from the elbow up, so the shoulder gets the last word on reach.
+    this._ikChain = [this.bones.get('forearm_l'), this.bones.get('upperarm_l')].filter(Boolean);
     this.restQuat = new Map();
     for (const [name, bone] of this.bones) this.restQuat.set(name, bone.quaternion.clone());
     this.pinned = new Map();
@@ -188,9 +230,9 @@ export class ViewModel {
     this.ready = true;
 
     if (this.pendingWeapon) {
-      const { id, group } = this.pendingWeapon;
+      const { id, group, parts } = this.pendingWeapon;
       this.pendingWeapon = null;
-      this.setWeapon(id, group);
+      this.setWeapon(id, group, parts);
     }
   }
 
@@ -200,10 +242,12 @@ export class ViewModel {
    * The caller owns the weapon model (Player caches one per weapon), so this only
    * re-parents it and adjusts the support hand.
    */
-  setWeapon(id, group) {
-    if (!this.ready) { this.pendingWeapon = { id, group }; return; }
+  setWeapon(id, group, parts = null) {
+    if (!this.ready) { this.pendingWeapon = { id, group, parts }; return; }
     if (this.heldGroup && this.heldGroup !== group) this.socket.remove(this.heldGroup);
     this.heldGroup = group;
+    this.weaponId = id;
+    this.parts = parts;
     if (group.parent !== this.socket) this.socket.add(group);
 
     // Offset the weapon so its grip meets the fist. Without this every weapon is held
@@ -221,6 +265,7 @@ export class ViewModel {
     if (pose) for (const [bone, euler] of Object.entries(pose)) this.pinned.set(bone, euler);
 
     this.reloadClip = RELOAD_CLIP[id] || 'reload';
+    this._ikWarm = null;      // a new weapon means a new grip; do not resume the old one
     this.play('draw', 1);
   }
 
@@ -271,6 +316,100 @@ export class ViewModel {
     }
   }
 
+  /**
+   * Which point on the weapon the support hand should be on this frame.
+   *
+   * Returns a world position, or null to leave the animation alone.
+   */
+  _supportTarget() {
+    const targets = SUPPORT_TARGET[this.weaponId];
+    if (!targets || !this.heldGroup) return null;
+
+    let key = 'carry';
+    const clipName = this.current?.getClip().name;
+    const phases = clipName && RELOAD_PHASES[clipName];
+    if (phases) {
+      const clip = this.current.getClip();
+      const t = clip.duration > 0 ? this.current.time / clip.duration : 0;
+      key = 'carry';
+      for (const phase of phases) {
+        if (t <= phase.until) { key = phase.target; break; }
+      }
+    }
+
+    if (key === 'away') {
+      // Off the weapon entirely: hold the hand below the frame rather than aiming it
+      // at a point, so it reads as "gone to the pouch" instead of hovering.
+      _ikTarget.fromArray(targets.carry);
+      this.heldGroup.localToWorld(_ikTarget);
+      _v.set(AWAY_OFFSET[0], AWAY_OFFSET[1], AWAY_OFFSET[2]);
+      this.vmRoot.localToWorld(_v);
+      return _ikTarget.copy(_v);
+    }
+
+    const local = targets[key] || targets.carry;
+    _ikTarget.fromArray(local);
+    // The pump is the one target that moves on its own, so track the part rather than
+    // a fixed point: the hand goes back with the stroke instead of watching it go.
+    if (key === 'carry' && this.weaponId === 'shotgun' && this.parts?.pump) {
+      _ikTarget.z = this.parts.pump.position.z + PUMP_GRIP_Z;
+    }
+    return this.heldGroup.localToWorld(_ikTarget);
+  }
+
+  /**
+   * Two-bone CCD onto the support target.
+   *
+   * Cyclic coordinate descent rather than an analytic solve: it needs no special
+   * cases for unreachable targets (it simply stretches toward them), it starts from
+   * whatever the animation is already doing so the elbow keeps a natural bearing, and
+   * a handful of iterations converges a two-bone chain even when a phase change jumps
+   * the target across the weapon in a single frame.
+   */
+  _solveSupportHand() {
+    const target = this._supportTarget();
+    if (!target) return;
+    const chain = this._ikChain;
+    const hand = this.bones.get('hand_l');
+    if (!chain || !hand) return;
+
+    // Warm start from last frame's solution.
+    //
+    // The mixer rewrites these bones from the clip every frame, so without this the
+    // solver cold-starts from the animation pose each time and only closes part of
+    // the gap — the hand trailed the magazine well by 11 cm forever, converging and
+    // being reset in the same breath. Resuming from where it got to last frame makes
+    // convergence cumulative, and the support arm is IK-owned anyway.
+    if (this._ikWarm) {
+      for (let i = 0; i < chain.length; i++) chain[i].quaternion.copy(this._ikWarm[i]);
+      chain[chain.length - 1].updateMatrixWorld(true);
+    }
+
+    for (let pass = 0; pass < 6; pass++) {
+      for (const bone of chain) {
+        bone.getWorldPosition(_bonePos);
+        _fist.set(0, HAND_LENGTH, 0);
+        hand.localToWorld(_fist);
+
+        _from.copy(_fist).sub(_bonePos);
+        _to.copy(target).sub(_bonePos);
+        if (_from.lengthSq() < 1e-8 || _to.lengthSq() < 1e-8) continue;
+        _from.normalize();
+        _to.normalize();
+
+        _q.setFromUnitVectors(_from, _to);
+        bone.getWorldQuaternion(_q2);
+        bone.parent.getWorldQuaternion(_parentQ);
+        // newLocal = parentWorld⁻¹ · delta · boneWorld
+        bone.quaternion.copy(_parentQ.invert()).multiply(_q).multiply(_q2);
+        bone.updateMatrixWorld(true);
+      }
+    }
+
+    if (!this._ikWarm) this._ikWarm = chain.map((b) => b.quaternion.clone());
+    else for (let i = 0; i < chain.length; i++) this._ikWarm[i].copy(chain[i].quaternion);
+  }
+
   update(dt) {
     if (!this.ready) return;
 
@@ -288,21 +427,23 @@ export class ViewModel {
     this.pinWeight += ((releasing ? 0 : 1) - this.pinWeight) * Math.min(1, dt * 10);
     if (this.pinWeight > 0.002) this._applyPose(this.pinned, this.pinWeight);
 
-    // Pistol slide rack: override the support arm onto the slide for the stretch of
-    // the reload where it is being worked.
-    if (this.current && this.current.getClip().name === 'reload_pistol') {
-      const clip = this.current.getClip();
-      const t = clip.duration > 0 ? this.current.time / clip.duration : 0;
-      const [a, b] = RACK_WINDOW;
-      if (t > a && t < b) {
-        // Eased in and out so the hand arrives on the slide and leaves it, rather
-        // than snapping onto it.
-        this._applyPose(RACK_POSE, Math.sin((t - a) / (b - a) * Math.PI));
-      }
-    }
+    // Aim the support hand at whatever it should be holding right now.
+    this._solveSupportHand();
   }
 }
 
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
+const _parentQ = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _v = new THREE.Vector3();
+const _ikTarget = new THREE.Vector3();
+const _bonePos = new THREE.Vector3();
+const _fist = new THREE.Vector3();
+const _from = new THREE.Vector3();
+const _to = new THREE.Vector3();
+
+// Distance from the hand bone to the closed fist, from tools/blender/viewmodel.py.
+const HAND_LENGTH = 0.123;
+// Where along the pump the hand grips, relative to the pump part's own origin.
+const PUMP_GRIP_Z = 0;
