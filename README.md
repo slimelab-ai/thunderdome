@@ -168,3 +168,18 @@ To inspect a day without copying it out of the volume:
 ```sh
 docker exec thunderdome_analytics sh -c 'tail -n 20 /data/events-$(date -u +%F).ndjson'
 ```
+
+### Private synthetic Liquidation wars
+
+The repository also has a Node-only simulation harness. It is not imported by the
+website or included in the browser build. Two copies of the Liquidation bot shop
+against one shared market, fight a seeded event-level combat model, and persist the
+strategy and combat stream for offline analysis.
+
+```sh
+npm run simulate:liquidation -- --matches 10 --seed 20260730
+```
+
+Each batch is written under `data/synthetic-liquidation/` as raw `events.ndjson`,
+per-war results, a JSON aggregate, and a ten-war Markdown report. Use `--output`
+to put batches on a persistent analysis volume.

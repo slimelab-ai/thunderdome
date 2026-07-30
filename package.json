@@ -11,7 +11,8 @@
     "assets": "npm run assets:tex && npm run assets:models",
     "assets:tex": "node tools/textures/generate.mjs",
     "assets:models": "node tools/blender/build.mjs",
-    "shot": "node tools/shot.mjs"
+    "shot": "node tools/shot.mjs",
+    "simulate:liquidation": "node tools/liquidation-sim/run.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"
