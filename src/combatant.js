@@ -493,7 +493,14 @@ export class Combatant {
     // ---- acquire target ----
     if (this.thinkTimer <= 0 || (this.target && !this._targetAlive())) {
       this.thinkTimer = 0.35 + Math.random() * 0.25;
+      const previousTarget = this.target;
       this.target = this._acquire(world);
+      if (this.target !== previousTarget) {
+        world.onCombatEvent?.('target_change', this, {
+          from: previousTarget?.isPlayer ? 'YOU' : previousTarget?.name || null,
+          to: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+        });
+      }
     }
 
     const speedMult = 1 - this.legDmg * 0.45;
@@ -633,6 +640,14 @@ export class Combatant {
           // swing wide toward my side instead of piling down the middle
           gx = Math.max(-20, Math.min(20, tp.x + this.flankSide * 8.5));
           gz = tp.z + Math.sign(this.pos.z - tp.z) * 3;
+          gy = this.target.pos.y;
+        } else if (blindPush && dist > 5) {
+          // Do not feed a hidden defender's exact corner one body at a time.
+          // Each fighter commits to one side of a breach point perpendicular to
+          // the target line, forcing crossfire angles around hard cover.
+          const breachWidth = this.role === 'pointman' ? 3.2 : 4.8;
+          gx = Math.max(-20, Math.min(20, tp.x + -fz * this.flankSide * breachWidth));
+          gz = Math.max(-14.5, Math.min(14.5, tp.z + fx * this.flankSide * breachWidth));
           gy = this.target.pos.y;
         } else if (this.role === 'shadow' && this.team === 'player' && !sight &&
                    Math.hypot(world.playerProxy.pos.x - this.pos.x, world.playerProxy.pos.z - this.pos.z) > 8) {
