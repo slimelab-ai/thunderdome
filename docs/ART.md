@@ -84,7 +84,7 @@ resolution. That means **draw calls are the budget**, not triangles.
 | --- | --- | --- | --- | --- |
 | Fighter (skinned) | ≤ 2,800 | ≤ 24 | 2 | 2,928 tris, 20 bones |
 | Weapon world model | ≤ 1,100 | — | 1 | 260–580 tris |
-| Viewmodel | ≤ 4,000 | ≤ 20 | 2 | shares the world model; **no first-person arms yet** |
+| Viewmodel arms | ≤ 4,000 | ≤ 20 | 2 | 1,336 tris, 9 bones |
 | Arena prop | ≤ 1,200 | — | 2–4 | 708–1,424 tris |
 
 Budget overages are reported by the build (`** OVER BUDGET **` in the asset log)
@@ -128,10 +128,30 @@ are mechanically legible at first-person distance. Static geometry is joined int
 `body` object at export; the movers stay separate and named, and the runtime finds
 them by name.
 
-**Not built yet:** rigged first-person arms. The viewmodel is currently the weapon
-alone, moved by the procedural sway/kick/ADS code in `src/player.js`, with its
-mechanism animated as above. Authored arms with per-weapon draw/reload/inspect clips
-is the next character-art job.
+The first-person viewmodel is a rigged pair of arms (`fp_arms.glb`, 9 bones) wrapped
+around the same authored weapon the world uses. Its weapon socket sits at the arms'
+own origin with identity orientation, so a weapon parented there lands exactly where
+the bare weapon used to — every bit of viewmodel maths in `src/player.js` (the
+hip/ADS lerp, the kick, the sway) is untouched by the arms existing.
+
+The clip split mirrors the fighter's, for the same reason. `fire` is additive so a
+recoil impulse layers over anything. `reload`, `draw` and `melee` are full-body for
+the arms, because the support hand leaves the weapon entirely, which no additive
+layer can express without fighting the idle sway. Clips are time-scaled to the
+weapon's own reload and swing durations, so the magazine seats when the weapon says
+it does.
+
+Per-weapon grips are bone pins, not separate clip sets: the rest pose already reaches
+a rifle-length handguard, and only the outliers need anything — a pistol held with
+both hands together, a knife whose support arm swings out of frame. Those pins
+release while a support-arm clip is playing, or a reload would run with the left arm
+frozen on a handguard it is supposed to have let go of.
+
+Grip poses are **fitted, not eyeballed**. A two-handed pistol grip needs the support
+hand just below and behind the firing hand, and no single joint reaches it — lowering
+the shoulder also swings the hand forward past the muzzle. `tools/poses/hands.js`
+reports both hand positions in camera space so the pose can be solved against a
+target instead of nudged.
 
 ## 7. VFX rules
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { WEAPONS, buildViewmodel, animateWeaponParts } from './weapons.js';
+import { ViewModel } from './viewmodel.js';
 import { fireRay, applySpread, resolveCircle, wallHit, STEP_REACH, STAND_LIMIT } from './combat.js';
 import { ITEM_TYPES, countInPack, useFromPack, ammoInPack, consumeAmmo, makeCharacter } from './items.js';
 import { audio } from './audio.js';
@@ -87,6 +88,9 @@ export class Player {
     fill.position.set(0.1, 0.1, 0.1);
     camera.add(fill);
     this.viewmodels = {};
+    // First-person arms. The weapon parents into the arms' socket, which sits at the
+    // arms' origin, so everything below that positions `vmRoot` is unaffected.
+    this.arms = new ViewModel(this.vmRoot);
     this._mountViewmodel();
 
     this.stats = { kills: 0, headshots: 0, deaths: 0, earned: 0, matchKills: 0, matchHeadshots: 0 };
@@ -123,10 +127,10 @@ export class Player {
 
   _mountViewmodel() {
     const id = this.weapon.id;
-    if (this.currentVM) this.vmRoot.remove(this.currentVM.group);
     if (!this.viewmodels[id]) this.viewmodels[id] = buildViewmodel(id);
     this.currentVM = this.viewmodels[id];
-    this.vmRoot.add(this.currentVM.group);
+    // The arms take ownership of the weapon group and play the draw.
+    this.arms.setWeapon(id, this.currentVM.group);
   }
 
   resetForMatch(spawn, yaw = 0) {
@@ -280,6 +284,7 @@ export class Player {
     if (this.weapon.melee || this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
     if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
     this.reloading = this.weapon.reload * (this.progressStats.reloadMult || 1);
+    this.arms.reload(this.reloading);
     audio.reload(0);
     setTimeout(() => { if (this.reloading > 0) audio.reload(1); }, this.reloading * 600);
   }
@@ -571,6 +576,7 @@ export class Player {
     // Slide/bolt/pump cycle off the same kick impulse the viewmodel uses, and the
     // magazine drops and reseats through the middle of a reload. Seeing the action
     // work is what makes a shot feel mechanical instead of a sound with a flash.
+    this.arms.update(dt);
     const reloadK = this.reloading > 0 ? (w.reload - this.reloading) / w.reload : 0;
     animateWeaponParts(
       this.currentVM,
@@ -618,6 +624,7 @@ export class Player {
     const w = this.weapon;
     this.fireCooldown = 60 / w.rpm;
     this.swingT = 0.32;
+    this.arms.melee(this.swingT);
     audio.slash();
 
     const fwd = new THREE.Vector3();
@@ -696,6 +703,7 @@ export class Player {
     }
 
     audio.shot(w.sound, 1);
+    this.arms.fire();
     this.world.fx.muzzleFlash(muzzle, baseDir);
     // Eject a case to the shooter's right. Melee weapons and the empty-chamber case
     // have already returned before here, so anything reaching this point cycled.

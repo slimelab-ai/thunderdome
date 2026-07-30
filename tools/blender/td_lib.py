@@ -192,6 +192,45 @@ def torus(name, loc, major_radius, minor_radius, material, rotation=(0, 0, 0),
     return _finish(o, material, 0, uv_scale=uv_scale)
 
 
+
+# Horizontal V bands in fighter_kit.webp (see tools/textures/bake.js). Parts
+# cube-project for world-scale detail, then have their V squeezed into a band, so one
+# texture dresses a whole character — and the same one dresses the viewmodel arms.
+ATLAS_BANDS = {
+    "skin":   (0.02, 0.23),
+    "cloth":  (0.27, 0.53),
+    "gear":   (0.57, 0.73),
+    "rubber": (0.77, 0.98),
+}
+
+
+def atlas_uv(o, band):
+    """Squeeze this object's V coordinate into its atlas band, keeping U tiling."""
+    v0, v1 = ATLAS_BANDS[band]
+    span = v1 - v0
+    for loop in o.data.uv_layers.active.data:
+        u, v = loop.uv
+        loop.uv = (u, v0 + (v % 1.0) * span)
+
+
+def segment(name, head, tail, r0, r1, material, bevel=0.004, uv_scale=1.6, vertices=10):
+    """A tapered limb segment running from `head` to `tail`.
+
+    Cylinders are created along their own Z, so the direction is turned into a
+    rotation with `to_track_quat`. Building limbs from bone endpoints rather than
+    hand-placed cylinders means the mesh cannot drift out of alignment with the rig.
+    """
+    from mathutils import Vector
+    h, t = Vector(head), Vector(tail)
+    d = t - h
+    bpy.ops.mesh.primitive_cone_add(
+        vertices=vertices, radius1=r0, radius2=r1, depth=d.length,
+        location=(h + t) / 2, rotation=d.to_track_quat("Z", "Y").to_euler(),
+    )
+    o = bpy.context.object
+    o.name = name
+    return _finish(o, material, bevel, uv_scale=uv_scale)
+
 def join(name, objects=None):
     """Merge objects into one mesh: one prop should be one draw call per material.
 

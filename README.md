@@ -92,6 +92,9 @@ The short version:
   materials named `TD_*`; the runtime binds the real textures. The whole arena runs
   on about ten materials, and UVs are world-scaled so a wall and a crate show the
   same size of aggregate.
+- **First-person arms** (`src/viewmodel.js`) wrapped around the same authored weapon
+  the world uses, with draw/reload/melee clips time-scaled to each weapon's own
+  durations and per-weapon grip pins for the support hand.
 - **Skinned fighters** (`src/fighter-rig.js`). One 20-bone skinned mesh with a
   two-layer animation state machine: locomotion crossfades on a speed/stance graph,
   and aim/fire/reload/throw/flinch layer over it as additive clips. Hitboxes are
@@ -135,6 +138,7 @@ node tools/shot.mjs shots/d.png --pose diag          # draw calls + scene report
 | `src/arena.js` | The pit: geometry, colliders, lighting rig, crowd, signage, flank gantries |
 | `src/nav.js` | Multi-layer 3D navmesh: per-surface nodes (floor + decks overlap), walk/drop links, A*, string-pulling |
 | `src/weapons.js` | Weapon stats, authored models, moving-part animation |
+| `src/viewmodel.js` | First-person arms: clip state machine, per-weapon grip pins |
 | `src/fx.js` | Pooled particles, tracers, muzzle flash, blood decals |
 | `src/announcer.js` | VULTURE's commentary library and ticker |
 | `src/ui.js` | HUD, body-damage diagram, killfeed, shop, screens |

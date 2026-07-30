@@ -10,6 +10,7 @@ import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { preloadFighter, fighterReady } from './fighter-rig.js';
+import { preloadViewmodel } from './viewmodel.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
@@ -82,7 +83,9 @@ requestAnimationFrame(() => pipeline.bakeEnvironment());
 arena.propsReady.then(() => pipeline.bakeEnvironment());
 
 // Fighters and weapons stream in behind the menu, so the first bout never waits.
-const assetsReady = Promise.all([arena.propsReady, preloadFighter(), preloadWeapons()]);
+const assetsReady = Promise.all([
+  arena.propsReady, preloadFighter(), preloadWeapons(), preloadViewmodel(),
+]);
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();

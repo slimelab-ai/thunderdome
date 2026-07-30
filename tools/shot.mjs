@@ -73,6 +73,10 @@ await page.evaluate('window.__game.assetsReady').catch(() => {});
 const quality = arg('quality', null);
 if (quality) await page.evaluate((q) => window.__game.setQuality(q), quality);
 
+// Runs *before* the pose, for variables a pose reads at its top (--eval runs after).
+const preJs = arg('pre', null);
+if (preJs) await page.evaluate(`(() => { ${preJs} })()`);
+
 if (poseName !== 'none') {
   const pose = await readFile(resolve(HERE, 'poses', `${poseName}.js`), 'utf8');
   await page.evaluate(pose);
