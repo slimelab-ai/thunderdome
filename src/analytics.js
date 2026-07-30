@@ -132,6 +132,29 @@ export class Analytics {
     this.context = { ...this.context, ...context };
   }
 
+  setSimulationContext({
+    batchId,
+    runner = 'headless_chromium',
+    seed,
+    pairId = null,
+    sideSwap = null,
+    bots = null,
+  }) {
+    if (!batchId || !Number.isFinite(Number(seed))) {
+      throw new TypeError('simulation analytics require batchId and numeric seed');
+    }
+    this.context = {
+      ...this.context,
+      simulation: true,
+      simulation_batch_id: String(batchId),
+      simulation_runner: String(runner),
+      simulation_seed: Number(seed),
+      simulation_pair_id: pairId == null ? null : String(pairId),
+      simulation_side_swap: sideSwap == null ? null : Boolean(sideSwap),
+      simulation_bots: Array.isArray(bots) ? bots.map(String) : null,
+    };
+  }
+
   emit(type, payload = {}, { eventId = null, context = null } = {}) {
     const id = eventId || this.randomUUID();
     if (this.queue.some(event => event.event_id === id)) return id;
