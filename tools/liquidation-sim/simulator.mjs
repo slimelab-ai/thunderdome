@@ -34,7 +34,7 @@ export function seededRandom(seed = Date.now()) {
 function makeBot(id, bankroll, random) {
   const state = newLiquidationState(bankroll, random);
   state.enemyMoney = 0;
-  state.enemy.strategy = 'balanced';
+  state.enemy.strategy = ['balanced', 'rifle', 'swarm', 'heavy'][Math.floor(random() * 4)];
   state.marketLog = [];
   return { id, state, wins: 0, losses: 0 };
 }
@@ -58,7 +58,7 @@ function snapshot(bot) {
   };
 }
 
-function shop(bot, opponent, market, emit) {
+function shop(bot, opponent, market, emit, options = {}) {
   let actions = 0;
   while (actions++ < 40) {
     const before = snapshot(bot);
@@ -66,6 +66,7 @@ function shop(bot, opponent, market, emit) {
       opponentPower: power(opponent),
       expectedStake: 250,
       hoarded9mm: (opponent.state.enemy.inventory.ammo_9mm || 0) >= 4,
+      liquidationOnly: options.liquidationOnly === true,
     });
     emit('liquidation_decision', {
       bot: bot.id, decision, before, after: snapshot(bot),
@@ -78,12 +79,18 @@ function chooseStake(bot, opponent) {
   const cash = bot.state.enemyMoney;
   const odds = liquidationOdds({ enemyMoney: opponent.state.enemyMoney }, cash);
   const confidence = power(bot) / Math.max(1, power(bot) + power(opponent));
+  const nextPenalty = bot.state.enemyLossStreak > 0
+    ? draftShare(bot.state) * bot.state.enemyLossStreak / 2
+    : 0;
+  const runway = 250 + nextPenalty + Math.max(250, enemyRoster(bot.state).length * 100);
+  const riskable = Math.max(0, cash - runway);
   const fraction = confidence > 0.66 ? 0.25 : confidence < 0.4 ? 0.05 : 0.1;
   return {
-    amount: Math.max(250, Math.min(cash + (bot.state.draft.complete ? 0 : draftShare(bot.state)),
+    amount: Math.max(250, Math.min(riskable,
       Math.floor(cash * fraction / 50) * 50)),
     odds,
     confidence: +confidence.toFixed(3),
+    runway: Math.round(runway),
   };
 }
 
@@ -196,6 +203,7 @@ export function simulateWar({ seed = Date.now(), maxRounds = 60, onEvent = () =>
     const loserPenalty = loser.state.enemyLossStreak < 2 ? 0
       : Math.round(draftShare(loser.state) * (loser.state.enemyLossStreak - 1) / 2);
     loser.state.enemyMoney -= loserPenalty;
+    shop(loser, combat.winner, market, emit, { liquidationOnly: true });
     emit('round_end', { winner: combat.winner.id, loser: loser.id, duration: combat.duration,
       survivors: combat.survivors, loser_penalty: loserPenalty, bets, bots: bots.map(snapshot) });
     round++;

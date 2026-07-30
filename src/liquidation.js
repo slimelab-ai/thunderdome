@@ -248,6 +248,50 @@ const STRATEGIES = {
   },
 };
 
+function strategyNeeds(state, plan) {
+  const inventory = state.enemy.inventory;
+  const rosterSize = Math.max(1, (state.enemy.recruits || []).length);
+  const guns = plan.guns.filter(type => type !== 'pistol');
+  const gunTarget = rosterSize;
+  const gunCount = guns.reduce((total, type) => total + Math.floor(inventory[type] || 0), 0);
+  const ammoTarget = Math.max(1, gunCount);
+  const ammoCount = plan.ammo.reduce((total, type) => total + (inventory[type] || 0), 0);
+  return { rosterSize, guns, gunTarget, gunCount, ammoTarget, ammoCount };
+}
+
+function saleItem(type, quantity = 1) {
+  const def = ITEM_TYPES[type];
+  return def.kind === 'ammo'
+    ? { type, rounds: AMMO_TYPES[def.ammoType].box * quantity }
+    : { type };
+}
+
+function chooseLiquidationSale(state, market, plan, emergency = false) {
+  const inv = state.enemy.inventory;
+  const needs = strategyNeeds(state, plan);
+  const keep = {};
+  for (const type of needs.guns) keep[type] = Math.min(needs.rosterSize, inv[type] || 0);
+  for (const type of plan.ammo) keep[type] = Math.min(needs.ammoTarget, inv[type] || 0);
+  for (const [type, count] of Object.entries({ medkit: 1, grenade: 1, splint: 1 })) {
+    keep[type] = Math.min(count, inv[type] || 0);
+  }
+  for (const type of plan.armor) keep[type] = Math.min(needs.rosterSize, inv[type] || 0);
+
+  const candidates = Object.entries(inv)
+    .filter(([type, count]) => ITEM_TYPES[type] && count > 0)
+    .map(([type, count]) => {
+      const excess = Math.max(0, count - (keep[type] || 0));
+      const quantity = Math.min(1, emergency ? count : excess);
+      const value = quantity > 0 ? market.quoteSell(saleItem(type, quantity)) : 0;
+      const offPlan = !plan.guns.includes(type) && !plan.ammo.includes(type) && !plan.armor.includes(type)
+        && !['medkit', 'grenade', 'splint'].includes(type);
+      return { type, quantity, value, offPlan, excess };
+    })
+    .filter(candidate => candidate.quantity > 0 && candidate.value > 0)
+    .sort((a, b) => Number(b.offPlan) - Number(a.offPlan) || b.excess - a.excess || b.value - a.value);
+  return candidates[0] || null;
+}
+
 export function runLiquidationAI(state, market, playerSignals = {}) {
   const inv = state.enemy.inventory;
   const risk = liquidationRiskModel(state, playerSignals);
@@ -264,15 +308,85 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   const plan = STRATEGIES[state.enemy.strategy];
   const owned = t => inv[t] || 0;
   const recruits = state.enemy.recruits ||= ['enforcer'];
+  const emergency = state.enemyMoney < 0;
+  const liquidationFloor = risk.expectedStake + risk.streakPenalty;
+  const sale = (emergency || state.enemyMoney < liquidationFloor || playerSignals.liquidationOnly)
+    ? chooseLiquidationSale(state, market, plan, emergency)
+    : null;
+  if (sale) {
+    const value = market.sell(saleItem(sale.type, sale.quantity));
+    state.enemyMoney += value;
+    inv[sale.type] = Math.max(0, +(owned(sale.type) - sale.quantity).toFixed(3));
+    recordMarketTrade(state, 'rival', 'sell', sale.type, value);
+    return {
+      kind: 'sell', type: sale.type, quantity: sale.quantity, value, risk,
+      reason: emergency ? 'avoid_insolvency' : 'restore_runway',
+      action: `LIQUIDATE: sold ${ITEM_TYPES[sale.type].name} for $${value}`,
+    };
+  }
+  if (playerSignals.liquidationOnly) {
+    return {
+      kind: 'hold', reason: 'liquidation_complete', reserveTarget, risk,
+      cash: state.enemyMoney, spendable: 0,
+      action: `HOLD: liquidation pass complete at $${state.enemyMoney}`,
+    };
+  }
+
   const fundedRounds = state.draft?.fundedRounds || 0;
   const desiredRoster = fundedRounds <= 0 ? 1 : Math.min(5, Math.max(
     plan.desiredRoster,
     1 + Math.floor(fundedRounds / 2),
   ));
+  const needs = strategyNeeds(state, plan);
+  // Readiness purchases may use the speculative reserve, but never the next
+  // minimum stake plus the already-visible margin call.
+  const combatFloor = Math.max(250, risk.expectedStake + risk.streakPenalty);
+  const readinessSpendable = Math.max(0, state.enemyMoney - combatFloor);
+  const readinessAffordable = t => Number.isFinite(price(t)) && price(t) <= readinessSpendable;
+  const gunCandidates = [
+    ...plan.guns.filter(type => type !== 'pistol'),
+    ...['smg', 'shotgun', 'rifle', 'dmr'].filter(type => !plan.guns.includes(type)),
+  ];
+  let target = needs.gunCount < needs.gunTarget
+    ? gunCandidates.find(type => {
+      const ammo = `ammo_${ITEM_TYPES[type].ammo}`;
+      return readinessAffordable(type) && price(type) + price(ammo) <= readinessSpendable;
+    })
+    : null;
+  if (!target && needs.ammoCount < needs.ammoTarget) {
+    const equippedAmmo = plan.guns
+      .filter(type => type !== 'pistol' && owned(type) > 0)
+      .map(type => `ammo_${ITEM_TYPES[type].ammo}`);
+    target = [...new Set([...equippedAmmo, ...plan.ammo])]
+      .sort((a, b) => pressure(a) - pressure(b))
+      .find(readinessAffordable);
+  }
+  if (target) {
+    const cost = market.buy(target);
+    state.enemyMoney -= cost;
+    inv[target] = owned(target) + 1;
+    recordMarketTrade(state, 'rival', 'buy', target, cost);
+    return {
+      kind: 'buy', type: target, cost, reserveTarget, risk, priority: 'combat_readiness',
+      action: `${state.enemy.strategy.toUpperCase()}: readiness buy ${ITEM_TYPES[target].name} for $${cost}`,
+    };
+  }
+  if (needs.gunCount < needs.gunTarget || needs.ammoCount < needs.ammoTarget) {
+    return {
+      kind: 'hold', reason: 'readiness_unaffordable', reserveTarget, risk,
+      cash: state.enemyMoney, spendable: readinessSpendable,
+      action: `HOLD: cannot complete the active roster's next combat kit without breaching the $${combatFloor} floor`,
+    };
+  }
+
   if (recruits.length < desiredRoster) {
+    const cheapestGun = gunCandidates
+      .map(type => ({ type, cost: price(type) + price(`ammo_${ITEM_TYPES[type].ammo}`) }))
+      .sort((a, b) => a.cost - b.cost)[0];
     const candidates = plan.recruits
       .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
-      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= spendable)
+      .filter(candidate => Number.isFinite(candidate.cost) && cheapestGun
+        && candidate.cost + cheapestGun.cost <= spendable)
       .sort((a, b) => a.order - b.order || a.cost - b.cost);
     const recruit = candidates[recruits.length - 1] || candidates[0];
     if (recruit) {
@@ -289,13 +403,8 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   }
   // Establish a working weapon first, then deliberately stock combat supplies.
   // Without explicit goals these items never entered the old candidate list.
-  const plannedAmmo = plan.ammo.reduce((total, type) => total + owned(type), 0);
-  const plannedGuns = plan.guns.reduce((total, type) => total + owned(type), 0);
   const supplies = { medkit: 2, grenade: 2, splint: 1 };
-  let target = plannedAmmo < 2
-    ? [...plan.ammo].sort((a, b) => pressure(a) - pressure(b)).find(affordable)
-    : null;
-  if (!target && plannedGuns < 1) target = plan.guns.find(affordable);
+  target = null;
   if (!target) target = Object.keys(supplies).find(t => owned(t) < supplies[t] && affordable(t));
   if (!target) target = plan.armor.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.guns.find(t => owned(t) < 3 && affordable(t));
@@ -323,21 +432,41 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
 export function enemyRoster(state) {
   const inv = state.enemy.inventory;
   const strategy = state.enemy.strategy;
-  const gun = strategy === 'swarm' ? 'smg' : (inv.rifle ? 'rifle' : inv.shotgun ? 'shotgun' : 'pistol');
-  const ammoType = ITEM_TYPES[gun].ammo;
-  const ammoItem = `ammo_${ammoType}`;
-  const totalRounds = (inv[ammoItem] || 0) * AMMO_TYPES[ammoType].box;
+  const plan = STRATEGIES[strategy] || STRATEGIES.balanced;
   let recruits = (state.enemy.recruits || ['enforcer'])
     .filter(type => HIRE_TYPES[type])
     .slice(0, 5);
   if (!recruits.length) recruits = ['enforcer'];
-  const count = Math.max(1, recruits.length);
+  const available = Object.fromEntries(plan.guns
+    .filter(type => type !== 'pistol')
+    .map(type => [type, Math.floor(inv[type] || 0)]));
+  const assignments = recruits.map((_, index) => {
+    const preferred = plan.guns[index % plan.guns.length];
+    if (preferred !== 'pistol' && available[preferred] > 0) {
+      available[preferred]--;
+      return preferred;
+    }
+    const substitute = plan.guns.find(type => type !== 'pistol' && available[type] > 0);
+    if (substitute) {
+      available[substitute]--;
+      return substitute;
+    }
+    return 'pistol';
+  });
+  const usersByAmmo = {};
+  for (const gun of assignments) {
+    const ammoType = ITEM_TYPES[gun].ammo;
+    usersByAmmo[ammoType] = (usersByAmmo[ammoType] || 0) + 1;
+  }
   return recruits.map((type, i) => {
     const fighter = HIRE_TYPES[type];
+    const gun = assignments[i];
+    const ammoType = ITEM_TYPES[gun].ammo;
+    const totalRounds = (inv[`ammo_${ammoType}`] || 0) * AMMO_TYPES[ammoType].box;
     return {
       w: gun, hp: fighter.hp, sp: fighter.spreadMult, re: fighter.reaction,
-      ar: strategy === 'heavy' ? 0.5 : (inv.vest1 ? 0.25 : 0),
-      arch: fighter.archetype, ammo: Math.floor(totalRounds / count),
+      ar: strategy === 'heavy' && inv.vest2 ? 0.5 : (inv.vest1 ? 0.25 : 0),
+      arch: fighter.archetype, ammo: Math.floor(totalRounds / usersByAmmo[ammoType]),
       name: `RIVAL ${i + 1}`,
     };
   });

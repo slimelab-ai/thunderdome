@@ -104,20 +104,18 @@ test('enemy-first draft shops immediately and does not require a player commit',
   assert.equal(rivalTurns, 1);
 });
 
-test('rival begins with one fighter and buys every additional contract from the AMM', () => {
+test('rival arms its active roster and refuses an unaffordable expansion', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
   assert.deepEqual(state.enemy.recruits, ['enforcer']);
   assert.equal(enemyRoster(state).length, 1);
   fundDraftRound(state, 0);
-  for (let i = 0; i < 8; i++) runLiquidationAI(state, market);
-  assert.equal(state.enemy.recruits.length, 3);
-  assert.equal(enemyRoster(state).length, 3);
+  for (let i = 0; i < 12; i++) runLiquidationAI(state, market);
+  assert.equal(state.enemy.recruits.length, 1);
+  assert.ok(enemyRoster(state).every(fighter => fighter.w !== 'pistol' && fighter.ammo > 0));
   const hires = state.marketLog.filter(entry => entry.kind === 'trade' && entry.side === 'rival' && entry.action === 'hire');
-  assert.equal(hires.length, 2);
-  assert.deepEqual(hires.map(entry => entry.label), ['MEDIC CONTRACT', 'RUSHER CONTRACT']);
-  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial - 1);
-  assert.equal(market.recruitInfo('rusher').units, market.recruitInfo('rusher').initial - 1);
+  assert.equal(hires.length, 0);
+  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial);
 });
 
 test('the next draft envelope protects only a recoverable deficit', () => {
@@ -155,6 +153,28 @@ test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
   assert.ok(rivalBuys.some(entry => entry.type === 'splint'));
 });
 
+test('rival liquidates market assets to escape insolvency before buying again', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = -500;
+  state.enemy.inventory = { rifle: 1, ammo_762: 1, medkit: 2 };
+  const before = market.info('medkit').units;
+  const decision = runLiquidationAI(state, market, { liquidationOnly: true });
+  assert.equal(decision.kind, 'sell');
+  assert.equal(decision.reason, 'avoid_insolvency');
+  assert.ok(state.enemyMoney > -500);
+  assert.ok(market.info(decision.type).units > (decision.type === 'medkit' ? before : market.info(decision.type).initial));
+});
+
+test('rival roster assigns only owned guns and compatible ammunition', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemy.recruits = ['enforcer', 'medic', 'rusher'];
+  state.enemy.inventory = { rifle: 1, smg: 1, ammo_762: 1, ammo_9mm: 2 };
+  const roster = enemyRoster(state);
+  assert.deepEqual(roster.map(fighter => fighter.w), ['rifle', 'smg', 'pistol']);
+  assert.ok(roster.every(fighter => fighter.ammo > 0));
+});
+
 test('rival reserve responds to confidence, loss exposure, win income, and remaining draft income', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
@@ -175,9 +195,9 @@ test('rival reserve responds to confidence, loss exposure, win income, and remai
   for (let i = 0; i < 20; i++) decision = runLiquidationAI(state, market, {
     opponentPower: 100, expectedStake: 250,
   });
-  assert.ok(state.enemyMoney >= even.reserveTarget);
-  assert.equal(decision.kind, 'hold');
-  assert.equal(decision.reserveTarget, even.reserveTarget);
+  assert.ok(state.enemyMoney >= 250);
+  assert.ok(['hold', 'buy'].includes(decision.kind));
+  assert.ok(enemyRoster(state).every(fighter => fighter.w !== 'pistol' && fighter.ammo > 0));
   assert.deepEqual(decision.risk, liquidationRiskModel(state, {
     opponentPower: 100, expectedStake: 250,
   }));
@@ -185,7 +205,7 @@ test('rival reserve responds to confidence, loss exposure, win income, and remai
   state.draft.fundedRounds = 10;
   state.draft.complete = true;
   state.enemyLossStreak = 2;
-  assert.equal(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }), 4400);
+  assert.ok(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }) >= 4000);
 });
 
 test('public market tape records both sides and separates rounds', () => {

@@ -9,6 +9,7 @@ export function analyze(events, wars) {
   const kills = events.filter(e => e.event === 'combat_kill');
   const holds = decisions.filter(e => e.decision.kind === 'hold');
   const buys = decisions.filter(e => e.decision.kind === 'buy' || e.decision.kind === 'hire');
+  const sales = decisions.filter(e => e.decision.kind === 'sell');
   const countBy = (values, key) => Object.fromEntries([...new Set(values.map(key))]
     .map(value => [value, values.filter(item => key(item) === value).length]));
   const byWeapon = {};
@@ -22,7 +23,8 @@ export function analyze(events, wars) {
     endings: Object.fromEntries(['insolvency', 'round_cap'].map(reason => [reason, wars.filter(w => w.reason === reason).length])),
     rounds: { total: rounds.length, mean_per_war: mean(wars.map(w => w.rounds)),
       mean_duration_seconds: mean(rounds.map(r => r.duration)) },
-    economy: { decisions: decisions.length, transactions: buys.length, holds: holds.length,
+    economy: { decisions: decisions.length, transactions: buys.length, sales: sales.length,
+      emergency_sales: sales.filter(e => e.decision.reason === 'avoid_insolvency').length, holds: holds.length,
       reserve_holds: holds.filter(e => e.decision.reason === 'cash_reserve').length,
       mean_reserve_target: mean(decisions.map(e => e.decision.risk?.reserveTarget || 0)),
       strategy_switches: decisions.filter(e => e.before.strategy !== e.after.strategy).length,
@@ -37,7 +39,7 @@ export function analyze(events, wars) {
     .map(([weapon, v]) => `- ${weapon}: ${v.shots} shots, ${pct(v.accuracy)} hits, ${v.kills} kills`);
   const learnings = [
     `${result.endings.insolvency}/${wars.length} wars ended through insolvency; average length was ${result.rounds.mean_per_war.toFixed(1)} rounds.`,
-    `The bots made ${result.economy.transactions} purchases/hires and held ${result.economy.holds} times; ${result.economy.reserve_holds} holds were explicitly reserve-bound.`,
+    `The bots made ${result.economy.transactions} purchases/hires, liquidated ${result.economy.sales} assets (${result.economy.emergency_sales} emergency sales), and held ${result.economy.holds} times.`,
     `Mean stake was $${result.economy.mean_stake.toFixed(0)} and mean ending cash was $${result.economy.mean_final_cash.toFixed(0)}.`,
     `Strategies switched ${result.economy.strategy_switches} times; decision mix was ${Object.entries(result.economy.decisions_by_strategy).map(([k, v]) => `${k} ${v}`).join(', ')}.`,
     `Combat produced ${shots.length} shots at ${pct(result.combat.accuracy)} aggregate hit rate and ${kills.length} kills.`,
