@@ -959,24 +959,36 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
 
 /*
  * Keep the middle-right of the screen empty for camera control. Primary
- * actions hug the right bezel; low-frequency inventory actions use the top
- * and left bezels. The bottom-center lean pair is reachable by either thumb.
+ * actions hug the thumb arcs; low-frequency inventory actions use the top
+ * bezel. Both fire controls remain available in every layout.
  */
-#t-fire {
-  width: 86px; height: 86px;
+.t-fire-btn {
+  width: 78px; height: 78px;
   font-size: 13px; border-width: 2px;
   border-color: rgba(255,82,89,0.72); background: rgba(227,36,43,0.24);
 }
-#t-fire span { display: grid; gap: 2px; place-items: center; }
-#t-fire small { font-size: 7px; letter-spacing: 1.5px; color: rgba(255,255,255,0.56); }
+.t-fire-btn span { display: grid; gap: 2px; place-items: center; }
+.t-fire-btn small { font-size: 7px; letter-spacing: 1.5px; color: rgba(255,255,255,0.56); }
 #touch-ui[data-layout="thumbs"] #t-fire {
-  right: clamp(64px, 8vw, 96px); top: clamp(124px, 43%, 260px);
+  right: clamp(86px, 11vw, 126px); top: clamp(138px, 46%, 270px);
+}
+#touch-ui[data-layout="thumbs"] #t-fire-left {
+  left: var(--touch-safe-left); top: clamp(132px, 42%, 250px);
 }
 #touch-ui[data-layout="left"] #t-fire {
-  left: var(--touch-safe-left); right: auto; top: clamp(120px, 36%, 220px);
+  width: 64px; height: 64px; opacity: 0.82;
+  right: clamp(80px, 10vw, 116px); top: clamp(146px, 48%, 280px);
+}
+#touch-ui[data-layout="left"] #t-fire-left {
+  width: 88px; height: 88px;
+  left: var(--touch-safe-left); top: clamp(128px, 39%, 238px);
 }
 #touch-ui[data-layout="claw"] #t-fire {
-  width: 72px; height: 48px; left: calc(var(--touch-safe-left) + 120px); right: auto;
+  width: 68px; height: 68px;
+  right: clamp(80px, 10vw, 116px); top: clamp(146px, 48%, 280px);
+}
+#touch-ui[data-layout="claw"] #t-fire-left {
+  width: 72px; height: 48px; left: calc(var(--touch-safe-left) + 120px);
   top: var(--touch-safe-top); border-radius: 11px;
 }
 #t-ads {
@@ -1025,12 +1037,18 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
 }
 
 .t-lean {
-  width: 66px; height: 42px; bottom: calc(var(--touch-safe-bottom) + 4px);
+  width: 58px; height: 42px;
   border-radius: 10px; gap: 5px; font-size: 9px;
 }
 .t-lean b { font-size: 22px; line-height: 1; font-weight: 500; }
-#t-lean-left { left: calc(50% - 76px); }
-#t-lean-right { left: calc(50% + 10px); }
+#t-lean-left {
+  left: auto; right: calc(var(--touch-safe-right) + 70px);
+  bottom: calc(var(--touch-safe-bottom) + 66px);
+}
+#t-lean-right {
+  left: auto; right: var(--touch-safe-right);
+  bottom: calc(var(--touch-safe-bottom) + 76px);
+}
 
 /* keep the existing HUD out from under thumbs on touch devices */
 body.touch-mode #killfeed { top: 62px; }
@@ -1045,15 +1063,20 @@ body.touch-mode #hud-bottomleft {
 
 @media (max-height: 430px) {
   #touch-ui { --touch-scale: 0.88; }
-  #t-fire { width: 74px; height: 74px; }
-  #touch-ui[data-layout="thumbs"] #t-fire { top: 39%; }
-  #touch-ui[data-layout="left"] #t-fire { top: 34%; }
-  #touch-ui[data-layout="claw"] #t-fire { width: 66px; height: 42px; top: var(--touch-safe-top); }
+  .t-fire-btn { width: 70px; height: 70px; }
+  #touch-ui[data-layout="thumbs"] #t-fire { top: 43%; }
+  #touch-ui[data-layout="thumbs"] #t-fire-left { top: 39%; }
+  #touch-ui[data-layout="left"] #t-fire { width: 58px; height: 58px; top: 45%; }
+  #touch-ui[data-layout="left"] #t-fire-left { width: 78px; height: 78px; top: 36%; }
+  #touch-ui[data-layout="claw"] #t-fire { width: 62px; height: 62px; top: 45%; }
+  #touch-ui[data-layout="claw"] #t-fire-left { width: 66px; height: 42px; top: var(--touch-safe-top); }
   #t-ads { width: 52px; height: 52px; top: calc(35% - 62px); }
   #t-reload { width: 46px; height: 46px; top: calc(35% + 80px); }
   #t-jump { width: 58px; height: 58px; }
   #t-crouch { width: 48px; height: 48px; right: calc(var(--touch-safe-right) + 68px); }
-  .t-lean { height: 38px; }
+  .t-lean { width: 54px; height: 38px; }
+  #t-lean-left { right: calc(var(--touch-safe-right) + 64px); bottom: calc(var(--touch-safe-bottom) + 60px); }
+  #t-lean-right { bottom: calc(var(--touch-safe-bottom) + 68px); }
 }
 
 @media (max-width: 700px) {
