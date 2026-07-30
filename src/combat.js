@@ -111,7 +111,9 @@ export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1, maxDi
   }
   if (fleshHit) {
     const dmg = computeDamage(weapon, fleshHit.part, fleshHit.dist) * dmgScale * gMult;
-    fleshHit.combatant.applyDamage(world, fleshHit.part, dmg, shooter, fleshHit.point);
+    // `dir` lets the hit VFX spray along the bullet's path instead of puffing
+    // symmetrically out of the wound.
+    fleshHit.combatant.applyDamage(world, fleshHit.part, dmg, shooter, fleshHit.point, dir);
     return { type: 'flesh', ...fleshHit };
   }
   if (wall.dist < 199) return { type: 'wall', point: wall.point, dist: wall.dist };

@@ -98,3 +98,39 @@ const report = cast.map(([c, state]) => {
   return `${state}[foot=${foot.toFixed(3)} head=${(v.y - c.pos.y).toFixed(3)}]`;
 });
 console.log('DIAG stances ' + report.join(' '));
+
+// Shieldman check. "Shoots through the shield" is a geometry question, so measure it:
+// the gun's world box must not intersect the shield's, and the shield must still sit
+// in front of the torso rather than off to one side.
+const sm = cast.find(([c]) => c.archetype === 'shield');
+if (sm) {
+  const [c] = sm;
+  // Measure with the fighter facing straight down +Z. Box3.setFromObject returns a
+  // world-axis AABB, so on a yawed fighter a perfectly flat shield reports a 0.38 m
+  // "depth" that is really just the yaw — which reads as a tilt that is not there.
+  const shownYaw = c.group.rotation.y;
+  c.group.rotation.y = 0;
+  c.group.updateMatrixWorld(true);
+  const shieldBox = new T.Box3().setFromObject(c.shieldMesh);
+  const gunBox = new T.Box3().setFromObject(c.gun);
+  const torso = new T.Vector3();
+  c.rig.bones.get('chest').getWorldPosition(torso);
+  const eye = new T.Vector3();
+  c.rig.bones.get('head').getWorldPosition(eye);
+  const local = (v) => v.clone().sub(c.pos);
+  console.log('DIAG shield ' + JSON.stringify({
+    overlapsGun: shieldBox.intersectsBox(gunBox),
+    shieldMin: local(shieldBox.min).toArray().map((v) => +v.toFixed(2)),
+    shieldMax: local(shieldBox.max).toArray().map((v) => +v.toFixed(2)),
+    gunMin: local(gunBox.min).toArray().map((v) => +v.toFixed(2)),
+    gunMax: local(gunBox.max).toArray().map((v) => +v.toFixed(2)),
+    torso: local(torso).toArray().map((v) => +v.toFixed(2)),
+    headY: +local(eye).y.toFixed(2),
+    // Gap between the gun's inboard edge and the shield's outboard edge, along X.
+    // Positive means the weapon is clear of the shield; negative is a visible
+    // intersection, which is what "shooting through the shield" looks like.
+    gunClearance: +(shieldBox.min.x - gunBox.max.x).toFixed(3),
+  }));
+  c.group.rotation.y = shownYaw;
+  c.group.updateMatrixWorld(true);
+}

@@ -83,7 +83,7 @@ arena.propsReady.then(() => pipeline.bakeEnvironment());
 
 // Fighters and weapons stream in behind the menu, so the first bout never waits.
 const assetsReady = Promise.all([arena.propsReady, preloadFighter(), preloadWeapons()]);
-const fx = new FX(scene);
+const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
 const announcer = new Announcer();

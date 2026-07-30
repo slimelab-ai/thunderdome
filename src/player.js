@@ -4,6 +4,10 @@ import { fireRay, applySpread, resolveCircle, wallHit, STEP_REACH, STAND_LIMIT }
 import { ITEM_TYPES, countInPack, useFromPack, ammoInPack, consumeAmmo, makeCharacter } from './items.js';
 import { audio } from './audio.js';
 
+// Scratch vectors for shell ejection, hoisted out of the fire path.
+const _casingRight = new THREE.Vector3();
+const _casingAt = new THREE.Vector3();
+
 const EYE_STAND = 1.62;
 const EYE_CROUCH = 1.08;
 const BASE_FOV = 75;
@@ -686,13 +690,20 @@ export class Player {
       const res = fireRay(this.world, this.world.playerShooter, origin, dir, w);
       this.world.fx.tracer(muzzle, res.point);
       if (res.type === 'wall') {
-        this.world.fx.sparks(res.point);
+        this.world.fx.sparks(res.point, dir);
         if (Math.random() < 0.35) audio.ricochet();
       }
     }
 
     audio.shot(w.sound, 1);
-    this.world.fx.muzzleFlash(muzzle);
+    this.world.fx.muzzleFlash(muzzle, baseDir);
+    // Eject a case to the shooter's right. Melee weapons and the empty-chamber case
+    // have already returned before here, so anything reaching this point cycled.
+    if (!w.melee) {
+      _casingRight.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+      _casingAt.copy(muzzle).addScaledVector(baseDir, -0.18).setY(muzzle.y + 0.02);
+      this.world.fx.ejectCasing(_casingAt, _casingRight);
+    }
 
     // recoil
     const r = w.recoil * (1 - this.ads * 0.35) * (1 - (this.skills.aim || 0) * 0.14) * (1 + this.armDmg * 0.8);

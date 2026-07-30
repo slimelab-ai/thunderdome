@@ -133,7 +133,29 @@ alone, moved by the procedural sway/kick/ADS code in `src/player.js`, with its
 mechanism animated as above. Authored arms with per-weapon draw/reload/inspect clips
 is the next character-art job.
 
-## 7. Pipeline
+## 7. VFX rules
+
+Effects are pooled and allocate nothing at runtime. A firefight spawns hundreds of
+emitters a second, and a garbage collection in the middle of one is a visible hitch.
+
+- **Two particle pools, split by blend mode.** Additive for anything that emits light
+  (sparks, embers, muzzle grit); alpha for anything that blocks it (smoke, dust, blood
+  mist). They cannot share: additive smoke never reads as smoke, and alpha-blended
+  sparks never read as hot. Two draw calls for every particle in the game.
+- **Per-particle size and alpha**, via a custom shader. `PointsMaterial` supports
+  neither, and they are exactly what separates a spark shower from a cloud of
+  identical squares. Size is in world units — the shader takes the projection scale
+  and viewport so a 5 cm ember is 5 cm at any resolution.
+- **Effects carry direction.** Blood sprays along the bullet's path, wall spall comes
+  back at the shooter, cases eject to the shooter's right. A symmetric puff reads as a
+  placeholder.
+- **Decals orient to the surface** and use polygon offset rather than a height
+  fudge. Bullet holes expire; blood and scorch stay for the bout.
+- **The muzzle flash is small.** It sits ~40 cm from the first-person camera, so a
+  world-plausible size fills a third of the screen and blinds the shot being placed.
+  The point light does the work of making it feel bright.
+
+## 8. Pipeline
 
 Nothing in `public/assets/` is hand-edited; it is all reproducible output.
 

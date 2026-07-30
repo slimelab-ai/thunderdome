@@ -10,6 +10,48 @@ const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
 const _aimTmp = new THREE.Vector3();
 
+/**
+ * Riot-shield carry stance.
+ *
+ * The left arm brings the shield up and across so it fronts the torso; the right arm
+ * is pushed *wide* so the weapon clears the shield's edge. That last part is the
+ * whole point — with a normal weapon stance the gun sits behind the shield and the
+ * fighter appears to fire straight through it. Held out past the edge, he reads as
+ * peeking around his own cover to shoot, which is what a shieldman actually does.
+ *
+ * The head is deliberately left unpinned so the procedural aim pitch still tracks
+ * targets, and the shield's top edge sits below eye level so he looks over it.
+ *
+ * Angles are radians, in the bone-local convention from tools/blender/fighter.py:
+ * X is flexion, Z is abduction.
+ */
+const SHIELD_CARRY = {
+  upperarm_l: [-0.45, 0, -0.62],   // up and adducted across the chest
+  forearm_l: [-1.30, 0, 0],        // elbow folded so the forearm runs across the body
+  hand_l: [0, 0, 0],
+  shoulder_r: [0, 0, -0.18],
+  upperarm_r: [-0.30, 0.10, 0.80], // abducted wide: the weapon clears the shield edge
+  forearm_r: [-1.10, 0, 0],
+};
+
+/**
+ * Shield placement on the left hand.
+ *
+ * Solved, not guessed: these are the local position and rotation that put the shield
+ * squarely in front of the torso — centre 1.00 m up, 0.34 m forward, facing +Z, so
+ * its top edge lands just under eye level and he looks *over* it. Hand-tuning Euler
+ * angles against a bone that is already rotated three ways produced a shield floating
+ * diagonally above the fighter's head.
+ *
+ * If `SHIELD_CARRY` changes, re-solve rather than nudge: `tools/poses/stances.js`
+ * reports the shield's box in the fighter's own frame, its clearance from the gun,
+ * and where the top edge sits relative to the eyes.
+ */
+const SHIELD_OFFSET = {
+  x: -0.490, y: -0.081, z: -0.013,
+  rx: -1.584, ry: -0.161, rz: -0.700,
+};
+
 function nameTagSprite(name, color) {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 64;
@@ -198,23 +240,26 @@ export class Combatant {
 
     // archetype dressing, parented to the bones it belongs on
     if (this.archetype === 'shield') {
-      const shield = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.07), surface('TD_steel_painted'));
-      // Mounted on the torso, not the arm.
+      // Carried in the left hand, and posed rather than bolted on.
       //
-      // The shield's job is a stable frontal barrier — the archetype's whole rule is
-      // "torso immune from the front, so flank him or frag him". Parenting it to the
-      // support forearm meant it swung with every stride and aim transition: it looked
-      // like he was waving it around, and the protected angle moved from frame to
-      // frame, which makes the counter-play unreadable.
-      shield.position.set(0, -0.10, 0.36);
+      // The shield has two jobs that pull against each other: it has to be a *stable*
+      // frontal barrier (the archetype's rule is "torso immune from the front", so the
+      // protected angle must be readable), and it has to be genuinely held, so it
+      // falls with the arm when he dies and moves like a carried object. Parenting it
+      // to the torso got stability by giving up the second; leaving the arm animated
+      // got the second by giving up the first.
+      //
+      // The answer is to pin the carry pose. The shield rides the hand, but the arm
+      // that holds it is held in `SHIELD_CARRY` against the locomotion and aim layers,
+      // so it is hand-held and still presents a fixed angle.
+      const shield = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.95, 0.06), surface('TD_steel_painted'));
+      shield.position.set(SHIELD_OFFSET.x, SHIELD_OFFSET.y, SHIELD_OFFSET.z);
+      shield.rotation.set(SHIELD_OFFSET.rx, SHIELD_OFFSET.ry, SHIELD_OFFSET.rz);
       shield.castShadow = true;
       shield.userData = { combatant: this, part: 'shield' };
-      bone('spine')?.add(shield);
+      bone('hand_l')?.add(shield);
       this.shieldMesh = shield;
-      // Support arm holds it there rather than reaching for a handguard he cannot
-      // get to. Pinned, so the locomotion and aim layers do not drag it out.
-      this.rig.pinBone('upperarm_l', [-0.55, -0.25, -0.30]);
-      this.rig.pinBone('forearm_l', [-1.35, 0, 0]);
+      for (const [name, euler] of Object.entries(SHIELD_CARRY)) this.rig.pinBone(name, euler);
     } else if (this.archetype === 'medic') {
       const cross = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.16, 0.02),
@@ -273,9 +318,9 @@ export class Combatant {
     return out.set(this.pos.x, this.pos.y + 1.15 * this.scale * this.crouchK, this.pos.z);
   }
 
-  applyDamage(world, part, dmg, shooter, point) {
+  applyDamage(world, part, dmg, shooter, point, dir = null) {
     if (!this.alive) return;
-    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point); audio.ricochet(); }
+    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point, dir); audio.ricochet(); }
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
     this.mendT = 0;
@@ -292,7 +337,7 @@ export class Combatant {
     if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + 0.4);
 
     if (part !== 'shield') {
-      world.fx.blood(point);
+      world.fx.blood(point, dir);
       if (this.hp > 0) this.rig.trigger('hit_react', part === 'head' ? 1 : 0.75);
     }
     const camDist = point.distanceTo(world.cameraPos);
@@ -683,11 +728,11 @@ export class Combatant {
           const res = fireRay(world, this, fireEye, sdir, w,
             this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
           world.fx.tracer(fireEye.clone().addScaledVector(sdir, 0.6), res.point);
-          if (res.type === 'wall') { world.fx.sparks(res.point); if (Math.random() < 0.3) audio.ricochet(); }
+          if (res.type === 'wall') { world.fx.sparks(res.point, sdir); if (Math.random() < 0.3) audio.ricochet(); }
         }
         const camDist = fireEye.distanceTo(world.cameraPos);
         audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
-        world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7));
+        world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7), dir);
         this.rig.trigger('fire');
 
         this.shotsFired = (this.shotsFired || 0) + 1;
