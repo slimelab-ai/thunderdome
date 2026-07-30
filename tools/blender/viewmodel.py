@@ -321,35 +321,49 @@ def anim_melee(rig):
 
 
 def anim_reload_pistol(rig):
-    """Pistol reload: magazine out, fresh magazine in, then rack the slide.
+    """Pistol reload: magazine out of the grip, fresh one in, then rack the slide.
 
-    A pistol does not reload like a rifle. The magazine drops out of the *grip*, and
-    the slide has to be worked afterwards — with the support hand coming over the top
-    of the weapon, not staying out on a handguard that a pistol does not have.
+    Deliberately *not* shaped like the rifle reload. A pistol is a small object held
+    close, so the whole sequence happens near the face: the weapon rolls hard inboard
+    to bring the magazine well into view, comes back toward the camera rather than
+    dipping away, and the support hand finishes by coming over the *top* of the slide
+    instead of returning to a handguard the weapon does not have.
+
+    Frame timings here are load-bearing — `WEAPONS.pistol.slideRack` cues the slide's
+    own travel off the same normalised progress, so the mechanism moves when the hand
+    that works it does.
     """
     new_action(rig, "reload_pistol")
     clear_pose(rig)
     key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
-    # tip the weapon inboard so the magazine well is in view
-    key(rig, 7, {**ZERO, "vm_root": (-10, 20, 14), "upperarm_r": (-5, 0, 0),
-                 "upperarm_l": (16, 0, -12), "forearm_l": (24, 0, 0)},
-        loc={"vm_root": (0, -0.04, -0.02), "hand_l": (0, -0.04, -0.05)})
-    # support hand away with the empty magazine
-    key(rig, 15, {**ZERO, "vm_root": (-12, 22, 16), "upperarm_r": (-6, 0, 0),
-                  "upperarm_l": (40, 0, -18), "forearm_l": (48, 0, 0), "hand_l": (-28, 0, 0)},
-        loc={"vm_root": (0, -0.05, -0.028), "hand_l": (0, -0.05, -0.14)})
-    # fresh magazine seated up into the grip
-    key(rig, 26, {**ZERO, "vm_root": (-9, 16, 11), "upperarm_r": (-4, 0, 0),
-                  "upperarm_l": (18, 0, -12), "forearm_l": (26, 0, 0), "hand_l": (-10, 0, 0)},
-        loc={"vm_root": (0, -0.035, -0.02), "hand_l": (0, -0.02, -0.03)})
-    # support hand comes over the top of the slide and pulls it back
-    key(rig, 33, {**ZERO, "vm_root": (-6, 8, 5), "upperarm_r": (-3, 0, 0),
-                  "upperarm_l": (-14, 0, -22), "forearm_l": (-30, 0, 0), "hand_l": (18, 0, 0)},
-        loc={"vm_root": (0, -0.02, -0.01), "hand_l": (0, 0.045, 0.02)})
-    key(rig, 38, {**ZERO, "vm_root": (-4, 6, 4), "upperarm_l": (-10, 0, -20),
-                  "forearm_l": (-24, 0, 0), "hand_l": (14, 0, 0)},
-        loc={"vm_root": (0, -0.012, -0.006), "hand_l": (0, 0.012, 0.02)})
-    key(rig, 48, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+    # roll hard inboard and draw the weapon in close
+    key(rig, 8, {**ZERO, "vm_root": (-6, 26, 34), "upperarm_r": (-10, 0, 0),
+                 "forearm_r": (12, 0, 0),
+                 "upperarm_l": (20, 0, -14), "forearm_l": (28, 0, 0)},
+        loc={"vm_root": (-0.03, 0.03, -0.05), "hand_l": (0, -0.04, -0.05)})
+    # magazine gone; support hand drops out of frame for a fresh one
+    key(rig, 16, {**ZERO, "vm_root": (-7, 28, 36), "upperarm_r": (-11, 0, 0),
+                  "forearm_r": (13, 0, 0),
+                  "upperarm_l": (46, 0, -20), "forearm_l": (54, 0, 0), "hand_l": (-30, 0, 0)},
+        loc={"vm_root": (-0.032, 0.032, -0.055), "hand_l": (0, -0.06, -0.16)})
+    # fresh magazine driven up into the grip
+    key(rig, 27, {**ZERO, "vm_root": (-5, 22, 30), "upperarm_r": (-9, 0, 0),
+                  "forearm_r": (10, 0, 0),
+                  "upperarm_l": (16, 0, -12), "forearm_l": (24, 0, 0), "hand_l": (-8, 0, 0)},
+        loc={"vm_root": (-0.026, 0.026, -0.045), "hand_l": (0, -0.015, -0.02)})
+    # Support hand onto the *slide* and hauls it back. These angles are fitted, not
+    # eyeballed: the fist has to land on the rear of the slide, which is 11 cm above
+    # and 2.5 cm forward of the firing hand. Miming the motion out in front of the
+    # weapon — which is what the first version did — reads as a rifle reload with a
+    # pistol in shot.
+    key(rig, 34, {**ZERO, "vm_root": (-2, 12, 16), "upperarm_r": (-5, 0, 0),
+                  "upperarm_l": (-29, 17, 0), "forearm_l": (72, 0, 0), "hand_l": (17, 0, 0)},
+        loc={"vm_root": (-0.012, 0.014, -0.022)})
+    # slide released, hand lifting off the top
+    key(rig, 40, {**ZERO, "vm_root": (-1, 7, 9), "upperarm_l": (-22, 14, -4),
+                  "forearm_l": (58, 0, 0), "hand_l": (12, 0, 0)},
+        loc={"vm_root": (-0.006, 0.008, -0.012)})
+    key(rig, 50, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
 
 
 def anim_reload_shell(rig):

@@ -36,6 +36,27 @@ const FIST = [0.012, -0.050, 0.075];
 const RELOAD_CLIP = { pistol: 'reload_pistol', shotgun: 'reload_shell' };
 
 /**
+ * Where the support hand grips to rack a pistol's slide, and when.
+ *
+ * This lives here rather than in the authored clip because the two systems do not
+ * agree on euler composition: angles fitted in the runtime do not reproduce when
+ * transplanted into Blender pose keys, and the transplanted version put the hand
+ * 24 cm off the slide instead of 2 cm. Fitting and applying in the same space removes
+ * the conversion entirely. The clip still carries the weapon roll, the magazine work
+ * and the timing; only the support arm's rack grip is overridden.
+ *
+ * The window is the fraction of `reload_pistol` during which the hand is on the
+ * slide, and matches `WEAPONS.pistol.slideRack` so the hand and the mechanism move
+ * together.
+ */
+const RACK_POSE = {
+  upperarm_l: [-0.50, 0.30, 0],
+  forearm_l: [1.25, 0, 0],
+  hand_l: [0.30, 0, 0],
+};
+const RACK_WINDOW = [0.62, 0.88];
+
+/**
  * Where the support hand goes, per weapon, as bone rotations in radians.
  *
  * The rest pose already reaches a rifle-length handguard, so most weapons need
@@ -68,11 +89,10 @@ const SUPPORT_POSE = {
     forearm_l: [-0.05, 0, 0],
     hand_l: [0, 0, 0],
   },
-  dmr: {
-    upperarm_l: [-0.10, 0, -0.06],
-    forearm_l: [-0.12, 0, 0],
-    hand_l: [0, 0, 0],
-  },
+  // No entry for the DMR or the rifle on purpose. Both have long handguards that the
+  // rest pose already reaches — a fit over the support arm's whole range could not
+  // beat leaving it alone, and the hand-authored DMR offset that used to be here put
+  // the fist 15 cm off the handguard where the rest pose puts it 8 cm.
   knife: {
     upperarm_l: [1.15, 0, -0.30],
     forearm_l: [0.55, 0, 0],
@@ -239,6 +259,18 @@ export class ViewModel {
   /** Work the pump between shots. */
   pump(seconds) { this.play('pump', seconds); }
 
+  /** Blend a set of bone rotations in, `weight` 0..1, relative to the bind pose. */
+  _applyPose(pose, weight) {
+    const entries = pose instanceof Map ? pose : Object.entries(pose);
+    for (const [name, euler] of entries) {
+      const bone = this.bones.get(name);
+      if (!bone) continue;
+      _e.set(euler[0], euler[1], euler[2]);
+      _q.copy(this.restQuat.get(name)).multiply(_q2.setFromEuler(_e));
+      bone.quaternion.slerp(_q, weight);
+    }
+  }
+
   update(dt) {
     if (!this.ready) return;
 
@@ -254,13 +286,18 @@ export class ViewModel {
     // arm frozen on a handguard it is supposed to have let go of.
     const releasing = this.current && SUPPORT_ARM_CLIPS.has(this.current.getClip().name);
     this.pinWeight += ((releasing ? 0 : 1) - this.pinWeight) * Math.min(1, dt * 10);
-    if (this.pinWeight > 0.002) {
-      for (const [name, euler] of this.pinned) {
-        const bone = this.bones.get(name);
-        if (!bone) continue;
-        _e.set(euler[0], euler[1], euler[2]);
-        _q.copy(this.restQuat.get(name)).multiply(_q2.setFromEuler(_e));
-        bone.quaternion.slerp(_q, this.pinWeight);
+    if (this.pinWeight > 0.002) this._applyPose(this.pinned, this.pinWeight);
+
+    // Pistol slide rack: override the support arm onto the slide for the stretch of
+    // the reload where it is being worked.
+    if (this.current && this.current.getClip().name === 'reload_pistol') {
+      const clip = this.current.getClip();
+      const t = clip.duration > 0 ? this.current.time / clip.duration : 0;
+      const [a, b] = RACK_WINDOW;
+      if (t > a && t < b) {
+        // Eased in and out so the hand arrives on the slide and leaves it, rather
+        // than snapping onto it.
+        this._applyPose(RACK_POSE, Math.sin((t - a) / (b - a) * Math.PI));
       }
     }
   }

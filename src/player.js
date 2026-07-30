@@ -625,10 +625,15 @@ export class Player {
     const pumpK = w.pump && this.pumpT > 0
       ? Math.sin((1 - this.pumpT / w.pump) * Math.PI)
       : 0;
+    // The slide cycles either from recoil or from being racked during a reload,
+    // whichever is further along.
+    const rack = w.slideRack && reloadK > w.slideRack[0] && reloadK < w.slideRack[1]
+      ? Math.sin((reloadK - w.slideRack[0]) / (w.slideRack[1] - w.slideRack[0]) * Math.PI)
+      : 0;
     animateWeaponParts(
       this.currentVM,
-      Math.min(1, this.kick * 1.6),
-      reloadK > 0.12 && reloadK < 0.62 ? Math.sin((reloadK - 0.12) / 0.5 * Math.PI) : 0,
+      Math.max(Math.min(1, this.kick * 1.6), rack),
+      reloadK > 0.12 && reloadK < 0.58 ? Math.sin((reloadK - 0.12) / 0.46 * Math.PI) : 0,
       pumpK,
     );
 

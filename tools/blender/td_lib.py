@@ -96,18 +96,57 @@ def mat(name):
     return m
 
 
+_smooth_warned = False
+
+
 def auto_smooth(o, angle_deg=38):
-    """Shade smooth with a sharp-edge angle, on any Blender from 3.x to 4.4+."""
+    """Shade smooth with a sharp-edge angle, on any Blender from 3.x to 4.4+.
+
+    Three paths, because this has broken twice already for different reasons. 4.1
+    removed `mesh.use_auto_smooth` in favour of a "Smooth by Angle" geometry-nodes
+    modifier that `shade_auto_smooth` appends — but that operator loads the node group
+    from Blender's bundled asset library, which is not always reachable (notably under
+    `--factory-startup` on some installs) and raises. A missing bevel-edge softening
+    is a cosmetic loss; a build that cannot run at all is not, so the last resort is
+    plain smooth shading with the sharp edges marked by angle.
+    """
+    global _smooth_warned
     angle = math.radians(angle_deg)
+    bpy.context.view_layer.objects.active = o
     if IS_41_PLUS:
-        # 4.1 replaced the mesh flag with a "Smooth by Angle" geometry-nodes modifier
-        # that the operator adds for us. It must be applied after any bevel, which is
-        # why this is called at the end of each primitive helper.
-        bpy.context.view_layer.objects.active = o
-        bpy.ops.object.shade_auto_smooth(angle=angle)
+        try:
+            bpy.ops.object.shade_auto_smooth(angle=angle)
+            return
+        except RuntimeError as err:
+            if not _smooth_warned:
+                log(f"  shade_auto_smooth unavailable ({err}); marking sharp edges manually")
+                _smooth_warned = True
+            _shade_smooth_by_angle(o, angle)
     else:
         o.data.use_auto_smooth = True
         o.data.auto_smooth_angle = angle
+
+
+def _shade_smooth_by_angle(o, angle):
+    """Smooth shading with edges above `angle` flagged sharp — what the modifier does."""
+    mesh = o.data
+    for poly in mesh.polygons:
+        poly.use_smooth = True
+    mesh.calc_loop_triangles()
+    for edge in mesh.edges:
+        edge.use_edge_sharp = False
+    # Face pairs meeting at more than the threshold become hard edges.
+    edge_faces = {}
+    for poly in mesh.polygons:
+        for key in poly.edge_keys:
+            edge_faces.setdefault(key, []).append(poly.normal.copy())
+    sharp = set()
+    for key, normals in edge_faces.items():
+        if len(normals) == 2 and normals[0].angle(normals[1], 0.0) > angle:
+            sharp.add(key)
+    for edge in mesh.edges:
+        if (edge.vertices[0], edge.vertices[1]) in sharp or (edge.vertices[1], edge.vertices[0]) in sharp:
+            edge.use_edge_sharp = True
 
 
 def _finish(o, material, bevel, bevel_segments=None, smooth=True, uv_scale=1.0):

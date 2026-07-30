@@ -9,6 +9,11 @@ export const WEAPONS = {
     dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
+    // When the slide is worked during the reload, as a fraction of the reload's
+    // duration. Matches the frames in `anim_reload_pistol` where the support hand is
+    // over the top of the weapon — without this the hand mimes a rack the slide never
+    // performs, which is what made the reload read as a rifle's.
+    slideRack: [0.66, 0.82],
     desc: 'Every contestant starts with one. 3 to the chest or 1 to the skull.',
   },
   smg: {

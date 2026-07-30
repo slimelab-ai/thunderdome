@@ -160,6 +160,18 @@ afterwards, and `reload_shell` feeds a single round and returns to the carry pos
 it can be replayed once per shell without stuttering between rounds. A pump action
 gets a `pump` stroke between shots, and firing is locked out until it completes.
 
+The weapon's own parts move with the hand that works them — the slide cycles during
+the rack, the magazine drops and reseats, the pump strokes — so the animation and the
+mechanism agree. A hand miming an action the weapon does not perform is the single
+biggest tell that a reload was retargeted from another weapon.
+
+**Fit poses in the space you will apply them in.** Angles fitted in the runtime do not
+survive transplanting into Blender pose keys — the two do not compose euler rotations
+the same way, and a rack pose that measured 2 cm off the slide in the browser landed
+24 cm off once baked into the clip. The pistol's rack grip is therefore applied as a
+runtime pose over the clip, which also keeps it measurable: every grip in the game is
+checked as a distance from the fist to the part of the weapon it should be holding.
+
 Grip poses are **fitted, not eyeballed**. A two-handed pistol grip needs the support
 hand just below and behind the firing hand, and no single joint reaches it — lowering
 the shoulder also swings the hand forward past the muzzle. `tools/poses/hands.js`
