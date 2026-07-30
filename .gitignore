@@ -4,3 +4,5 @@ dist
 .deployed-sha
 .deployed-dev-sha
 cloudflared-credentials.json
+
+__pycache__/

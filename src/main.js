@@ -5,9 +5,11 @@ import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
 import { UI, nextCrewName } from './ui.js';
-import { WEAPONS } from './weapons.js';
+import { WEAPONS, preloadWeapons } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
+import { RenderPipeline, QUALITY_TIERS } from './render.js';
+import { preloadFighter, fighterReady } from './fighter-rig.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
@@ -35,28 +37,51 @@ import {
   normalizeCrewDeployment, shouldBenchNewHire,
 } from './roster.js';
 
-// ============================================================ setup
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
-document.getElementById('app').appendChild(renderer.domElement);
+// ============================================================ graphics quality
+const QUALITY_KEY = 'thunderdome-quality';
 
+// Function declaration, not const: this runs during module setup, above its own
+// definition in source order.
+function loadGraphicsQuality() {
+  const saved = localStorage.getItem(QUALITY_KEY);
+  if (QUALITY_TIERS.includes(saved)) return saved;
+  // First run: guess from the device rather than dropping a phone straight into the
+  // full post stack. Touch-primary hardware and small logical viewports start low.
+  const smallScreen = Math.min(window.innerWidth, window.innerHeight) < 700;
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+  const cores = navigator.hardwareConcurrency || 4;
+  if (coarse && smallScreen) return 'low';
+  if (cores <= 4) return 'medium';
+  return 'high';
+}
+
+function saveGraphicsQuality(name) {
+  localStorage.setItem(QUALITY_KEY, name);
+}
+
+// ============================================================ setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050507);
+scene.background = new THREE.Color(0x07080b);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 scene.add(camera);
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+const pipeline = new RenderPipeline(scene, camera, {
+  quality: loadGraphicsQuality(),
+  container: document.getElementById('app'),
 });
+const renderer = pipeline.renderer;
 
 const arena = buildArena(scene);
+pipeline.onShadowMapSize = (size) => arena.setShadowMapSize(size);
+pipeline.onShadowMapSize(pipeline.tier.shadowMap);
+
+// The reflection probe has to run after the arena exists, and again once the
+// streamed prop GLBs have landed — the first bake sees a pit with no props in it.
+requestAnimationFrame(() => pipeline.bakeEnvironment());
+arena.propsReady.then(() => pipeline.bakeEnvironment());
+
+// Fighters and weapons stream in behind the menu, so the first bout never waits.
+const assetsReady = Promise.all([arena.propsReady, preloadFighter(), preloadWeapons()]);
 const fx = new FX(scene);
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
@@ -528,6 +553,13 @@ function clearCombatants() {
 }
 
 function startMatch() {
+  // Fighters are skinned GLB instances now, so a bout cannot begin until the model
+  // is in memory. In practice it loads during the menu; this only ever fires if a
+  // player clicks FIGHT within the first second on a cold cache.
+  if (!fighterReady()) {
+    preloadFighter().then(() => startMatch());
+    return;
+  }
   if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
     openShop();
     return;
@@ -840,7 +872,7 @@ function handlePlayerDamaged(dmg, part, fromPos) {
 import { hasLoS } from './combat.js';
 
 const NADE_GEO = new THREE.SphereGeometry(0.09, 8, 6);
-const NADE_MAT = new THREE.MeshLambertMaterial({ color: 0x2c3a2c });
+const NADE_MAT = new THREE.MeshStandardMaterial({ color: 0x2c3a2c, roughness: 0.55, metalness: 0.35 });
 
 world.grenades = [];
 world.throwGrenade = (origin, vel, thrower) => {
@@ -1034,7 +1066,7 @@ function fireEvent() {
   } else if (ev === 'airdrop') {
     const s = randomFloorSpot(9);
     const mesh = new THREE.Group();
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x8a6d2f }));
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x8a6d2f, roughness: 0.8, metalness: 0.1 }));
     crate.position.y = 0.5;
     const beacon = new THREE.PointLight(0xffb92e, 50, 14, 1.4);
     beacon.position.y = 1.6;
@@ -1091,7 +1123,7 @@ function updateEvents(dt) {
   const targetFactor = match.lightsOut > 0 ? 0.05 : (hasMut('dim') ? 0.6 : 1);
   world._lightFactor = world._lightFactor ?? 1;
   world._lightFactor += (targetFactor - world._lightFactor) * Math.min(1, dt * 3);
-  for (const l of arena.lights) l.light.intensity = l.base * world._lightFactor;
+  arena.setLightFactor(world._lightFactor);
   if (match.lightsOut > 0) {
     match.lightsOut -= dt;
     arena.strobe.intensity = (Math.sin(match.time * 9) > 0.4) ? 90 : 0;
@@ -2026,9 +2058,29 @@ window.__game = {
   get phase() { return phase; }, get career() { return career; },
   get input() { return input; },
   get controllerSettings() { return input.controllerSettings; },
+  get renderer() { return renderer; }, get camera() { return camera; },
+  get scene() { return scene; }, get arena() { return arena; },
+  get pipeline() { return pipeline; },
+  THREE,                                  // capture/diagnostic poses need constructors
+  assetsReady,                            // tools/shot.mjs waits on this before posing
+  setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },
   tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
   setLocked(v) { locked = v; },
+  // ---- capture harness (tools/shot.mjs) ----
+  // freeCam parks the camera and stops the loop from driving it, so a captured
+  // frame is reproducible instead of wherever the menu orbit happened to be.
+  freeCam(pos, look) {
+    this.frozenCam = true;
+    camera.position.set(pos[0], pos[1], pos[2]);
+    camera.lookAt(look[0], look[1], look[2]);
+  },
+  fight(mode = 'circuits', rank = 15) {
+    career = newCareer(mode);
+    career.rank = rank;
+    market = createMarket(mode);
+    startMatch();
+  },
 };
 
 function tick() {
@@ -2048,6 +2100,8 @@ function tick() {
 
   if (phase === 'match') {
     stepMatch(dt);
+  } else if (window.__game?.frozenCam) {
+    // capture harness owns the camera
   } else if (phase === 'menu' || phase === 'shop' || phase === 'intro' || phase === 'dead' || phase === 'champion') {
     // slow orbit backdrop
     const a = t * 0.08;
@@ -2055,6 +2109,6 @@ function tick() {
     camera.lookAt(0, 1.2, 0);
   }
 
-  renderer.render(scene, camera);
+  pipeline.render(t);
 }
 tick();

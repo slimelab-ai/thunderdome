@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WEAPONS, buildViewmodel } from './weapons.js';
+import { WEAPONS, buildViewmodel, animateWeaponParts } from './weapons.js';
 import { fireRay, applySpread, resolveCircle, wallHit, STEP_REACH, STAND_LIMIT } from './combat.js';
 import { ITEM_TYPES, countInPack, useFromPack, ammoInPack, consumeAmmo, makeCharacter } from './items.js';
 import { audio } from './audio.js';
@@ -562,6 +562,17 @@ export class Player {
     } else if (w.melee) {
       vm.rotation.y = 0;
     }
+
+    // ---- weapon mechanism ----
+    // Slide/bolt/pump cycle off the same kick impulse the viewmodel uses, and the
+    // magazine drops and reseats through the middle of a reload. Seeing the action
+    // work is what makes a shot feel mechanical instead of a sound with a flash.
+    const reloadK = this.reloading > 0 ? (w.reload - this.reloading) / w.reload : 0;
+    animateWeaponParts(
+      this.currentVM,
+      Math.min(1, this.kick * 1.6),
+      reloadK > 0.12 && reloadK < 0.62 ? Math.sin((reloadK - 0.12) / 0.5 * Math.PI) : 0,
+    );
 
     // update world proxy — leaning exposes ~70% of the offset to enemy fire
     const pp = this.world.playerProxy;

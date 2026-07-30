@@ -7,12 +7,17 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "assets": "npm run assets:tex && npm run assets:models",
+    "assets:tex": "node tools/textures/generate.mjs",
+    "assets:models": "node tools/blender/build.mjs",
+    "shot": "node tools/shot.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "puppeteer-core": "^23.11.1",
     "vite": "^6.0.0"
   }
 }

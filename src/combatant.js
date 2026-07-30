@@ -3,10 +3,12 @@ import { WEAPONS, buildHeldGun } from './weapons.js';
 import { fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH } from './combat.js';
 import { ITEM_TYPES } from './items.js';
 import { audio } from './audio.js';
+import { FighterRig } from './fighter-rig.js';
+import { surface } from './materials.js';
 
-const SKIN_TONES = [0xc9a17c, 0x8a5a3b, 0x6b4226, 0xd9b28c, 0x5a3a24];
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
+const _aimTmp = new THREE.Vector3();
 
 function nameTagSprite(name, color) {
   const c = document.createElement('canvas');
@@ -135,108 +137,106 @@ export class Combatant {
       if (this._poolFor(id) > 0 && WEAPONS[id].tier > bestTier) { bestTier = WEAPONS[id].tier; next = id; }
     }
     this.weaponId = next;
-    this.group.remove(this.gun);
+    this.rig.weaponSocket.remove(this.gun);
     this.gun = buildHeldGun(next);
-    this.gun.position.set(0.31, 0.9, -0.25);
-    this.group.add(this.gun);
+    this.rig.weaponSocket.add(this.gun);
+    this.rig.trigger('reload');       // swapping to a fed gun reads as working the weapon
     this.burstLeft = this._burstSize();
     this.cooldown = 0.5;
   }
 
   _buildBody() {
-    const g = new THREE.Group();
     const s = this.scale;
-    const skin = new THREE.MeshLambertMaterial({ color: SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0] });
-    const shirtMat = new THREE.MeshLambertMaterial({ color: this.shirt });
-    const pantsMat = new THREE.MeshLambertMaterial({ color: 0x24242c });
+    this.rig = new FighterRig({ uniformColor: this.shirt, scale: s });
+    this.rig.bindOwner(this);
+    this.group = this.rig.group;
 
-    const mk = (geoArgs, mat, part, x, y, z) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(...geoArgs), mat);
-      m.position.set(x, y, z);
-      m.castShadow = true;
-      m.userData = { combatant: this, part };
-      g.add(m);
-      return m;
-    };
+    const bone = (name) => this.rig.bones.get(name);
 
-    // torso (pivot center)
-    this.torso = mk([0.46, 0.58, 0.26], shirtMat, 'torso', 0, 1.14, 0);
-    if (this.armorParts.body > 0) {
-      const vest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.3), new THREE.MeshLambertMaterial({ color: 0x14161a }));
-      vest.position.set(0, 1.16, 0);
-      vest.userData = { combatant: this, part: 'torso' };
-      g.add(vest);
-      this.vest = vest;
-    }
-
-    // head
-    const headMat = this.boss ? new THREE.MeshLambertMaterial({ color: 0xd4af37 }) : skin;
-    this.head = mk([0.26, 0.28, 0.26], headMat, 'head', 0, 1.57, 0);
-    if (this.boss) {
-      const eye = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.05, 0.02), new THREE.MeshBasicMaterial({ color: 0xff2020 }));
-      eye.position.set(0, 1.6, 0.14);
-      g.add(eye);
-      this.bossEye = eye;
-    }
-
-    // limbs: geometry translated so pivot = top of limb
-    const limb = (w, h, d, mat, part, x, y) => {
-      const geo = new THREE.BoxGeometry(w, h, d);
-      geo.translate(0, -h / 2, 0);
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, 0);
-      m.castShadow = true;
-      m.userData = { combatant: this, part };
-      g.add(m);
-      return m;
-    };
-    this.armL = limb(0.14, 0.58, 0.14, shirtMat, 'armL', -0.31, 1.4);
-    this.armR = limb(0.14, 0.58, 0.14, shirtMat, 'armR', 0.31, 1.4);
-    this.legL = limb(0.17, 0.85, 0.17, pantsMat, 'legL', -0.12, 0.85);
-    this.legR = limb(0.17, 0.85, 0.17, pantsMat, 'legR', 0.12, 0.85);
-
-    // held gun on right arm
+    // Held weapon rides the authored hand socket, so a rifle and a knife both sit in
+    // the fist and follow every animation without a hand-tuned offset per clip.
     this.gun = buildHeldGun(this.weaponId);
-    this.gun.position.set(0.31, 0.9, -0.25);
-    g.add(this.gun);
+    this.rig.weaponSocket.add(this.gun);
 
-    // archetype dressing
+    // Extra armour reads as extra plate. The base fighter already wears a carrier;
+    // this is the visible difference between a rookie and a kitted veteran.
+    if (this.armorParts.body > 0) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.30, 0.10), surface('TD_steel_painted'));
+      // The chest bone's local +Z is forward (its roll pins local X to world X),
+      // so a positive Z offset puts the plate on the chest and a negative one hides
+      // it on his back.
+      plate.position.set(0, 0.07, 0.15);
+      plate.castShadow = true;
+      plate.userData = { combatant: this, part: 'torso' };
+      bone('chest')?.add(plate);
+      this.extraPlate = plate;
+    }
+    if (this.armorParts.head > 0) {
+      const lid = new THREE.Mesh(new THREE.SphereGeometry(0.145, 12, 7), surface('TD_steel_painted'));
+      lid.position.y = 0.11;
+      lid.scale.set(1, 0.85, 1.05);
+      lid.castShadow = true;
+      bone('head')?.add(lid);   // cosmetic: the rig's head box already covers it
+    }
+
+    // The boss's gold mask is a separate mesh on the head bone: the fighter atlas is
+    // shared by the whole cast, so tinting one head is not an option.
+    if (this.boss) {
+      const mask = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 8), surface('TD_gold'));
+      mask.position.set(0, 0.10, 0.01);
+      mask.scale.set(1, 0.95, 1.02);
+      mask.castShadow = true;
+      mask.userData = { combatant: this, part: 'head' };
+      bone('head')?.add(mask);
+      const eye = new THREE.Mesh(
+        new THREE.BoxGeometry(0.20, 0.035, 0.02),
+        new THREE.MeshStandardMaterial({ color: 0x2a0000, emissive: 0xff2020, emissiveIntensity: 3 }),
+      );
+      eye.position.set(0, 0.11, 0.14);
+      bone('head')?.add(eye);
+    }
+
+    // archetype dressing, parented to the bones it belongs on
     if (this.archetype === 'shield') {
-      const shield = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.07),
-        new THREE.MeshLambertMaterial({ color: 0x252c33 }));
-      shield.position.set(0, 1.05, 0.34);
+      const shield = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.25, 0.07), surface('TD_steel_painted'));
+      // On the support forearm, facing forward: the shield swings with the arm, so
+      // a shieldman who lowers his guard really does expose his chest.
+      shield.position.set(0, 0.16, -0.34);
+      shield.castShadow = true;
       shield.userData = { combatant: this, part: 'shield' };
-      g.add(shield);
+      bone('forearm_l')?.add(shield);
       this.shieldMesh = shield;
     } else if (this.archetype === 'medic') {
-      const cross = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.02),
-        new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      cross.position.set(0, 1.2, 0.15);
-      g.add(cross);
-      this.medCross = cross;
+      const cross = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.16, 0.02),
+        new THREE.MeshStandardMaterial({ color: 0xf2f2f2, emissive: 0xff4040, emissiveIntensity: 0.8 }),
+      );
+      cross.position.set(0.09, 0.06, 0.15);
+      bone('chest')?.add(cross);
     } else if (this.archetype === 'rusher') {
-      const band = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.28),
-        new THREE.MeshBasicMaterial({ color: 0xff5a1a }));
-      band.position.set(0, 1.62, 0);
-      g.add(band);
-      this.rushBand = band;
+      const band = new THREE.Mesh(
+        new THREE.BoxGeometry(0.29, 0.05, 0.29),
+        new THREE.MeshStandardMaterial({ color: 0x902a08, emissive: 0xff5a1a, emissiveIntensity: 1.6 }),
+      );
+      band.position.y = 0.135;
+      bone('head')?.add(band);
     }
 
     // name tag — crew only; giant red enemy labels made targets trivial to spot
     if (this.team === 'player') {
       this.tag = nameTagSprite(this.name, '#86ff3c');
-      this.tag.position.y = 1.95;
+      this.tag.position.y = 1.95 * s;
       this.tag.material.opacity = 0.55;
       this.tag.scale.multiplyScalar(0.75);
-      g.add(this.tag);
+      this.group.add(this.tag);
     } else {
       this.tag = { visible: false }; // stub so death code can hide it uniformly
     }
 
-    g.scale.setScalar(s);
-    this.group = g;
-    this.parts = [this.head, this.torso, this.armL, this.armR, this.legL, this.legR];
-    if (this.vest) this.parts.push(this.vest);
+    // Hitboxes are the rig's bone-parented proxies plus any prop that should eat
+    // shots in its own right.
+    this.parts = [...this.rig.hitboxes];
+    if (this.extraPlate) this.parts.push(this.extraPlate);
     if (this.shieldMesh) this.parts.push(this.shieldMesh); // the shield physically eats frontal shots
   }
 
@@ -282,7 +282,10 @@ export class Combatant {
     if (part === 'armL' || part === 'armR') this.armDmg = Math.min(1, this.armDmg + 0.4);
     if (part === 'legL' || part === 'legR') this.legDmg = Math.min(1, this.legDmg + 0.4);
 
-    if (part !== 'shield') world.fx.blood(point);
+    if (part !== 'shield') {
+      world.fx.blood(point);
+      if (this.hp > 0) this.rig.trigger('hit_react', part === 'head' ? 1 : 0.75);
+    }
     const camDist = point.distanceTo(world.cameraPos);
     if (camDist < 25 && part !== 'shield') audio.hitFlesh();
 
@@ -297,6 +300,14 @@ export class Combatant {
     this.alive = false;
     this.deathT = 0;
     this.tag.visible = false;
+    // Which authored collapse plays depends on where the shot came from, so a
+    // fighter shot in the back falls forward. Headshots skip the bracing entirely.
+    let fromFront = 1;
+    if (killer?.pos) {
+      const toKiller = _aimTmp.set(killer.pos.x - this.pos.x, 0, killer.pos.z - this.pos.z);
+      fromFront = toKiller.x * Math.sin(this.yaw) + toKiller.z * Math.cos(this.yaw);
+    }
+    this.rig.die(fromFront, part === 'head');
     if (this.laser) this.laser.visible = false;
     if (this.bountyMarker) { this.group.remove(this.bountyMarker); this.bountyMarker = null; }
     this.bountyRevealed = false;
@@ -316,23 +327,24 @@ export class Combatant {
 
   update(world, dt) {
     if (!this.alive) {
-      // death fall + fade
+      // The collapse is an authored clip now, so all this has to do is keep the mixer
+      // running, drop the blood pool once the body is down, and fade the corpse out.
       this.deathT += dt;
-      if (this.deathT < 0.4) {
-        const t = this.deathT / 0.4;
-        this.group.rotation.x = -Math.PI / 2 * t * (this.fallFwd ?? (this.fallFwd = Math.random() < 0.5 ? 1 : -1));
-        this.group.position.y = this.pos.y + 0.1 * Math.sin(t * Math.PI);
-      }
-      if (this.deathT > 0.5 && !this.pooled) {
+      this.rig.update(dt);
+      if (this.deathT > 1.1 && !this.pooled) {
         this.pooled = true;
         world.fx.bloodPool(this.pos);
       }
       if (this.deathT > 6) {
+        if (!this.fadingOwn) {
+          // Fighter materials are shared across the cast; fading has to happen on
+          // private copies or one corpse takes every fighter with it.
+          this.fadingOwn = true;
+          this.rig.privatizeMaterials();
+        }
         this.fadeT += dt;
         const op = Math.max(0, 1 - this.fadeT / 1.5);
-        this.group.traverse(o => {
-          if (o.material && !o.isSprite) { o.material.transparent = true; o.material.opacity = op; }
-        });
+        this.rig.setOpacity(op);
         if (op <= 0) this.group.visible = false;
       }
       return;
@@ -504,6 +516,7 @@ export class Combatant {
           const nd = Math.hypot(ndx, ndz) || 1;
           const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
           const jit = () => 1 + (Math.random() - 0.5) * 0.14;
+          this.rig.trigger('throw');
           world.throwGrenade(this.eyePos(), new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
         } else {
           this.nadeCd = 2; // re-evaluate shortly
@@ -666,6 +679,7 @@ export class Combatant {
         const camDist = fireEye.distanceTo(world.cameraPos);
         audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
         world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7));
+        this.rig.trigger('fire');
 
         this.shotsFired = (this.shotsFired || 0) + 1;
         const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
@@ -785,12 +799,17 @@ export class Combatant {
         if (!chosen) chosen = rot(move, 2.6 * (this.avoidSide || 1));
       }
       const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1) * (this.sprintNow ? 1.45 : 1);
+      const px = this.pos.x, pz = this.pos.z;
       this.pos.addScaledVector(chosen, spd * dt);
       resolveCircle(this.pos, this.radius, world.colliders, this.pos.y);
+      // Speed *actually achieved*, not speed intended: a fighter grinding along a wall
+      // should not play a full-speed run cycle on the spot.
+      this.currentSpeed = dt > 0 ? Math.hypot(this.pos.x - px, this.pos.z - pz) / dt : 0;
       moving = true;
       this.animPhase += dt * spd * 2.6;
       this.moveAmount = Math.min(1, this.moveAmount + dt * 6);
     } else {
+      this.currentSpeed = 0;
       this.moveAmount = Math.max(0, this.moveAmount - dt * 6);
     }
 
@@ -804,12 +823,11 @@ export class Combatant {
     if (Math.abs(gY - this.pos.y) < 0.02) this.pos.y = gY;
 
     // ---- pose ----
-    // articulated crouch: torso/head sink, hips drop, legs fold — a real squat,
-    // and the hitboxes (same meshes) follow the pose
+    // crouchK stays the gameplay value that eyePos/aimPoint and the hit model read;
+    // the visible squat comes from the authored crouch clips, which are keyed to
+    // roughly the same head height.
     const wantCrouch = this.healingT > 0 || this.mendT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
-    const drop = (1 - this.crouchK) * 1.55;
-    const legBend = Math.acos(Math.max(0.2, Math.min(1, (0.85 - drop) / 0.85)));
     // peeking leans harder than plain strafing. Sign: positive rotation.z tilts the
     // head toward local −X, which is exactly where the peek eye offsets for side=+1.
     const leanTarget = this.peekSide ? this.peekSide * 0.26 : (this._strafing ? this.strafeDir * 0.09 : 0);
@@ -819,29 +837,27 @@ export class Combatant {
     this.group.rotation.y = this.yaw;
     this.group.rotation.z = this.leanK;
 
-    this.torso.position.y = 1.14 - drop;
-    if (this.vest) this.vest.position.y = 1.16 - drop;
-    this.head.position.y = 1.57 - drop;
-    if (this.bossEye) this.bossEye.position.y = 1.6 - drop;
-    this.armL.position.y = 1.4 - drop;
-    this.armR.position.y = 1.4 - drop;
-    this.legL.position.y = 0.85 - drop;
-    this.legR.position.y = 0.85 - drop;
-    if (this.shieldMesh) this.shieldMesh.position.y = 1.05 - drop;
-    if (this.medCross) this.medCross.position.y = 1.2 - drop;
-    if (this.rushBand) this.rushBand.position.y = 1.62 - drop;
+    // ---- drive the animation rig ----
+    // A limping fighter's clip slows with him, because setStance scales playback by
+    // real speed — the leg wound is visible in the walk, not just in the numbers.
+    this.rig.setStance(this.currentSpeed || 0, this.crouchK < 0.9);
+    // Weapon comes up when there is something to shoot and he is not sprinting.
+    this.rig.setAimWeight(this.target && !this.sprintNow ? 1 : 0);
+    if (this.target) {
+      const tp = this.target.isPlayer
+        ? _aimTmp.set(this.target.pos.x, this.target.pos.y + 1.25, this.target.pos.z)
+        : this.target.aimPoint(_aimTmp);
+      const flat = Math.hypot(tp.x - this.pos.x, tp.z - this.pos.z);
+      this.rig.setAimPitch(Math.atan2(tp.y - (this.pos.y + 1.35 * this.scale), Math.max(0.4, flat)));
+    } else {
+      this.rig.setAimPitch(0);
+    }
+    // Bandaging is a sustained additive clip; start it once on the rising edge.
+    const patching = this.healingT > 0 || this.mendT > 0;
+    if (patching && !this._patchAnim) { this.rig.trigger('heal'); this._patchAnim = true; }
+    else if (!patching && this._patchAnim) { this.rig.stop('heal'); this._patchAnim = false; }
 
-    const sw = Math.sin(this.animPhase) * 0.55 * this.moveAmount * (this.crouchK < 0.9 ? 0.5 : 1);
-    const limp = this.legDmg > 0.3;
-    this.legL.rotation.x = sw * (limp ? 0.4 : 1) + legBend;
-    this.legR.rotation.x = -sw - legBend * 0.85;
-    this.armL.rotation.x = -sw * 0.7;
-    // right arm holds gun raised toward target (slung while sprinting)
-    const gunUp = this.target && !this.sprintNow;
-    this.armR.rotation.x = gunUp ? -1.25 : -sw * 0.7;
-    this.gun.visible = true;
-    this.gun.position.set(0.31, (gunUp ? 1.35 : 0.9) - drop, gunUp ? -0.35 : -0.25);
-    this.gun.rotation.x = gunUp ? -0.06 : 0.3;
+    this.rig.update(dt);
   }
 
   // would moving 0.9m in (dx,dz) walk us off a >0.8m ledge?
@@ -879,6 +895,7 @@ export class Combatant {
 
   removeFrom(world) {
     if (this.laser) world.scene.remove(this.laser);
+    this.rig.dispose();
     world.scene.remove(this.group);
     world.hitMeshes = world.hitMeshes.filter(m => m.userData.combatant !== this);
     const i = world.combatants.indexOf(this);

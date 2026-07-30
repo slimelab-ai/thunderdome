@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { bindAuthoredMaterials } from './materials.js';
 
 // dmg = per bullet torso damage. spread in degrees (hipfire base).
 export const WEAPONS = {
@@ -50,113 +52,109 @@ WEAPONS.knife = {
 
 export const WEAPON_ORDER = ['pistol', 'smg', 'shotgun', 'rifle', 'dmr'];
 
-const BASE_MATS = {
-  metal: new THREE.MeshLambertMaterial({ color: 0x53535e }),
-  metalDark: new THREE.MeshLambertMaterial({ color: 0x35353d }),
-  wood: new THREE.MeshLambertMaterial({ color: 0x6b4a32 }),
-  grip: new THREE.MeshLambertMaterial({ color: 0x3d3d46 }),
-  accent: new THREE.MeshLambertMaterial({ color: 0x5a616c }),
+// ---------------------------------------------------------------- models
+//
+// Weapons are authored assets (tools/blender/weapons.py), loaded once and cloned.
+// Barrel along -Z, origin at the grip — the same convention as the fighter's hand
+// socket, so a gun attaches identically in the world and in first person.
+
+const MUZZLE = {
+  // Barrel tip per weapon, in model space. Tracers and muzzle flash spawn here, so
+  // these have to match the authored geometry; they come straight off the barrel
+  // lengths in weapons.py.
+  pistol: [0, 0.035, -0.19],
+  smg: [0, 0.032, -0.43],
+  shotgun: [0, 0.045, -0.66],
+  rifle: [0, 0.038, -0.58],
+  dmr: [0, 0.040, -0.71],
+  knife: [0, 0.010, -0.28],
 };
 
-// Every gun gets its own material instances. Corpse fade-out mutates material opacity,
-// so sharing materials between guns would fade every gun in the arena (including the
-// player's viewmodel) each time someone died.
-function freshMats() {
-  const out = {};
-  for (const [k, v] of Object.entries(BASE_MATS)) out[k] = v.clone();
-  return out;
+// How far each moving part travels when the weapon is worked, in metres along -Z
+// (rearward). A cycling slide is the cheapest thing that makes a gun read as a
+// mechanism rather than a prop.
+const CYCLE_TRAVEL = { slide: 0.035, bolt: 0.045, pump: 0.075 };
+
+const weaponAssets = new Map();
+let weaponLoad = null;
+
+export function preloadWeapons() {
+  if (!weaponLoad) {
+    const loader = new GLTFLoader();
+    weaponLoad = Promise.all(Object.keys(MUZZLE).map((id) => loader
+      .loadAsync(`/assets/models/${id}.glb`)
+      .then((gltf) => {
+        bindAuthoredMaterials(gltf.scene);
+        weaponAssets.set(id, gltf.scene);
+      })
+      .catch((err) => console.error(`[weapons] could not load ${id}`, err))));
+  }
+  return weaponLoad;
 }
 
-function box(w, h, d, mat, x = 0, y = 0, z = 0) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  return m;
-}
-function cyl(r, len, mat, x = 0, y = 0, z = 0) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8), mat);
-  m.rotation.x = Math.PI / 2;
-  m.position.set(x, y, z);
-  return m;
-}
-
-// Viewmodels: gun pointing down -Z, origin roughly at grip. Returns {group, muzzle}.
-export function buildViewmodel(id) {
-  const M = freshMats();
-  const g = new THREE.Group();
+/**
+ * Instance a weapon.
+ *
+ * Returns immediately with an empty group if the asset has not landed yet and fills
+ * it in on arrival, so callers stay synchronous — a fighter can be constructed
+ * before the weapon pack has finished streaming.
+ */
+export function buildWeaponModel(id) {
+  const group = new THREE.Group();
   const muzzle = new THREE.Object3D();
+  muzzle.position.fromArray(MUZZLE[id] || MUZZLE.pistol);
+  group.add(muzzle);
+  const parts = {};
 
-  if (id === 'pistol') {
-    g.add(box(0.045, 0.07, 0.24, M.metal, 0, 0.035, -0.06));       // slide
-    g.add(box(0.04, 0.055, 0.2, M.metalDark, 0, -0.01, -0.04));    // frame
-    g.add(box(0.042, 0.11, 0.055, M.grip, 0, -0.075, 0.045));      // grip
-    g.add(cyl(0.011, 0.05, M.metalDark, 0, 0.04, -0.2));           // barrel tip
-    muzzle.position.set(0, 0.04, -0.23);
-  } else if (id === 'smg') {
-    g.add(box(0.05, 0.08, 0.34, M.metal, 0, 0.03, -0.1));
-    g.add(box(0.045, 0.16, 0.05, M.metalDark, 0, -0.08, -0.12));   // mag
-    g.add(box(0.042, 0.1, 0.055, M.grip, 0, -0.07, 0.05));
-    g.add(cyl(0.013, 0.12, M.metalDark, 0, 0.045, -0.32));
-    g.add(box(0.03, 0.04, 0.16, M.accent, 0, 0.0, 0.16));          // folded stock
-    muzzle.position.set(0, 0.045, -0.39);
-  } else if (id === 'shotgun') {
-    g.add(cyl(0.02, 0.5, M.metal, 0, 0.05, -0.2));                 // barrel
-    g.add(cyl(0.018, 0.34, M.metalDark, 0, 0.005, -0.24));         // tube
-    g.add(box(0.05, 0.05, 0.14, M.wood, 0, 0.005, -0.28));         // pump
-    g.add(box(0.05, 0.08, 0.16, M.metal, 0, 0.03, 0.03));          // receiver
-    g.add(box(0.05, 0.09, 0.2, M.wood, 0, -0.02, 0.16));           // stock
-    muzzle.position.set(0, 0.05, -0.46);
-  } else if (id === 'rifle') {
-    g.add(box(0.05, 0.075, 0.32, M.metal, 0, 0.03, -0.02));        // receiver
-    g.add(cyl(0.013, 0.3, M.metalDark, 0, 0.045, -0.32));          // barrel
-    g.add(box(0.045, 0.06, 0.16, M.wood, 0, 0.008, -0.24));        // handguard
-    const mag = box(0.045, 0.15, 0.06, M.metalDark, 0, -0.075, -0.06); // curved mag (approx)
-    mag.rotation.x = 0.25;
-    g.add(mag);
-    g.add(box(0.042, 0.1, 0.055, M.grip, 0, -0.065, 0.08));
-    g.add(box(0.045, 0.08, 0.22, M.wood, 0, 0.0, 0.24));           // stock
-    muzzle.position.set(0, 0.045, -0.48);
-  } else if (id === 'knife') {
-    // big bright blade, edge-forward, angled across the view — unmistakably a knife
-    const bladeMat = new THREE.MeshLambertMaterial({ color: 0xb8bcc4, emissive: 0x14161a });
-    const blade = box(0.016, 0.07, 0.34, bladeMat, 0, 0.05, -0.2);
-    blade.rotation.z = 0.5;
-    g.add(blade);
-    const tip = box(0.016, 0.045, 0.09, bladeMat, 0.012, 0.075, -0.39);
-    tip.rotation.z = 0.5;
-    tip.rotation.y = 0.18;
-    g.add(tip);
-    const guard = box(0.09, 0.028, 0.035, M.accent, 0, 0.005, -0.02);
-    guard.rotation.z = 0.5;
-    g.add(guard);
-    const handle = box(0.036, 0.05, 0.14, M.grip, -0.012, -0.025, 0.05);
-    handle.rotation.z = 0.5;
-    g.add(handle);
-    muzzle.position.set(0, 0.06, -0.42);
-  } else if (id === 'dmr') {
-    g.add(box(0.05, 0.08, 0.4, M.metal, 0, 0.03, -0.06));
-    g.add(cyl(0.012, 0.4, M.metalDark, 0, 0.05, -0.45));
-    g.add(cyl(0.028, 0.14, M.metalDark, 0, 0.1, 0.0));             // scope
-    g.add(box(0.045, 0.12, 0.05, M.metalDark, 0, -0.06, -0.1));    // mag
-    g.add(box(0.042, 0.1, 0.055, M.grip, 0, -0.065, 0.08));
-    g.add(box(0.05, 0.09, 0.26, M.grip, 0, -0.005, 0.26));         // stock
-    muzzle.position.set(0, 0.05, -0.66);
-  }
+  const install = (source) => {
+    const model = source.clone(true);
+    model.traverse((child) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      // Moving parts keep their authored names so the runtime can find them.
+      if (CYCLE_TRAVEL[child.name] !== undefined || child.name === 'mag') {
+        parts[child.name] = child;
+        child.userData.restZ = child.position.z;
+      }
+    });
+    group.add(model);
+  };
 
-  g.add(muzzle);
-  return { group: g, muzzle };
+  const asset = weaponAssets.get(id);
+  if (asset) install(asset);
+  else preloadWeapons().then(() => { const a = weaponAssets.get(id); if (a) install(a); });
+
+  return { group, muzzle, parts };
 }
 
-// Small held-gun models for AI combatants (simpler, held in right hand area)
-export function buildHeldGun(id) {
-  const M = freshMats();
-  const g = new THREE.Group();
-  if (id === 'knife') {
-    g.add(box(0.015, 0.04, 0.28, M.metal, 0, 0, -0.1));
-    g.add(box(0.03, 0.05, 0.09, M.grip, 0, 0, 0.08));
-    return g;
+/**
+ * Drive a weapon's moving parts.
+ *
+ * `cycle` is 0..1: 0 is at rest, 1 is fully rearward. `magDrop` is 0..1 and pulls the
+ * magazine out of the well for reloads.
+ */
+export function animateWeaponParts(model, cycle, magDrop = 0) {
+  if (!model?.parts) return;
+  for (const [name, travel] of Object.entries(CYCLE_TRAVEL)) {
+    const part = model.parts[name];
+    if (part) part.position.z = part.userData.restZ - travel * cycle;
   }
-  const len = { pistol: 0.22, smg: 0.35, shotgun: 0.6, rifle: 0.6, dmr: 0.75 }[id] || 0.3;
-  g.add(box(0.05, 0.09, len, M.metalDark, 0, 0, -len * 0.3));
-  if (id !== 'pistol') g.add(box(0.04, 0.12, 0.05, M.metal, 0, -0.08, -len * 0.15));
-  return g;
+  const mag = model.parts.mag;
+  if (mag) {
+    mag.position.y = (mag.userData.restY ??= mag.position.y) - magDrop * 0.16;
+    mag.visible = magDrop < 0.98;
+  }
+}
+
+/**
+ * First-person viewmodel. Same authored mesh as the world model — a rifle is a
+ * rifle — with the muzzle socket the player's ballistics read for tracer origin.
+ */
+export function buildViewmodel(id) {
+  return buildWeaponModel(id);
+}
+
+/** World model, held in a fighter's hand socket. */
+export function buildHeldGun(id) {
+  return buildWeaponModel(id).group;
 }
