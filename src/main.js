@@ -29,7 +29,7 @@ import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
   resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
-  recordMarketRound, recordMarketTrade, commitPlayerDraftTurn,
+  recordMarketRound, recordMarketTrade, commitPlayerDraftTurn, liquidationRivalStake,
 } from './liquidation.js';
 import {
   PLAYER_TYPE, HIRE_TYPES, createProgression, normalizeProgression, buyTraining,
@@ -742,7 +742,12 @@ function startMatch() {
   if (liquidation) {
     career.bet = Math.max(250, career.bet || 0);
     match.betOdds = liquidationOdds(career.liquidation, career.money);
-    match.enemyBet = career.bet;
+    match.enemyBetDecision = liquidationRivalStake(career.liquidation, {
+      opponentPower: playerSquadReadinessPower(),
+      expectedStake: 250,
+    });
+    match.enemyBet = match.enemyBetDecision.amount;
+    match.enemyBetOdds = liquidationOdds({ enemyMoney: career.money }, career.liquidation.enemyMoney);
     career.money -= career.bet;
     career.liquidation.enemyMoney -= match.enemyBet;
   } else if (career.bet > 0) career.money -= career.bet;
@@ -1298,6 +1303,7 @@ function finishMatch() {
   if (career.bet > 0) {
     if (match.mode === 'liquidation') {
       const winnings = Math.round(career.bet * match.betOdds);
+      const enemyWinnings = Math.round(match.enemyBet * match.enemyBetOdds);
       const outcome = recordLiquidationOutcome(career.liquidation, match.won);
       if (match.won) {
         career.money += winnings;
@@ -1305,7 +1311,7 @@ function finishMatch() {
         career.liquidation.playerWins++;
         career.liquidation.enemyMoney -= outcome.penalty;
       } else {
-        career.liquidation.enemyMoney += career.bet + match.enemyBet;
+        career.liquidation.enemyMoney += enemyWinnings;
         career.liquidation.enemyWins++;
         career.money -= outcome.penalty;
       }
@@ -1320,7 +1326,10 @@ function finishMatch() {
         lifecycle_sequence: 3,
         won: match.won,
         stake: career.bet,
+        rival_stake: match.enemyBet,
+        rival_stake_decision: match.enemyBetDecision,
         winnings: match.won ? winnings : 0,
+        rival_winnings: match.won ? 0 : enemyWinnings,
         loser: outcome.loser,
         loss_streak: outcome.streak,
         streak_penalty: outcome.penalty,

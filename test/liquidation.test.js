@@ -8,6 +8,7 @@ import {
   recordLiquidationOutcome, liquidationRiskModel, liquidationReserveTarget,
   resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
+  liquidationRivalStake,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -242,6 +243,15 @@ test('underdog sees comeback odds and can raise the stake', () => {
   state.draft.complete = true;
   assert.equal(liquidationCreditLimit(state, 100), 250);
   assert.equal(canPlaceLiquidationBet(state, 100, 4000), false);
+});
+
+test('rival chooses its own conservative stake instead of mirroring player leverage', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 2000;
+  state.draft.fundedRounds = 1;
+  const decision = liquidationRivalStake(state, { opponentPower: 100, expectedStake: 250 });
+  assert.equal(decision.amount, 250);
+  assert.ok(decision.amount < 4000);
 });
 
 test('consecutive defeats escalate until the next envelope cannot rescue a broke squad', () => {

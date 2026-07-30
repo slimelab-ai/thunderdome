@@ -229,6 +229,16 @@ export function liquidationReserveTarget(state, playerSignals = {}) {
   return liquidationRiskModel(state, playerSignals).reserveTarget;
 }
 
+export function liquidationRivalStake(state, playerSignals = {}) {
+  const risk = liquidationRiskModel(state, playerSignals);
+  const riskable = Math.max(0, state.enemyMoney - risk.reserveTarget);
+  const pressure = risk.confidence >= 0.68 ? 0.15 : risk.confidence >= 0.56 ? 0.1 : 0;
+  const amount = pressure > 0
+    ? Math.max(250, Math.floor(Math.min(riskable, state.enemyMoney * pressure) / 50) * 50)
+    : 250;
+  return { amount, riskable: Math.round(riskable), confidence: risk.confidence, reserveTarget: risk.reserveTarget };
+}
+
 const STRATEGIES = {
   swarm: {
     guns: ['smg', 'pistol'], ammo: ['ammo_9mm'], armor: ['vest1', 'pads1'],
