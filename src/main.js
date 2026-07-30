@@ -633,7 +633,7 @@ function startMatch() {
   const liquidation = career.mode === 'liquidation';
   world.onDamage = (shooter, victim, amount) => {
     handleXpDamage(shooter, victim, amount);
-    if (liquidation) emitCareerEvent('combat_damage', {
+    emitCareerEvent('combat_damage', {
       time: +match.time.toFixed(3),
       shooter: shooter?.isPlayer ? 'YOU' : shooter?.name,
       shooter_team: shooter?.team,
@@ -646,14 +646,14 @@ function startMatch() {
   };
   world.onSupport = (supporter, amount) => {
     handleXpSupport(supporter, amount);
-    if (liquidation) emitCareerEvent('combat_support', {
+    emitCareerEvent('combat_support', {
       time: +match.time.toFixed(3),
       supporter: supporter?.name,
       supporter_team: supporter?.team,
       amount: +amount.toFixed(2),
     });
   };
-  world.onCombatEvent = liquidation ? (type, fighter, detail) => emitCareerEvent(`combat_${type}`, {
+  world.onCombatEvent = (type, fighter, detail) => emitCareerEvent(`combat_${type}`, {
     time: +match.time.toFixed(3),
     fighter: fighter?.isPlayer ? 'YOU' : fighter?.name,
     fighter_team: fighter?.team,
@@ -661,7 +661,7 @@ function startMatch() {
       ? [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2))
       : null,
     ...detail,
-  }) : null;
+  });
   const squad = liquidation
     ? { name: 'THE RIVAL SYNDICATE', shirt: 0x5b2434, roster: enemyRoster(career.liquidation) }
     : SQUADS[career.rank];
@@ -958,7 +958,7 @@ function handlePlayerDamaged(dmg, part, fromPos, shooter = null, range = null) {
   if (!player.alive) return;
   const hpBefore = player.hp;
   player.takeDamage(dmg, part, fromPos);
-  if (career.mode === 'liquidation') emitCareerEvent('combat_damage', {
+  emitCareerEvent('combat_damage', {
     time: +match.time.toFixed(3),
     shooter: shooter?.name || null,
     shooter_team: shooter?.team || 'enemy',
