@@ -9,6 +9,7 @@ import { WEAPONS, preloadWeapons } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
+import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady } from './fighter-rig.js';
 import { preloadViewmodel } from './viewmodel.js';
 import {
@@ -38,6 +39,9 @@ import {
   CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP, deployedCrewCount,
   normalizeCrewDeployment, shouldBenchNewHire,
 } from './roster.js';
+import {
+  orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
+} from './squad-auto.js';
 
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
@@ -114,6 +118,7 @@ const world = {
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
+const spectatorCamera = new SpectatorCamera(camera, arena.colliders);
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
 const touchMode = isTouchDevice();
@@ -755,6 +760,7 @@ function cycleSpectator(direction = 1) {
   const current = alive.indexOf(match.spectatorTarget);
   const next = current < 0 ? 0 : (current + direction + alive.length) % alive.length;
   match.spectatorTarget = alive[next];
+  spectatorCamera.reset();
   ui.showSpectator(match.spectatorTarget.name, next, alive.length);
 }
 
@@ -1421,6 +1427,123 @@ function crewPatchCost(m) {
   return Math.round((missing * 1.6 + limbs) * medMult());
 }
 
+function shopSquad() {
+  return orderedSquad(career);
+}
+
+function autoQuote(type, quantity) {
+  return market.quoteBuySeries(type, quantity, priceMult());
+}
+
+function autoShopPlans() {
+  const fighters = shopSquad();
+  return {
+    heal: planSquadHealing(fighters.map(fighter => ({
+      ...fighter,
+      cost: fighter.who === 'player' ? playerPatchCost() : crewPatchCost(fighter.member),
+    })), career.money),
+    upgrade: planSquadTraining(fighters.map(fighter => ({
+      ...fighter,
+      type: fighter.who === 'player' ? PLAYER_TYPE : fighter.member.type,
+      progress: fighter.who === 'player' ? career.playerProgress : fighter.member.progress,
+    }))),
+    ammo: planSquadAmmo(fighters, career.money, autoQuote),
+  };
+}
+
+function applyPatchPayment(who, pay, cost) {
+  if (pay <= 0 || cost <= 0) return false;
+  const f = pay / cost;
+  if (who === 'player') {
+    if (f >= 0.999) {
+      career.playerHp = null;
+      career.playerLimbs = { arm: 0, leg: 0 };
+    } else {
+      const max = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
+      const cur = career.playerHp == null ? max : career.playerHp;
+      career.playerHp = Math.min(max, Math.round(cur + (max - cur) * f));
+      career.playerLimbs.arm = +(career.playerLimbs.arm * (1 - f)).toFixed(2);
+      career.playerLimbs.leg = +(career.playerLimbs.leg * (1 - f)).toFixed(2);
+    }
+  } else {
+    const member = career.crew[who];
+    if (!member) return false;
+    if (f >= 0.999) {
+      member.hp = null;
+      member.limbs = { arm: 0, leg: 0 };
+    } else {
+      const max = combatProfile(member.type, member.progress).maxHp;
+      const cur = member.hp == null ? max : member.hp;
+      member.hp = Math.min(max, Math.round(cur + (max - cur) * f));
+      member.limbs.arm = +((member.limbs.arm || 0) * (1 - f)).toFixed(2);
+      member.limbs.leg = +((member.limbs.leg || 0) * (1 - f)).toFixed(2);
+    }
+  }
+  career.money -= pay;
+  if (career.mode === 'liquidation') emitCareerEvent('liquidation_patch', {
+    target: who === 'player' ? 'player' : career.crew[who]?.name,
+    cost: pay,
+    state: careerSnapshot(),
+  });
+  return true;
+}
+
+function executeAutoHeal(earnings) {
+  if (draftShopState().locked) return;
+  const plan = autoShopPlans().heal;
+  let changed = false;
+  for (const step of plan.steps) changed = applyPatchPayment(step.who, step.pay, step.cost) || changed;
+  if (!changed) return;
+  audio.cashRegister();
+  save();
+  renderShop(earnings);
+}
+
+function executeAutoTraining(earnings) {
+  if (draftShopState().locked) return;
+  const plan = autoShopPlans().upgrade;
+  let changed = false;
+  for (const upgrade of plan.upgrades) {
+    const isPlayer = upgrade.who === 'player';
+    const member = isPlayer ? null : career.crew[upgrade.who];
+    const progress = isPlayer ? career.playerProgress : member?.progress;
+    const type = isPlayer ? PLAYER_TYPE : member?.type;
+    if (!progress || !buyTraining(progress, type, upgrade.skillId)) continue;
+    if (career.mode === 'liquidation') emitCareerEvent('liquidation_training', {
+      target: isPlayer ? 'YOU' : member.name,
+      skill_id: upgrade.skillId,
+      state: careerSnapshot(),
+    });
+    changed = true;
+  }
+  if (!changed) return;
+  audio.cashRegister();
+  save();
+  renderShop(earnings);
+}
+
+function executeAutoAmmo(earnings) {
+  if (draftShopState().locked) return;
+  const plan = autoShopPlans().ammo;
+  let changed = false;
+  for (const purchase of plan.purchases) {
+    const cost = market.quoteBuy(purchase.type, 1, priceMult());
+    if (!Number.isFinite(cost) || cost > career.money) break;
+    const fighter = shopSquad().find(entry => String(entry.who) === String(purchase.who));
+    if (!fighter) continue;
+    const item = makeItem(purchase.type);
+    if (!autoPlace(fighter.ch.pack, item)) break;
+    market.buy(purchase.type);
+    career.money -= cost;
+    if (career.mode === 'liquidation') recordPlayerMarket('buy', purchase.type, cost);
+    changed = true;
+  }
+  if (!changed) return;
+  audio.cashRegister();
+  save();
+  renderShop(earnings);
+}
+
 // ---- inventory plumbing for the shop UI ----
 const getChar = (who) => who === 'player' ? career.playerCh : career.crew[who]?.ch;
 
@@ -1623,6 +1746,10 @@ function renderShop(earnings) {
     recruitPrice: (type) => market.quoteRecruit(type),
     recruitMarketInfo: (type) => market.recruitInfo(type),
     releaseValue: (type) => market.quoteReleaseRecruit(type),
+    autoPlans: autoShopPlans,
+    autoHeal: () => executeAutoHeal(earnings),
+    autoUpgrade: () => executeAutoTraining(earnings),
+    autoAmmo: () => executeAutoAmmo(earnings),
     draftShopState,
     endDraftTurn: () => {
       if (commitPlayerDraftTurn(career.liquidation, runRivalDraftShop)) {
@@ -1657,23 +1784,7 @@ function renderShop(earnings) {
       if (draftShopState().locked) return;
       const cost = playerPatchCost();
       const pay = Math.min(cost, career.money);
-      if (cost <= 0 || pay <= 0) return;
-      career.money -= pay;
-      const f = pay / cost;
-      if (f >= 0.999) {
-        career.playerHp = null;
-        career.playerLimbs = { arm: 0, leg: 0 };
-      } else {
-        // broke? the doc does what the money covers
-        const max = combatProfile(PLAYER_TYPE, career.playerProgress, true).maxHp;
-        const cur = career.playerHp == null ? max : career.playerHp;
-        career.playerHp = Math.min(max, Math.round(cur + (max - cur) * f));
-        career.playerLimbs.arm = +(career.playerLimbs.arm * (1 - f)).toFixed(2);
-        career.playerLimbs.leg = +(career.playerLimbs.leg * (1 - f)).toFixed(2);
-      }
-      if (career.mode === 'liquidation') emitCareerEvent('liquidation_patch', {
-        target: 'player', cost: pay, state: careerSnapshot(),
-      });
+      if (!applyPatchPayment('player', pay, cost)) return;
       audio.cashRegister(); save(); renderShop(earnings);
     },
     patchCrew: (idx) => {
@@ -1681,22 +1792,7 @@ function renderShop(earnings) {
       const m = career.crew[idx];
       const cost = crewPatchCost(m);
       const pay = Math.min(cost, career.money);
-      if (!m || cost <= 0 || pay <= 0) return;
-      career.money -= pay;
-      const f = pay / cost;
-      if (f >= 0.999) {
-        m.hp = null;
-        m.limbs = { arm: 0, leg: 0 };
-      } else {
-        const max = combatProfile(m.type, m.progress).maxHp;
-        const cur = m.hp == null ? max : m.hp;
-        m.hp = Math.min(max, Math.round(cur + (max - cur) * f));
-        m.limbs.arm = +((m.limbs.arm || 0) * (1 - f)).toFixed(2);
-        m.limbs.leg = +((m.limbs.leg || 0) * (1 - f)).toFixed(2);
-      }
-      if (career.mode === 'liquidation') emitCareerEvent('liquidation_patch', {
-        target: m.name, cost: pay, state: careerSnapshot(),
-      });
+      if (!m || !applyPatchPayment(idx, pay, cost)) return;
       audio.cashRegister(); save(); renderShop(earnings);
     },
     sellCrew: (idx) => {
@@ -1841,6 +1937,11 @@ document.addEventListener('keydown', (e) => {
       return;
     }
     player.onKey(e.code, true);
+  } else if (phase === 'shop' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey &&
+             (e.code === 'KeyA' || e.code === 'KeyD') &&
+             !e.target?.matches?.('input, textarea, select')) {
+    e.preventDefault();
+    ui.cycleShopCharacter(e.code === 'KeyD' ? 1 : -1);
   }
 });
 document.addEventListener('keyup', (e) => {
@@ -1990,23 +2091,11 @@ camera.lookAt(0, 1, 0);
 const clock = new THREE.Clock();
 
 const _aimTmp = new THREE.Vector3();
-const _spectatorPos = new THREE.Vector3();
-const _spectatorLook = new THREE.Vector3();
-
 function updateSpectatorCamera(dt) {
   if (!match.spectatorTarget?.alive) cycleSpectator(1);
   const target = match.spectatorTarget;
   if (!target) return;
-  const forwardX = Math.sin(target.yaw);
-  const forwardZ = Math.cos(target.yaw);
-  _spectatorPos.set(
-    target.pos.x - forwardX * 3.8,
-    target.pos.y + 2.5,
-    target.pos.z - forwardZ * 3.8,
-  );
-  camera.position.lerp(_spectatorPos, 1 - Math.exp(-dt * 7));
-  _spectatorLook.set(target.pos.x + forwardX * 2, target.pos.y + 1.25, target.pos.z + forwardZ * 2);
-  camera.lookAt(_spectatorLook);
+  spectatorCamera.follow(target, dt);
   const alive = livingCrew();
   ui.showSpectator(target.name, Math.max(0, alive.indexOf(target)), alive.length);
 }

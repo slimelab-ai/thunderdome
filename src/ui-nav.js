@@ -5,6 +5,7 @@ const NAV_SCOPE_SELECTOR = '[data-shop-panel], [data-controller-panel]';
 const IDENTITY_ATTRIBUTES = [
   'data-char', 'data-buy-item', 'data-buy-to', 'data-hire-menu', 'data-patch',
   'data-bench', 'data-train', 'data-sell-crew', 'data-hire', 'data-controller-market-row',
+  'data-auto-squad',
 ];
 
 export function controlIdentity(el) {

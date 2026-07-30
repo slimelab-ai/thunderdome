@@ -7,6 +7,7 @@ import {
   PLAYER_TYPE, HIRE_TYPES, trainingTrees, trainingCost, combatProfile,
 } from './progression.js';
 import { CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP } from './roster.js';
+import { nextShopCharacter } from './squad-auto.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -88,6 +89,17 @@ export class UI {
   hideSpectator() {
     this.el.hud.classList.remove('spectating');
     this.el.spectator.classList.add('hidden');
+  }
+
+  cycleShopCharacter(direction = 1) {
+    if (this.screens.shop.classList.contains('hidden') || this.hireOpen) return false;
+    const tabs = [...document.querySelectorAll('#char-tabs [data-char]')].filter(tab => !tab.disabled);
+    const selection = tabs.map(tab => tab.getAttribute('data-char'));
+    const next = nextShopCharacter(selection, this.selChar, direction);
+    const target = tabs.find(tab => String(tab.getAttribute('data-char')) === String(next));
+    if (!target) return false;
+    target.click();
+    return true;
   }
 
   // ---------- HUD ----------
@@ -243,6 +255,9 @@ export class UI {
     const draftTurn = draftBout
       ? (actions.draftShopState?.() || { mustEndTurn: false, locked: false })
       : { mustEndTurn: false, locked: false };
+    const autoPlans = actions.autoPlans?.() || {
+      heal: { cost: 0 }, upgrade: { cost: 0 }, ammo: { cost: 0 },
+    };
     $('screen-shop').classList.toggle('turn-locked', draftTurn.locked);
     $('shop-sub').textContent = liquidation
       ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
@@ -351,6 +366,15 @@ export class UI {
       : null;
     $('btn-next-fight').disabled = draftTurn.mustEndTurn;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
+    const autoButton = (action, label, description, plan, unit = '$') => `
+      <button class="btn squad-auto-btn" data-auto-squad="${action}" ${draftTurn.locked || plan.cost <= 0 ? 'disabled' : ''}>
+        <span><b>${label}</b><small>${description}</small></span>
+        <strong>${unit === '$' ? '$' : ''}${plan.cost.toLocaleString()}${unit === '$' ? '' : ` ${unit}`}</strong>
+      </button>`;
+    $('squad-auto-actions').innerHTML =
+      autoButton('autoHeal', 'AUTO-HEAL', 'YOU → CREW · FULL PATCH', autoPlans.heal) +
+      autoButton('autoUpgrade', 'AUTO-UPGRADE', 'SPEND EACH FIGHTER’S XP', autoPlans.upgrade, 'XP') +
+      autoButton('autoAmmo', 'AUTO-AMMO', 'YOU → CREW · 2 STACKS / WEAPON', autoPlans.ammo);
 
     // ---- stash grid ----
     const compactLandscape = window.innerWidth <= 1050 && window.innerWidth > window.innerHeight;
@@ -572,6 +596,7 @@ export class UI {
     };
     wire('[data-buy-item]', 'data-buy-item', actions.buyItem);
     wire('[data-buy-to]', 'data-buy-to', (t) => actions.buyItemTo(t, this.selChar));
+    wire('[data-auto-squad]', 'data-auto-squad', (action) => actions[action]?.());
     wire('[data-bench]', 'data-bench', (i) => actions.toggleBench(parseInt(i)));
     wire('[data-train]', 'data-train', (id) => actions.train(this.selChar, id));
     wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
