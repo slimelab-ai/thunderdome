@@ -144,8 +144,21 @@ it does.
 Per-weapon grips are bone pins, not separate clip sets: the rest pose already reaches
 a rifle-length handguard, and only the outliers need anything — a pistol held with
 both hands together, a knife whose support arm swings out of frame. Those pins
-release while a support-arm clip is playing, or a reload would run with the left arm
-frozen on a handguard it is supposed to have let go of.
+release while a *reload* is playing, or the left arm stays frozen on a handguard it
+is supposed to have let go of. They deliberately do **not** release during the draw:
+that left the support hand at its rest position, which on a pistol is out past the
+muzzle, so equipping one looked like grabbing the barrel.
+
+Weapons are also offset so their grip meets the fist. They were authored with the
+origin nominally at the grip, but in practice each one's grip geometry sits somewhere
+slightly different — a pistol's is 5 cm behind and 2.5 cm below its origin — and
+without the offset the hand closes on whatever happens to be at the origin.
+
+Reloads that are mechanically different get their own clip rather than a stretched
+generic one: `reload_pistol` drops a magazine out of the grip and racks the slide
+afterwards, and `reload_shell` feeds a single round and returns to the carry pose, so
+it can be replayed once per shell without stuttering between rounds. A pump action
+gets a `pump` stroke between shots, and firing is locked out until it completes.
 
 Grip poses are **fitted, not eyeballed**. A two-handed pistol grip needs the support
 hand just below and behind the firing hand, and no single joint reaches it — lowering

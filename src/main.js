@@ -2067,6 +2067,7 @@ window.__game = {
   get scene() { return scene; }, get arena() { return arena; },
   get pipeline() { return pipeline; },
   THREE,                                  // capture/diagnostic poses need constructors
+  items: { makeItem, autoPlace },         // capture poses stock a pack to test reloads
   assetsReady,                            // tools/shot.mjs waits on this before posing
   setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },
   get stats() { return pipeline.stats(); },

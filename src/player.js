@@ -54,6 +54,8 @@ export class Player {
     this.slotIdx = 0;
     this.mag = WEAPONS.pistol.mag;
     this.reloading = 0;
+    this.shellLoading = false;   // shotgun-style: feeding one round at a time
+    this.pumpT = 0;              // pump-action stroke in progress
     this.fireCooldown = 0;
     this.triggerHeld = false;
     this.triggerQueued = false;
@@ -141,7 +143,8 @@ export class Player {
     this.alive = true;
     this.armDmg = 0; this.legDmg = 0;
     this.mag = this.weapon.mag;
-    this.reloading = 0; this.fireCooldown = 0; this.bloom = 0;
+    this.reloading = 0; this.shellLoading = false; this.pumpT = 0;
+    this.fireCooldown = 0; this.bloom = 0;
     this.recoilPitch = 0; this.recoilYaw = 0;
     this.deathT = 0;
     this.stats.matchKills = 0; this.stats.matchHeadshots = 0;
@@ -283,10 +286,27 @@ export class Player {
   startReload() {
     if (this.weapon.melee || this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
     if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
-    this.reloading = this.weapon.reload * (this.progressStats.reloadMult || 1);
+    const mult = this.progressStats.reloadMult || 1;
+    if (this.weapon.shellReload) {
+      // Shell by shell. Each round is its own timer and its own animation, and the
+      // player can break off and fire whatever is already in the tube.
+      this.shellLoading = true;
+      this.reloading = this.weapon.shellReload * mult;
+      this.arms.loadShell(this.reloading);
+      audio.reload(0);
+      return;
+    }
+    this.reloading = this.weapon.reload * mult;
     this.arms.reload(this.reloading);
     audio.reload(0);
     setTimeout(() => { if (this.reloading > 0) audio.reload(1); }, this.reloading * 600);
+  }
+
+  /** Abandon a shell-by-shell reload, keeping whatever has already been fed. */
+  cancelShellReload() {
+    if (!this.shellLoading) return;
+    this.shellLoading = false;
+    this.reloading = 0;
   }
 
   currentSpread() {
@@ -483,12 +503,28 @@ export class Player {
     }
 
     // ---- reload (rounds come out of the backpack) ----
+    if (this.pumpT > 0) this.pumpT -= dt;
+
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) {
         const t = this.ammoType();
-        this.mag += t ? consumeAmmo(this.character, t, w.mag - this.mag) : (w.mag - this.mag);
-        this.reloading = 0;
+        if (this.shellLoading) {
+          this.mag += t ? consumeAmmo(this.character, t, 1) : 1;
+          if (this.mag < w.mag && this.reserve() > 0) {
+            // Another round to feed: restart the timer and replay the insert.
+            this.reloading = (w.shellReload || 0.45) * (this.progressStats.reloadMult || 1);
+            this.arms.loadShell(this.reloading);
+            audio.reload(0);
+          } else {
+            this.shellLoading = false;
+            this.reloading = 0;
+            if (w.pump) { this.pumpT = w.pump; this.arms.pump(w.pump); }  // chamber the first round
+          }
+        } else {
+          this.mag += t ? consumeAmmo(this.character, t, w.mag - this.mag) : (w.mag - this.mag);
+          this.reloading = 0;
+        }
       }
     }
 
@@ -496,7 +532,11 @@ export class Player {
     this.fireCooldown -= dt;
     this.bloom = Math.max(0, this.bloom - dt * 6);
     const wantFire = w.auto ? this.triggerHeld : this.triggerQueued;
-    if (wantFire && this.fireCooldown <= 0 && this.reloading <= 0 && !this.healing && locked) {
+    // Pulling the trigger mid-shell-reload breaks off and shoots what is loaded —
+    // the whole point of feeding one at a time is that you can stop early.
+    if (wantFire && this.shellLoading && this.mag > 0 && this.pumpT <= 0) this.cancelShellReload();
+    if (wantFire && this.fireCooldown <= 0 && this.pumpT <= 0
+        && this.reloading <= 0 && !this.healing && locked) {
       if (w.melee) {
         this._slash();
       } else if (this.mag <= 0) {
@@ -577,11 +617,19 @@ export class Player {
     // magazine drops and reseats through the middle of a reload. Seeing the action
     // work is what makes a shot feel mechanical instead of a sound with a flash.
     this.arms.update(dt);
-    const reloadK = this.reloading > 0 ? (w.reload - this.reloading) / w.reload : 0;
+    const reloadK = this.reloading > 0 && !this.shellLoading
+      ? (w.reload - this.reloading) / w.reload
+      : 0;
+    // The pump traces a full back-and-forward over its stroke; the magazine only
+    // drops on a magazine-fed reload.
+    const pumpK = w.pump && this.pumpT > 0
+      ? Math.sin((1 - this.pumpT / w.pump) * Math.PI)
+      : 0;
     animateWeaponParts(
       this.currentVM,
       Math.min(1, this.kick * 1.6),
       reloadK > 0.12 && reloadK < 0.62 ? Math.sin((reloadK - 0.12) / 0.5 * Math.PI) : 0,
+      pumpK,
     );
 
     // update world proxy — leaning exposes ~70% of the offset to enemy fire
@@ -704,6 +752,11 @@ export class Player {
 
     audio.shot(w.sound, 1);
     this.arms.fire();
+    if (w.pump && this.mag > 0) {
+      // Chamber the next round. Firing is locked out until the stroke completes.
+      this.pumpT = w.pump;
+      this.arms.pump(w.pump);
+    }
     this.world.fx.muzzleFlash(muzzle, baseDir);
     // Eject a case to the shooter's right. Melee weapons and the empty-chamber case
     // have already returned before here, so anything reaching this point cycled.

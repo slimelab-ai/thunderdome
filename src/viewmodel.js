@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { surface, fighterUniform } from './materials.js';
+import { GRIP_ANCHOR } from './weapons.js';
 
 /**
  * First-person arms.
@@ -21,7 +22,18 @@ import { surface, fighterUniform } from './materials.js';
 const MODEL_URL = '/assets/models/fp_arms.glb';
 const ADDITIVE = new Set(['fire']);
 // Clips that move the support arm, and therefore need the grip pins to let go.
-const SUPPORT_ARM_CLIPS = new Set(['reload', 'melee', 'draw']);
+// Clips that move the support arm off the weapon, and therefore need the grip pins to
+// let go. `draw` is deliberately *not* one of them: releasing the pins during the draw
+// left the support hand at its rest position — the rifle handguard — which on a pistol
+// is out past the muzzle, so equipping a pistol looked like grabbing the barrel.
+const SUPPORT_ARM_CLIPS = new Set(['reload', 'reload_pistol', 'reload_shell', 'melee']);
+
+// Where the right hand actually closes, in the arms' own space (the hand_r bone tail
+// from tools/blender/viewmodel.py). Weapons are offset so their grip lands here.
+const FIST = [0.012, -0.050, 0.075];
+
+/** Which reload clip a weapon uses. Anything unlisted gets the magazine-swap one. */
+const RELOAD_CLIP = { pistol: 'reload_pistol', shotgun: 'reload_shell' };
 
 /**
  * Where the support hand goes, per weapon, as bone rotations in radians.
@@ -167,10 +179,21 @@ export class ViewModel {
     this.heldGroup = group;
     if (group.parent !== this.socket) this.socket.add(group);
 
+    // Offset the weapon so its grip meets the fist. Without this every weapon is held
+    // by whatever part of it happens to sit at its origin — for the pistol, 5 cm of
+    // empty air behind the grip.
+    const anchor = GRIP_ANCHOR[id];
+    if (anchor) {
+      group.position.set(FIST[0] - anchor[0], FIST[1] - anchor[1], FIST[2] - anchor[2]);
+    } else {
+      group.position.set(0, 0, 0);
+    }
+
     this.pinned.clear();
     const pose = SUPPORT_POSE[id];
     if (pose) for (const [bone, euler] of Object.entries(pose)) this.pinned.set(bone, euler);
 
+    this.reloadClip = RELOAD_CLIP[id] || 'reload';
     this.play('draw', 1);
   }
 
@@ -201,8 +224,13 @@ export class ViewModel {
     action.play();
   }
 
-  reload(seconds) { this.play('reload', seconds); }
+  /** Reload, using whichever clip this weapon's action calls for. */
+  reload(seconds) { this.play(this.reloadClip || 'reload', seconds); }
   melee(seconds) { this.play('melee', seconds); }
+  /** One shell into the tube; called once per round on a shell-loaded weapon. */
+  loadShell(seconds) { this.play('reload_shell', seconds); }
+  /** Work the pump between shots. */
+  pump(seconds) { this.play('pump', seconds); }
 
   update(dt) {
     if (!this.ready) return;

@@ -23,6 +23,10 @@ export const WEAPONS = {
     dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
+    // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
+    // between shots; `shellReload` is the time to feed one round, repeated until the
+    // tube is full — a shotgun does not swap a magazine.
+    pump: 0.42, shellReload: 0.44,
     desc: '9 pellets of crowd-pleasing violence. Deletes torsos inside 10m.',
   },
   rifle: {
@@ -57,6 +61,24 @@ export const WEAPON_ORDER = ['pistol', 'smg', 'shotgun', 'rifle', 'dmr'];
 // Weapons are authored assets (tools/blender/weapons.py), loaded once and cloned.
 // Barrel along -Z, origin at the grip — the same convention as the fighter's hand
 // socket, so a gun attaches identically in the world and in first person.
+
+/**
+ * Where each weapon's grip actually is, in model space.
+ *
+ * The weapons were authored with their *origin* at the grip in principle, but in
+ * practice each one's grip geometry sits somewhere slightly different — a pistol's
+ * grip is 5 cm behind and 2.5 cm below its origin, a rifle's is right on it. The
+ * first-person viewmodel offsets each weapon by this so the firing hand closes on the
+ * grip rather than somewhere along the frame.
+ */
+export const GRIP_ANCHOR = {
+  pistol: [0, -0.075, 0.025],
+  smg: [0, -0.060, 0.030],
+  shotgun: [0, -0.020, 0.090],
+  rifle: [0, -0.055, 0.090],
+  dmr: [0, -0.050, 0.100],
+  knife: [0, 0.004, 0.055],
+};
 
 const MUZZLE = {
   // Barrel tip per weapon, in model space. Tracers and muzzle flash spawn here, so
@@ -133,11 +155,15 @@ export function buildWeaponModel(id) {
  * `cycle` is 0..1: 0 is at rest, 1 is fully rearward. `magDrop` is 0..1 and pulls the
  * magazine out of the well for reloads.
  */
-export function animateWeaponParts(model, cycle, magDrop = 0) {
+export function animateWeaponParts(model, cycle, magDrop = 0, pump = 0) {
   if (!model?.parts) return;
   for (const [name, travel] of Object.entries(CYCLE_TRAVEL)) {
     const part = model.parts[name];
-    if (part) part.position.z = part.userData.restZ - travel * cycle;
+    if (!part) continue;
+    // The pump runs off its own stroke, not the recoil impulse: a pump action is a
+    // deliberate back-and-forward between shots, not a flinch during one.
+    const k = name === 'pump' ? pump : cycle;
+    part.position.z = part.userData.restZ - travel * k;
   }
   const mag = model.parts.mag;
   if (mag) {

@@ -319,7 +319,75 @@ def anim_melee(rig):
     key(rig, 24, ZERO, loc={"vm_root": (0, 0, 0)})
 
 
-CLIPS = [anim_idle, anim_fire, anim_reload, anim_draw, anim_melee]
+
+def anim_reload_pistol(rig):
+    """Pistol reload: magazine out, fresh magazine in, then rack the slide.
+
+    A pistol does not reload like a rifle. The magazine drops out of the *grip*, and
+    the slide has to be worked afterwards — with the support hand coming over the top
+    of the weapon, not staying out on a handguard that a pistol does not have.
+    """
+    new_action(rig, "reload_pistol")
+    clear_pose(rig)
+    key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+    # tip the weapon inboard so the magazine well is in view
+    key(rig, 7, {**ZERO, "vm_root": (-10, 20, 14), "upperarm_r": (-5, 0, 0),
+                 "upperarm_l": (16, 0, -12), "forearm_l": (24, 0, 0)},
+        loc={"vm_root": (0, -0.04, -0.02), "hand_l": (0, -0.04, -0.05)})
+    # support hand away with the empty magazine
+    key(rig, 15, {**ZERO, "vm_root": (-12, 22, 16), "upperarm_r": (-6, 0, 0),
+                  "upperarm_l": (40, 0, -18), "forearm_l": (48, 0, 0), "hand_l": (-28, 0, 0)},
+        loc={"vm_root": (0, -0.05, -0.028), "hand_l": (0, -0.05, -0.14)})
+    # fresh magazine seated up into the grip
+    key(rig, 26, {**ZERO, "vm_root": (-9, 16, 11), "upperarm_r": (-4, 0, 0),
+                  "upperarm_l": (18, 0, -12), "forearm_l": (26, 0, 0), "hand_l": (-10, 0, 0)},
+        loc={"vm_root": (0, -0.035, -0.02), "hand_l": (0, -0.02, -0.03)})
+    # support hand comes over the top of the slide and pulls it back
+    key(rig, 33, {**ZERO, "vm_root": (-6, 8, 5), "upperarm_r": (-3, 0, 0),
+                  "upperarm_l": (-14, 0, -22), "forearm_l": (-30, 0, 0), "hand_l": (18, 0, 0)},
+        loc={"vm_root": (0, -0.02, -0.01), "hand_l": (0, 0.045, 0.02)})
+    key(rig, 38, {**ZERO, "vm_root": (-4, 6, 4), "upperarm_l": (-10, 0, -20),
+                  "forearm_l": (-24, 0, 0), "hand_l": (14, 0, 0)},
+        loc={"vm_root": (0, -0.012, -0.006), "hand_l": (0, 0.012, 0.02)})
+    key(rig, 48, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+
+
+def anim_reload_shell(rig):
+    """One shotgun shell into the loading port, then back to the pump.
+
+    Played once per shell, so it has to start and end exactly on the carry pose or a
+    six-shell reload visibly stutters between rounds.
+    """
+    new_action(rig, "reload_shell")
+    clear_pose(rig)
+    key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+    # weapon rolls over to expose the underside port; hand drops to the belt
+    key(rig, 6, {**ZERO, "vm_root": (-8, 6, 26), "upperarm_l": (30, 0, -14),
+                 "forearm_l": (34, 0, 0), "hand_l": (-20, 0, 0)},
+        loc={"vm_root": (0, -0.03, -0.02), "hand_l": (0, -0.06, -0.09)})
+    # shell pushed up into the port
+    key(rig, 12, {**ZERO, "vm_root": (-9, 7, 28), "upperarm_l": (10, 0, -8),
+                  "forearm_l": (16, 0, 0), "hand_l": (-6, 0, 0)},
+        loc={"vm_root": (0, -0.032, -0.022), "hand_l": (0, 0.01, -0.015)})
+    key(rig, 20, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+
+
+def anim_pump(rig):
+    """Working the pump between shots. Support hand strokes back, then forward."""
+    new_action(rig, "pump")
+    clear_pose(rig)
+    key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+    key(rig, 5, {**ZERO, "vm_root": (-5, 0, 3), "upperarm_l": (6, 0, -4),
+                 "forearm_l": (14, 0, 0)},
+        loc={"vm_root": (0, -0.012, 0.004), "hand_l": (0, -0.085, 0)})
+    key(rig, 11, {**ZERO, "vm_root": (2, 0, -1), "upperarm_l": (-2, 0, 0),
+                  "forearm_l": (-4, 0, 0)},
+        loc={"vm_root": (0, 0.004, -0.002), "hand_l": (0, 0.012, 0)})
+    key(rig, 16, ZERO, loc={"vm_root": (0, 0, 0), "hand_l": (0, 0, 0)})
+
+
+CLIPS = [anim_idle, anim_fire, anim_reload, anim_draw, anim_melee,
+         anim_reload_pistol, anim_reload_shell, anim_pump]
 
 
 def main():
