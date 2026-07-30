@@ -42,7 +42,6 @@ import {
 import {
   orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
 } from './squad-auto.js';
-import { stabilizeLastCrew } from './circuits.js';
 
 // ============================================================ sandbox
 /**
@@ -1404,18 +1403,6 @@ function finishMatch() {
     career.money -= 25; // the house medic's "you live" fee, non-negotiable
   }
   career.playerLimbs = { arm: +player.armDmg.toFixed(2), leg: +player.legDmg.toFixed(2) };
-  const stabilizedCrew = match.mode === 'circuits' && !match.won
-    ? stabilizeLastCrew(career.crew, career.money)
-    : null;
-  if (stabilizedCrew) {
-    emitCareerEvent('circuits_last_crew_stabilized', {
-      match_id: match.analyticsId,
-      crew_name: stabilizedCrew.name,
-      bankroll: career.money,
-      hp: stabilizedCrew.hp,
-      state: careerSnapshot(),
-    });
-  }
   clearCombatants();
 
   if (match.mode === 'liquidation') {
@@ -1524,7 +1511,6 @@ function finishMatch() {
       DEATH_LINES[(Math.random() * DEATH_LINES.length) | 0],
       `The house took its cut: <b style="color:var(--blood)">−$${cut}</b><br>` +
       `Bankroll: $${career.money} — go into debt and the house collects YOU.<br>` +
-      (stabilizedCrew ? `<b style="color:var(--gold)">${stabilizedCrew.name} was stabilized at 1 HP</b> — earn enough to patch the squad.<br>` : '') +
       `Kills this bout: ${match.kills} · Career deaths: ${career.totals.deaths}<br>` +
       `Experience: ${xpAwards.map(a => `${a.name} +${a.xp} XP`).join(' · ')}`
     );
