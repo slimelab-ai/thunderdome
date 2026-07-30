@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { SpectatorCamera } from '../src/spectator-camera.js';
+import { Collider } from '../src/collider.js';
 
 function fakeCamera() {
   return {
@@ -64,4 +65,22 @@ test('switching characters creates a fast move to a genuinely different angle', 
   for (let i = 0; i < 20; i++) spectator.follow(second, 1 / 60, [first, second, opponent]);
   assert.ok(camera.position.distanceTo(before) > 8);
   assert.ok(camera.position.y >= 4.4 && camera.position.y <= 5);
+});
+
+test('corner targets rotate the camera back inside the arena boundary', () => {
+  const camera = fakeCamera();
+  const target = fighter(4, 0, 4);
+  const opponent = fighter(0, 0, 0, 'enemy');
+  const boundaryWalls = [
+    new Collider(5, 0, 0, 0.5, 3, 20),
+    new Collider(0, 0, 5, 20, 3, 0.5),
+  ];
+  const spectator = new SpectatorCamera(camera, boundaryWalls, {
+    halfWidth: 4.75,
+    halfDepth: 4.75,
+  });
+  spectator.follow(target, 1 / 60, [target, opponent]);
+  assert.ok(camera.position.x <= 4.4, 'camera stays inside the east gameplay boundary');
+  assert.ok(camera.position.z <= 4.4, 'camera stays inside the north gameplay boundary');
+  assert.ok(camera.position.distanceTo(target.pos) > 2, 'camera keeps a useful broadcast distance');
 });

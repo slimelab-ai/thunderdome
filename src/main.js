@@ -164,7 +164,10 @@ const world = {
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
-const spectatorCamera = new SpectatorCamera(camera, arena.colliders);
+const spectatorCamera = new SpectatorCamera(camera, arena.colliders, {
+  halfWidth: ARENA.W / 2 - 1,
+  halfDepth: ARENA.D / 2 - 1,
+});
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
 const touchMode = isTouchDevice();
