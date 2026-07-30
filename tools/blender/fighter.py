@@ -416,20 +416,129 @@ def clear_pose(rig):
 # pushed the elbow forward and left the fighter holding the gun out at arm's length
 # like a torch. Most of the bend belongs in the elbow: the upper arm stays close to
 # the ribs and the weapon sits in tight at chest height.
-ARM_R = (-16, 8, 0)
-FOREARM_R = (-74, 0, 0)
-ARM_L = (-18, -12, -22)       # support arm reaches across to the handguard
-FOREARM_L = (-70, 0, 0)
+UPPERARM_LEN, FOREARM_LEN = 0.26, 0.23
+HAND_LEN = 0.11               # wrist to closed fist
+
+# Where the support hand goes on each weapon, in weapon space. Must match SUPPORT_GRIP
+# in src/weapons.js: the runtime solves the left arm to the same point every frame, and
+# the authored pose exists so it has almost nothing left to do. The rifle is used here
+# because it is the common case and the longest reach that has to work.
+RIFLE_GRIP = Vector((0.0, 0.036, -0.20))
+
+# Two weapon-holding poses, as *targets* rather than angles.
+#
+# `wrist` is where the firing hand sits and `barrel` which way the weapon points, both
+# in Blender world axes: forward is -Y, up is +Z, his right is -X.
+#
+# Hand-authored angles are what put the weapon out at arm's length off his right hip,
+# 80 cm from a 60 cm arm, so the support hand could not have reached it in any pose. A
+# target you can measure cannot go wrong that way: `npm run fightercheck` reports the
+# distance from the left fist to the handguard, in every stance.
+HOLDS = {
+    # Low ready: weapon in tight, muzzle down a little, elbows in.
+    "carry": dict(wrist=(-0.135, -0.20, 1.24), barrel=(0.02, -1.0, -0.16)),
+    # Shouldered: butt into the right pec, barrel level down the sightline.
+    "aim": dict(wrist=(-0.115, -0.235, 1.345), barrel=(0.015, -1.0, 0.0)),
+}
+
+
+def solve_hold(rig, wrist, barrel, grip=RIFLE_GRIP):
+    """Pose both arms around a weapon held at `wrist` pointing along `barrel`.
+
+    The right arm is solved to the wrist and the hand rotated so the weapon socket's
+    bore runs down `barrel`. The weapon's grip point then falls out of that pose, and
+    the left arm is solved to *it* — which is the only way the two hands end up on the
+    same object. Posing them independently is how they came to be 20 cm apart.
+    """
+    barrel = Vector(barrel).normalized()
+    out = {}
+
+    # Right arm. Elbow leads back and down; a forward-pointing elbow is a broken arm.
+    pose, err = solve_two_bone(rig, "upperarm_r", "forearm_r", "hand_r",
+                               UPPERARM_LEN, FOREARM_LEN, wrist,
+                               Vector((0.0, 1.0, -0.4)).normalized(),
+                               Vector((0.0, -0.35, -1.0)).normalized())
+    out.update(pose)
+    _apply(rig, out)
+
+    # Turn the hand so the bore runs where it is asked to. The socket is a child of the
+    # hand with a fixed rest offset, so this is one minimal-arc rotation: take the
+    # socket's bore direction onto the target, expressed in the hand's own frame.
+    bones = rig.data.bones
+    f_hand = parent_frame(rig, "hand_r")
+    k = (bones["hand_r"].matrix_local.inverted() @ bones["weapon"].matrix_local).to_3x3()
+    bore_local = k @ Vector((0.0, 0.0, -1.0))
+    want_local = f_hand.to_3x3().inverted() @ barrel
+    e = bore_local.normalized().rotation_difference(want_local.normalized()).to_euler("XYZ")
+    out["hand_r"] = (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
+    _apply(rig, out)
+
+    # Where the weapon's grip point ended up, now that the weapon is actually placed.
+    grip_world = parent_frame(rig, "weapon") @ Vector(grip)
+
+    # Left arm to the grip. Two-bone IK lands the *wrist*, and the fist is a hand's
+    # length beyond it, so aim the wrist short along the line it will approach from.
+    # Iterating twice is enough to converge; skipping it leaves the fist a hand short
+    # of the handguard, which looks exactly like not gripping it.
+    elbow = parent_frame(rig, "forearm_l").translation
+    wrist_l = grip_world.copy()
+    for _ in range(3):
+        approach = (grip_world - elbow).normalized()
+        wrist_l = grip_world - approach * HAND_LEN
+        pose_l, err_l = solve_two_bone(rig, "upperarm_l", "forearm_l", "hand_l",
+                                       UPPERARM_LEN, FOREARM_LEN, wrist_l,
+                                       Vector((0.0, 1.0, -0.25)).normalized(), approach)
+        out.update(pose_l)
+        _apply(rig, out)
+        elbow = parent_frame(rig, "forearm_l").translation
+    fist = parent_frame(rig, "hand_l") @ Vector((0.0, HAND_LEN, 0.0))
+    return out, max(err, (fist - grip_world).length)
+
+
+def _apply(rig, pose):
+    for name, rot in pose.items():
+        pb = rig.pose.bones[name]
+        pb.rotation_mode = "XYZ"
+        pb.rotation_euler = (D(rot[0]), D(rot[1]), D(rot[2]))
+    bpy.context.view_layer.update()
+
+
+# Filled in by `fit_holds` once the armature exists, because they are solved, not typed.
+CARRY_ARMS = {}
+AIM_ARMS = {}
 
 STANCE = {
     "hips": (2, 0, 0), "spine": (4, 0, 0), "chest": (2, 0, 0), "neck": (-3, 0, 0),
-    "shoulder_r": (0, 0, -4), "upperarm_r": ARM_R, "forearm_r": FOREARM_R,
-    "hand_r": (0, 0, 0),
-    "shoulder_l": (0, 0, 6), "upperarm_l": ARM_L, "forearm_l": FOREARM_L,
-    "hand_l": (0, 0, 0),
+    "shoulder_r": (0, 0, -4), "shoulder_l": (0, 0, 6),
     "thigh_l": (-5, 0, 1), "shin_l": (9, 0, 0), "foot_l": (-5, 0, 0),
     "thigh_r": (-5, 0, -1), "shin_r": (9, 0, 0), "foot_r": (-5, 0, 0),
 }
+
+
+def fit_holds(rig):
+    """Solve the two weapon holds and fold the carry pose into STANCE.
+
+    Runs before any clip is authored, because every clip builds on STANCE.
+    """
+    for name, spec in HOLDS.items():
+        clear_pose(rig)
+        _apply(rig, {"spine": (4, 0, 0), "chest": (2, 0, 0),
+                     "shoulder_r": (0, 0, -4), "shoulder_l": (0, 0, 6)})
+        pose, err = solve_hold(rig, Vector(spec["wrist"]), spec["barrel"])
+        if err > 0.02:
+            raise RuntimeError(f"{name} hold: hands missed the weapon by {err * 1000:.0f} mm")
+        (CARRY_ARMS if name == "carry" else AIM_ARMS).update(pose)
+        log(f"  {name} hold solved, worst hand error {err * 1000:.1f} mm")
+    STANCE.update(CARRY_ARMS)
+    clear_pose(rig)
+
+
+def arm(name, dx=0.0, dy=0.0, dz=0.0):
+    """A solved carry-pose arm angle, nudged. Clips that want a little arm swing on top
+    of the hold ask for it this way instead of naming a constant that no longer exists.
+    """
+    base = CARRY_ARMS[name]
+    return (base[0] + dx, base[1] + dy, base[2] + dz)
 
 
 def merged(*poses):
@@ -448,8 +557,8 @@ def anim_idle(rig):
             "spine": (4 - s * 1.5, 0, 0),
             "chest": (2 + s * 2.0, 0, 0),
             "neck": (-3 - s * 1.5, 0, 0),
-            "upperarm_r": (ARM_R[0] + s * 2.5, ARM_R[1], ARM_R[2]),
-            "upperarm_l": (ARM_L[0] + s * 2.0, ARM_L[1], ARM_L[2]),
+            "upperarm_r": arm("upperarm_r", dx=s * 2.5),
+            "upperarm_l": arm("upperarm_l", dx=s * 2.0),
             "head": (0, s * 2.0, 0),
         }))
 
@@ -509,45 +618,53 @@ def _swing_to(frame, world_dir):
 
 
 def solve_leg(rig, s, ankle, toe_dir):
-    """Two-bone analytic IK for one leg, in armature space.
+    """Two-bone analytic IK for one leg. See `solve_two_bone`."""
+    return solve_two_bone(rig, f"thigh_{s}", f"shin_{s}", f"foot_{s}",
+                          THIGH_LEN, SHIN_LEN, ankle, Vector((0.0, -1.0, 0.0)), toe_dir)
 
-    `ankle` is where the ankle joint must end up and `toe_dir` which way the foot
-    points. Returns euler triples in degrees, ready for `key`, plus the residual so
-    the caller can assert the solve actually landed — an IK that silently misses is
-    worse than no IK, because the clip still looks plausible in a still frame.
+
+def solve_two_bone(rig, upper_n, lower_n, tip_n, a, b, target, pole, tip_dir):
+    """Two-bone analytic IK for a limb, in armature space.
+
+    `target` is where the tip joint must end up — the ankle for a leg, the wrist for
+    an arm — and `tip_dir` which way the last bone points from there. `pole` is the
+    direction the middle joint leads: forward for a knee, backward for an elbow.
+
+    Returns euler triples in degrees, ready for `key`, plus the residual, so the caller
+    can assert the solve actually landed. An IK that silently misses is worse than no
+    IK, because the clip still looks plausible in a still frame — which is exactly how
+    every fighter came to hold his rifle at arm's length with his other hand gripping
+    air 20 cm away from the handguard.
     """
-    thigh_n, shin_n, foot_n = f"thigh_{s}", f"shin_{s}", f"foot_{s}"
     bones = rig.data.bones
-    ankle = Vector(ankle)
+    target = Vector(target)
 
-    f1 = parent_frame(rig, thigh_n)
-    hip = f1.translation
-    v = ankle - hip
-    a, b = THIGH_LEN, SHIN_LEN
-    # Clamp short of full extension: a perfectly straight leg is the singular case
-    # where the knee's direction is undefined, and it also reads as a stiff peg.
+    f1 = parent_frame(rig, upper_n)
+    root = f1.translation
+    v = target - root
+    # Clamp short of full extension: a perfectly straight limb is the singular case
+    # where the middle joint's direction is undefined, and it reads as a stiff peg.
     length = min(v.length, (a + b) * 0.995)
     vh = v.normalized()
     cos_a = max(-1.0, min(1.0, (a * a + length * length - b * b) / (2 * a * length)))
-    # Knee leads the way the fighter faces. Degenerate only for a leg pointing dead
-    # forward and level, which no gait here asks for.
-    axis = vh.cross(Vector((0.0, -1.0, 0.0)))
+    axis = vh.cross(pole)
     if axis.length < 1e-4:
         axis = Vector((-1.0, 0.0, 0.0))
-    thigh_dir = Matrix.Rotation(math.acos(cos_a), 3, axis.normalized()) @ vh
-    knee = hip + thigh_dir * a
-    shin_dir = (ankle - knee).normalized()
+    upper_dir = Matrix.Rotation(math.acos(cos_a), 3, axis.normalized()) @ vh
+    mid = root + upper_dir * a
+    lower_dir = (target - mid).normalized()
 
-    e_t = _swing_to(f1, thigh_dir)
-    m1 = f1 @ e_t.to_matrix().to_4x4()
-    f2 = m1 @ bones[thigh_n].matrix_local.inverted() @ bones[shin_n].matrix_local
-    e_s = _swing_to(f2, shin_dir)
-    m2 = f2 @ e_s.to_matrix().to_4x4()
-    f3 = m2 @ bones[shin_n].matrix_local.inverted() @ bones[foot_n].matrix_local
-    e_f = _swing_to(f3, toe_dir)
+    e_u = _swing_to(f1, upper_dir)
+    m1 = f1 @ e_u.to_matrix().to_4x4()
+    f2 = m1 @ bones[upper_n].matrix_local.inverted() @ bones[lower_n].matrix_local
+    e_l = _swing_to(f2, lower_dir)
+    m2 = f2 @ e_l.to_matrix().to_4x4()
+    f3 = m2 @ bones[lower_n].matrix_local.inverted() @ bones[tip_n].matrix_local
+    e_t = _swing_to(f3, tip_dir)
 
     deg = lambda e: (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
-    return {thigh_n: deg(e_t), shin_n: deg(e_s), foot_n: deg(e_f)}, (f3.translation - ankle).length
+    return ({upper_n: deg(e_u), lower_n: deg(e_l), tip_n: deg(e_t)},
+            (f3.translation - target).length)
 
 
 # ---------------------------------------------------------------- locomotion
@@ -686,9 +803,8 @@ def _stride_cycle(rig, name, index, spec, base=None, torso=None):
             "hips": (body_lean, 0, -swing * 2.0 * counter),
             "spine": (body_lean * 0.6, swing * 3.0 * counter, -right * 4.0),
             "chest": (2, -swing * 4.0 * counter, 0),
-            "upperarm_l": (ARM_L[0] - spec["arm"] * swing * counter, ARM_L[1], ARM_L[2]),
-            "upperarm_r": (ARM_R[0] + spec["arm"] * 0.25 * swing * counter,
-                           ARM_R[1], ARM_R[2]),
+            "upperarm_l": arm("upperarm_l", dx=-spec["arm"] * swing * counter),
+            "upperarm_r": arm("upperarm_r", dx=spec["arm"] * 0.25 * swing * counter),
         })
         for bone_name, rot in pose.items():
             pb = rig.pose.bones[bone_name]
@@ -749,9 +865,10 @@ CROUCH = {
     "hips": (20, 0, 0), "spine": (15, 0, 0), "chest": (8, 0, 0), "neck": (-16, 0, 0),
     "thigh_l": (-96, 0, 5), "shin_l": (112, 0, 0), "foot_l": (-24, 0, 0),
     "thigh_r": (-96, 0, -5), "shin_r": (112, 0, 0), "foot_r": (-24, 0, 0),
-    "upperarm_r": (ARM_R[0] + 2, ARM_R[1] + 2, ARM_R[2]), "forearm_r": (FOREARM_R[0] - 2, 0, 0),
-    "upperarm_l": (ARM_L[0] + 2, ARM_L[1], ARM_L[2]), "forearm_l": (FOREARM_L[0] - 2, 0, 0),
 }
+# No arm entries: the solved carry hold in STANCE already has both hands on the
+# weapon, and a crouch does not change how a weapon is held. Nudging the arms here is
+# how they used to drift out of the grip a couple of degrees at a time.
 
 
 def anim_crouch_idle(rig):
@@ -792,27 +909,25 @@ def _unused_anim_crouch_walk(rig):
 
 
 def anim_aim_pose(rig):
-    """Upper body only: shouldered weapon, head down to the sights.
+    """Upper body only: the shouldered hold, layered over the carry hold.
 
-    Frame 1 must be the rest pose. `AnimationUtils.makeClipAdditive` takes its
-    reference from the clip's first frame, so a clip that opens already in the aim
-    pose subtracts itself to nothing and layers zero. Opening from rest also gives
-    the shoulder-up a real transition instead of a pop.
+    Frame 1 is the *carry* pose, not zero. `AnimationUtils.makeClipAdditive` takes its
+    reference from the clip's first frame, so opening from carry makes the delta
+    exactly "carry to shouldered" — which is what has to be added on top of a
+    locomotion clip, since those are all built on the carry stance. Opening from zero
+    would add the whole hold a second time and point the weapon at the ceiling.
+
+    Both poses are solved (see `HOLDS`), so bringing the weapon up moves the support
+    hand *with* it rather than leaving it behind.
     """
     new_action(rig, "aim_pose")
     clear_pose(rig)
-    # Deltas, not absolutes. The upperarm and forearm contributions cancel so the
-    # barrel stays level while the weapon comes up to the shoulder line — an aim pose
-    # that adds net flexion just points the gun higher.
-    aim = {
-        "spine": (2, 0, 0), "chest": (2, -6, 0), "neck": (6, 0, 0), "head": (3, -3, 0),
-        "shoulder_r": (0, 0, -12), "upperarm_r": (-16, 4, 0), "forearm_r": (16, 0, 0),
-        "shoulder_l": (0, 0, 14), "upperarm_l": (-14, -8, -6), "forearm_l": (14, 0, 0),
-    }
-    zero = {k: (0, 0, 0) for k in aim}
-    key(rig, 1, zero)
-    key(rig, 10, aim)
-    key(rig, 20, aim)
+    lift = {"spine": (2, 0, 0), "chest": (2, -5, 0), "neck": (5, 0, 0), "head": (3, -2, 0),
+            "shoulder_r": (0, 0, -9), "shoulder_l": (0, 0, 10)}
+    rest = {k: (0, 0, 0) for k in lift}
+    key(rig, 1, merged(rest, CARRY_ARMS))
+    key(rig, 10, merged(lift, AIM_ARMS))
+    key(rig, 20, merged(lift, AIM_ARMS))
 
 
 # Aim offset.
@@ -1133,6 +1248,7 @@ def main():
 
     bpy.context.view_layer.objects.active = rig
     bpy.ops.object.mode_set(mode="POSE")
+    fit_holds(rig)          # solves the arm poses every clip below is built on
     for clip in CLIPS:
         clip(rig)
     plant_on_floor(rig, body)

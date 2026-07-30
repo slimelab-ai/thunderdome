@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { surface, fighterUniform } from './materials.js';
-import { GRIP_ANCHOR } from './weapons.js';
+import { GRIP_ANCHOR, SUPPORT_GRIP } from './weapons.js';
 
 /**
  * First-person arms.
@@ -50,29 +50,22 @@ const RELOAD_CLIP = { pistol: 'reload_pistol', shotgun: 'reload_shell' };
  * `carry` is where the hand rides normally. `pump`/`mag`/`port`/`rack` are the phase
  * targets. A missing phase falls back to `carry`.
  */
+// `carry` comes from the shared SUPPORT_GRIP table in weapons.js — the third-person
+// fighter holds the same weapon and needs the same point on it. Everything else here
+// is reload choreography, which only the first-person arms perform.
 const SUPPORT_TARGET = {
   pistol: {
-    carry: [0.012, -0.050, 0.075],   // wrapped around the firing hand at the grip
     mag: [0.012, -0.130, 0.060],     // magazine well, below the grip
     rack: [0, 0.055, 0.040],         // over the top of the slide, at its rear
   },
-  smg: {
-    carry: [0, 0.028, -0.24],
-    mag: [0, -0.070, -0.055],
-  },
-  rifle: {
-    carry: [0, 0.036, -0.20],   // near end of the handguard — the far end is past the arm's reach
-    mag: [0, -0.078, -0.02],
-  },
-  dmr: {
-    carry: [0, 0.038, -0.21],   // ditto; a DMR handguard is longer than an arm
-    mag: [0, -0.075, -0.01],
-  },
-  shotgun: {
-    carry: [0, 0.012, -0.24],        // on the pump
-    port: [0, -0.012, -0.02],        // loading port, on the underside of the receiver
-  },
+  smg: { mag: [0, -0.070, -0.055] },
+  rifle: { mag: [0, -0.078, -0.02] },
+  dmr: { mag: [0, -0.075, -0.01] },
+  shotgun: { port: [0, -0.012, -0.02] },   // loading port, under the receiver
 };
+for (const [id, grip] of Object.entries(SUPPORT_GRIP)) {
+  if (SUPPORT_TARGET[id]) SUPPORT_TARGET[id].carry = grip;
+}
 
 /** Phase windows within a reload clip, as fractions of its duration. */
 const RELOAD_PHASES = {

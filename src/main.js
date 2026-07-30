@@ -5,7 +5,7 @@ import { Player } from './player.js';
 import { Combatant } from './combatant.js';
 import { Announcer } from './announcer.js';
 import { UI, nextCrewName } from './ui.js';
-import { WEAPONS, WEAPON_ORDER, preloadWeapons } from './weapons.js';
+import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
@@ -2383,6 +2383,7 @@ window.__game = {
   get pipeline() { return pipeline; },
   THREE,                                  // capture/diagnostic poses need constructors
   FighterRig,                             // tools/fightercheck.mjs drives a rig alone
+  buildHeldGun, SUPPORT_GRIP,             // ...and puts a real weapon in its fist
   items: { makeItem, autoPlace },         // capture poses stock a pack to test reloads
   assetsReady,                            // tools/shot.mjs waits on this before posing
   setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },

@@ -140,6 +140,14 @@ export class Combatant {
     this.stanceTimer = 0.5 + Math.random() * 2;
     this.leanK = 0;
     this.peekSide = 0;
+    // Aiming down sights, 0..1.
+    //
+    // Bots used to shoot the instant their reaction timer expired, from whatever pose
+    // the walk happened to be in, which is why none of them ever looked like they were
+    // aiming. Now shouldering is a state with a cost: it takes time, it slows him
+    // down, and it is worth it because his shots land.
+    this.adsK = 0;
+    this.wantsAds = false;
     // Last frame's world displacement, kept so the locomotion blendspace can be told
     // which way he is actually travelling rather than assuming it is where he faces.
     this._moveDX = 0;
@@ -187,6 +195,7 @@ export class Combatant {
     this.rig.weaponSocket.remove(this.gun);
     this.gun = buildHeldGun(next);
     this.rig.weaponSocket.add(this.gun);
+    this.rig.setWeapon(next, this.gun);
     this.rig.trigger('reload');       // swapping to a fed gun reads as working the weapon
     this.burstLeft = this._burstSize();
     this.cooldown = 0.5;
@@ -205,6 +214,7 @@ export class Combatant {
     // the fist and follow every animation without a hand-tuned offset per clip.
     this.gun = buildHeldGun(this.weaponId);
     this.rig.weaponSocket.add(this.gun);
+    this.rig.setWeapon(this.weaponId, this.gun);
 
     // Extra armour reads as extra plate. The base fighter already wears a carrier;
     // this is the visible difference between a rookie and a kitted veteran.
@@ -714,6 +724,18 @@ export class Combatant {
       this.hadLoS = los;
       if (this.reactionLeft > 0) this.reactionLeft -= dt;
 
+      // Shoulder the weapon when there is something to shoot at a range worth aiming
+      // at. Inside knife range nobody bothers, and a sprinting fighter has the weapon
+      // down by definition.
+      this.wantsAds = los && !this.sprintNow && !w.melee && dist > 2.2;
+      // Up in about a third of a second, down slower — a fighter who has just been
+      // shot at keeps his weapon up for a moment.
+      const adsRate = this.wantsAds ? 3.4 : 2.0;
+      this.adsK += ((this.wantsAds ? 1 : 0) - this.adsK) * Math.min(1, dt * adsRate);
+      // Settled enough to shoot. Close in he fires from the hip; at distance he has to
+      // actually get the weapon up first, which is the visible tell that he is aiming.
+      const settled = this.adsK > Math.min(0.62, 0.12 + dist * 0.045);
+
       if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && dist < w.meleeRange) {
         // slash
         const mdmg = w.dmg * this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
@@ -721,14 +743,18 @@ export class Combatant {
         else this.target.applyDamage(world, 'torso', mdmg, this, this.target.aimPoint());
         audio.slash(1.2 / (1 + eye.distanceTo(world.cameraPos) * 0.09));
         this.cooldown = 60 / w.rpm;
-      } else if (!w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
+      } else if (!w.melee && los && settled && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
         // fire from the peeked eye when leaning around a corner
         const fireEye = this.peekSide
           ? eye.clone().set(eye.x + -fz * 0.6 * this.peekSide, eye.y, eye.z + fx * 0.6 * this.peekSide)
           : eye;
         const dir = aim.clone().sub(fireEye).normalize();
         const distFactor = 0.7 + dist / 30;
-        const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4) * distFactor * (this.crouchK < 0.9 ? 0.8 : 1);
+        // A shouldered weapon groups roughly twice as tight as a hip-fired one. This
+        // is the mechanical half of the ADS state: without it, taking the time to aim
+        // would be pure cost and the AI would be strictly worse for doing it.
+        const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
+          * distFactor * (this.crouchK < 0.9 ? 0.8 : 1) * (1.35 - 0.72 * this.adsK);
         const pellets = w.pellets;
         for (let i = 0; i < pellets; i++) {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
@@ -757,6 +783,7 @@ export class Combatant {
           this.cooldown = 60 / w.rpm;
         }
       }
+      // Nothing in view: let the weapon down.
     } else if (!this.target) {
       // idle scan
       this.yaw += Math.sin(performance.now() * 0.0005 + this.animPhase) * dt * 0.5;
@@ -863,7 +890,10 @@ export class Combatant {
         }
         if (!chosen) chosen = rot(move, 2.6 * (this.avoidSide || 1));
       }
-      const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1) * (this.sprintNow ? 1.45 : 1);
+      // Shouldered weapon costs pace. It is what makes an aiming fighter read as
+      // committed to the shot instead of jogging past with a gun up.
+      const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1)
+        * (this.sprintNow ? 1.45 : 1) * (1 - 0.32 * this.adsK);
       const px = this.pos.x, pz = this.pos.z;
       this.pos.addScaledVector(chosen, spd * dt);
       resolveCircle(this.pos, this.radius, world.colliders, this.pos.y);
@@ -918,8 +948,10 @@ export class Combatant {
     // Lean is a spine bend in the rig now, not a roll of the whole object: rolling
     // pivoted him about his feet and lifted a boot off the floor.
     this.rig.setLean(this.leanK);
-    // Weapon comes up when there is something to shoot and he is not sprinting.
-    this.rig.setAimWeight(this.target && !this.sprintNow ? 1 : 0);
+    // The weapon comes up on the same curve the accuracy does, so what the player
+    // sees and what the dice see are the same number.
+    if (!this.target || this.sprintNow) this.adsK = Math.max(0, this.adsK - dt * 2.0);
+    this.rig.setAimWeight(this.adsK);
     if (this.target) {
       const tp = this.target.isPlayer
         ? _aimTmp.set(this.target.pos.x, this.target.pos.y + 1.25, this.target.pos.z)

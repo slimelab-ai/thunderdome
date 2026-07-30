@@ -85,6 +85,25 @@ export const GRIP_ANCHOR = {
   knife: [0, 0.004, 0.055],
 };
 
+/**
+ * Where the support hand belongs on each weapon, in model space.
+ *
+ * One table, read by both the first-person arms and the third-person fighter, because
+ * both hold the *same authored weapon* — a handguard that moves has to move for both,
+ * and a tuned constant kept in two places drifts.
+ *
+ * These are targets to solve an arm towards, not poses. Every support-hand position
+ * that was posed by hand missed: the fighter's left hand ended up out in front of him
+ * holding nothing while the rifle hung off his right hand alone.
+ */
+export const SUPPORT_GRIP = {
+  pistol: [0.012, -0.050, 0.075],  // wrapped around the firing hand at the grip
+  smg: [0, 0.028, -0.24],
+  rifle: [0, 0.036, -0.20],        // near end of the handguard; the far end is out of reach
+  dmr: [0, 0.038, -0.21],          // ditto, a DMR handguard is longer than an arm
+  shotgun: [0, 0.012, -0.24],      // on the pump
+};
+
 const MUZZLE = {
   // Barrel tip per weapon, in model space. Tracers and muzzle flash spawn here, so
   // these have to match the authored geometry; they come straight off the barrel

@@ -47,6 +47,8 @@ const LIMITS = {
   jump: 6.0,       // biggest single-frame foot move, as a multiple of the typical one
   sink: 0.035,     // m a foot may pass below the floor
   locked: 0.012,   // m a foot may move when only the upper body is asked to change
+  grip: 0.070,     // m the support fist may sit from the weapon it is holding
+  recoil: 2.0,     // deg the muzzle must swing under sustained automatic fire
 };
 
 const browser = await puppeteer.launch({
@@ -363,8 +365,73 @@ const report = await page.evaluate(async () => {
     settle(0);
   }
 
+  // ---- support hand ----
+  //
+  // Does the left hand actually hold the weapon?
+  //
+  // This is the check that was missing while every fighter in the game ran around
+  // one-handing a rifle with his support hand out in front of him gripping air. The
+  // stance pose reached for a rifle-length handguard and nothing verified it arrived —
+  // and it never did, on any weapon, in any pose.
+  const grip = [];
+  for (const id of ['rifle', 'smg', 'shotgun', 'dmr', 'pistol']) {
+    const gun = g.buildHeldGun(id);
+    rig.weaponSocket.add(gun);
+    rig.setWeapon(id, gun);
+    const point = new T.Vector3(...g.SUPPORT_GRIP[id]);
+    const fist = new T.Vector3();
+    const measure = () => {
+      rig.group.updateMatrixWorld(true);
+      const want = point.clone();
+      gun.localToWorld(want);
+      // The fist, not the wrist: the hand bone sits a hand's length short of what it
+      // is supposed to be holding, and measuring the wrist hides a 10 cm miss.
+      fist.set(0, 0.11, 0);
+      rig.bones.get('hand_l').localToWorld(fist);
+      return fist.distanceTo(want);
+    };
+    // Three states that matter: standing aimed, walking aimed, and firing.
+    const cases2 = {};
+    for (const [name, drive] of [
+      ['aimed', () => { rig.setStance(0, false, 0, 1); rig.setAimWeight(1); }],
+      ['walking', () => { rig.setStance(3.0, false, 0.4, 0.9); rig.setAimWeight(1); }],
+      ['crouched', () => { rig.setStance(1.4, true, 0, 1); rig.setAimWeight(1); }],
+    ]) {
+      for (let i = 0; i < 120; i++) { drive(); rig.setAim(0.1, 0.2); rig.update(DT); }
+      let worst = 0;
+      for (let i = 0; i < 90; i++) { drive(); rig.setAim(0.1, 0.2); rig.update(DT); worst = Math.max(worst, measure()); }
+      cases2[name] = worst;
+    }
+    // Under sustained automatic fire, retriggered every 5 frames the way a 700 rpm
+    // weapon does.
+    for (let i = 0; i < 60; i++) { rig.setStance(0, false, 0, 1); rig.setAimWeight(1); rig.update(DT); }
+    let firing = 0;
+    const socket = rig.weaponSocket;
+    const dir = new T.Vector3();
+    let minY = 1e9, maxY = -1e9;
+    for (let i = 0; i < 180; i++) {
+      if (i % 5 === 0) rig.trigger('fire');
+      rig.setStance(0, false, 0, 1);
+      rig.setAimWeight(1);
+      rig.update(DT);
+      firing = Math.max(firing, measure());
+      rig.group.updateMatrixWorld(true);
+      // Where the barrel points. The socket's -Z runs down the bore.
+      dir.set(0, 0, -1).applyQuaternion(socket.getWorldQuaternion(new T.Quaternion()));
+      minY = Math.min(minY, dir.y); maxY = Math.max(maxY, dir.y);
+    }
+    cases2.firing = firing;
+    // How much the muzzle actually moves under sustained fire, in degrees. An additive
+    // impulse that is reset faster than it plays contributes nothing at all, and the
+    // pose looks identical to not firing.
+    cases2.recoilDeg = Math.asin(Math.min(1, maxY - minY)) * 57.3;
+    grip.push({ id, ...cases2 });
+    rig.weaponSocket.remove(gun);
+  }
+  rig.setWeapon(null, null);
+
   g.scene.remove(rig.group);
-  return { cases, locked, aimRange };
+  return { cases, locked, aimRange, grip };
 });
 
 await browser.close();
@@ -413,6 +480,18 @@ const a = report.aimRange;
 console.log(`  pitch sweep  ${(a.pitchSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.pitchSign > 0 ? 'up' : 'DOWN'}${bad(a.pitchSweep < 0.35, `pitch sweep only ${(a.pitchSweep * 57.3).toFixed(1)} deg`)}${bad(a.pitchSign <= 0, 'aim pitch is inverted')}`);
 console.log(`  lean spread  ${(a.leanSpread * 100).toFixed(1).padStart(6)} cm   sign ${a.leanSign > 0 ? 'right' : 'LEFT'}${bad(a.leanSpread < 0.10, `lean spread only ${(a.leanSpread * 100).toFixed(1)} cm`)}${bad(a.leanSign <= 0, 'setLean(+1) leans him left, not right')}`);
 console.log(`  yaw sweep    ${(a.yawSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.yawSign > 0 ? 'left' : 'RIGHT'}${bad(a.yawSweep < 0.35, `yaw sweep only ${(a.yawSweep * 57.3).toFixed(1)} deg`)}${bad(a.yawSign <= 0, 'aim yaw is inverted')}`);
+
+console.log('\nsupport hand: distance from the left fist to the weapon it should be holding');
+console.log('  weapon     aimed  walking crouched  firing   recoil');
+for (const w of report.grip) {
+  const n = (v) => v.toFixed(3).padStart(6);
+  let flags = '';
+  for (const k of ['aimed', 'walking', 'crouched', 'firing']) {
+    flags += bad(w[k] > LIMITS.grip, `${k} grip off by ${(w[k] * 100).toFixed(1)} cm`);
+  }
+  flags += bad(w.recoilDeg < LIMITS.recoil, `recoil only ${w.recoilDeg.toFixed(1)} deg under sustained fire`);
+  console.log(`  ${w.id.padEnd(9)} ${n(w.aimed)}  ${n(w.walking)}  ${n(w.crouched)}  ${n(w.firing)}  ${w.recoilDeg.toFixed(1).padStart(5)}°${flags}`);
+}
 
 if (pageErrors.length) {
   failures += pageErrors.length;

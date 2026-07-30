@@ -61,13 +61,19 @@ const crouch = params.has('crouched');
 
 // Eight headings, all facing the camera, laid out in the order the blendspace stores
 // them: straight ahead first, then round to the left.
+// Weapons go in their hands. Without one the support arm has nothing to reach for,
+// and holding the weapon is half of what these poses have to get right.
+const GUNS = ['rifle', 'smg', 'shotgun', 'dmr', 'rifle', 'smg', 'dmr', 'shotgun'];
 const rigs = [];
 for (let i = 0; i < 8; i++) {
   const rig = new g.FighterRig({ uniformColor: [0x2b4a2d, 0x3a3550][i % 2], scale: 1 });
   const a = (i / 8) * Math.PI * 2;
   rig.group.position.set(-3.9 + (i % 4) * 2.6, 0, i < 4 ? 2.6 : 0.0);
+  const gun = g.buildHeldGun(GUNS[i]);
+  rig.weaponSocket.add(gun);
+  rig.setWeapon(GUNS[i], gun);
   g.scene.add(rig.group);
-  rigs.push({ rig, mx: Math.sin(a), mz: Math.cos(a) });
+  rigs.push({ rig, mx: Math.sin(a), mz: Math.cos(a), i });
 }
 
 // Drive the rigs by hand. No AI, no world — whatever this shows is the rig's doing.
@@ -75,9 +81,13 @@ let t = 0;
 const drive = () => {
   const dt = 1 / 60;
   t += dt;
-  for (const { rig, mx, mz } of rigs) {
+  for (const { rig, mx, mz, i } of rigs) {
     rig.setStance(speed, crouch, mx, mz);
-    rig.setAimWeight(1);
+    // Half at the ready, half shouldered, so both holds are in one frame — and the
+    // back row fires, which is the only way to see whether the recoil reads.
+    const aimed = i % 2 === 0;
+    rig.setAimWeight(aimed ? 1 : 0.05);
+    if (aimed && Math.floor(t * 8) !== Math.floor((t - dt) * 8)) rig.trigger('fire');
     // Sweep the aim offset so the upper body is doing something a still frame can
     // read: tracking a target across his front while his legs carry him somewhere
     // else is the whole reason the two layers are separate.
@@ -92,6 +102,13 @@ drive();
 
 // The camera rides the player during a match — `freeCam` only applies outside one —
 // so park the player instead of trying to take the camera off him.
-g.player.pos.set(0, 1.5, 8.2);
-g.player.yaw = 0;
-g.player.pitch = -0.10;
+// `?closeup` pulls in on the front pair, for judging the grip rather than the row.
+if (params.has('closeup')) {
+  g.player.pos.set(-1.3, 1.45, 6.0);
+  g.player.yaw = 0.02;
+  g.player.pitch = -0.03;
+} else {
+  g.player.pos.set(0, 1.5, 8.2);
+  g.player.yaw = 0;
+  g.player.pitch = -0.10;
+}

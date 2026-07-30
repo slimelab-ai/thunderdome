@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { surface, fighterUniform } from './materials.js';
+import { SUPPORT_GRIP } from './weapons.js';
 
 /**
  * Runtime rig for the authored fighter: a skinned mesh, a two-layer animation state
@@ -28,6 +29,14 @@ const ADDITIVE = new Set([
 ]);
 // Full-body one-shots that take over completely.
 const DEATHS = ['death_front', 'death_back', 'death_collapse'];
+// Clips during which the support hand is somewhere other than the weapon.
+//
+// Split by how they end. A reload or a throw runs its length and is done, so a timer
+// is right. Bandaging is held until the fighter is finished, which can be much longer
+// than the clip — timing that one out puts his hand back on the rifle halfway through
+// dressing a wound.
+const HAND_LEAVES = new Set(['reload', 'throw']);
+const HAND_SUSTAINED = new Set(['heal']);
 
 /**
  * The lower-body blendspace, Unreal-style.
@@ -248,6 +257,25 @@ export class FighterRig {
     }
 
     this.weaponSocket = this.bones.get('weapon') || this.bones.get('hand_r');
+
+    // Support arm, solved rather than posed.
+    //
+    // The stance pose reaches for a rifle-length handguard and that was the whole of
+    // it, so every fighter carried his weapon one-handed with his left hand out in
+    // front of him holding nothing. A pose cannot do this job: the grip point is a
+    // different place on every weapon, and it moves with the aim offset, the walk and
+    // the recoil. Declare the point and solve the arm to it — the same thing the
+    // first-person arms do, for the same reason.
+    this._ikChain = ['forearm_l', 'upperarm_l'].map((n) => this.bones.get(n)).filter(Boolean);
+    this._handL = this.bones.get('hand_l');
+    this._grip = null;          // Vector3 in weapon space
+    this._weapon = null;        // the held weapon's Object3D
+    this._ikWarm = null;
+    this._preSupport = this._ikChain.map((b) => b.quaternion.clone());
+    this._supportK = 0;
+    this.supportWeight = 1;
+    // Counts down while a clip has the support hand somewhere else entirely.
+    this._handBusy = 0;
     this.dead = false;
     this.aimPitch = 0;
     this.aimYaw = 0;
@@ -424,11 +452,38 @@ export class FighterRig {
    */
   setLean(k) { this._leanTarget = THREE.MathUtils.clamp(k, -1, 1); }
 
-  /** Fire off a one-shot additive clip. Retriggering restarts it. */
+  /**
+   * Tell the rig which weapon is in the fist, so the support arm knows where to reach.
+   * Pass `null` when the hands are empty.
+   */
+  setWeapon(weaponId, group) {
+    const grip = SUPPORT_GRIP[weaponId];
+    this._weapon = grip ? group : null;
+    this._grip = grip ? new THREE.Vector3(grip[0], grip[1], grip[2]) : null;
+    this._ikWarm = null;   // a new weapon is a new reach; do not resume into it
+  }
+
+  /**
+   * Fire off a one-shot additive clip. Retriggering restarts it.
+   *
+   * Except for `fire`, which is not restarted until it has had time to read.
+   * Resetting an additive impulse puts it back at its zero frame, so an automatic
+   * weapon at 700 rpm retriggered it every 5 frames and the recoil never got past
+   * nothing — the fighters fired without moving at all. Past the peak, restarting is
+   * what makes sustained fire punch.
+   */
   trigger(name, weight = 1) {
     if (this.dead) return;
     const action = this.actions.get(name);
     if (!action) return;
+    const clip = action.getClip();
+    if (name === 'fire' && action.isRunning() && action.time < clip.duration * 0.30) {
+      action.setEffectiveWeight(weight);
+      return;
+    }
+    // These take the support hand off the weapon entirely, so the IK has to let go or
+    // it drags the hand straight back to the handguard mid-reload.
+    if (HAND_LEAVES.has(name)) this._handBusy = clip.duration;
     action.reset();
     action.setEffectiveWeight(weight);
     action.paused = false;
@@ -495,8 +550,88 @@ export class FighterRig {
 
     this.mixer.update(dt);
 
-    // Pins last: they are absolute, so anything above them is deliberately ignored.
-    if (!this.dead && this.pinned.size) this._applyPins();
+    if (!this.dead) {
+      // Pins first: they are absolute overrides, and the support solve has to run
+      // against the pose that will actually be drawn.
+      if (this.pinned.size) this._applyPins();
+      this._handBusy = Math.max(0, this._handBusy - dt);
+      this._solveSupportHand(dt);
+    }
+  }
+
+  /**
+   * Two-bone CCD pulling the left fist onto the weapon's support grip.
+   *
+   * Runs after the mixer so it composes on top of the animation instead of being
+   * overwritten by it, and warm-starts from last frame: the mixer rewrites these bones
+   * from the clip every frame, so a solver that cold-starts closes only part of the
+   * gap and is reset before it finishes. That failure mode is not obvious — the hand
+   * converges perfectly in isolation and still trails by 10 cm forever.
+   */
+  _solveSupportHand(dt) {
+    let busy = this._handBusy > 0;
+    if (!busy) {
+      for (const name of HAND_SUSTAINED) {
+        const action = this.actions.get(name);
+        // `isRunning` matters as much as the weight: an action that was never played
+        // still reports its default weight of 1, so a weight test alone declares the
+        // hand busy from the moment the rig is built.
+        if (action && action.isRunning() && action.getEffectiveWeight() > 0.15) { busy = true; break; }
+      }
+    }
+    // A shieldman pins his support arm, which is also how he opts out of the grip.
+    const want = this.pinned.has('upperarm_l') || busy ? 0 : this.supportWeight;
+    // Ease, so letting go for a reload and taking hold again are movements rather
+    // than cuts.
+    this._supportK += (want - this._supportK) * Math.min(1, dt * 8);
+    if (this._supportK < 0.02 || !this._grip || !this._weapon || !this._handL) {
+      this._ikWarm = null;
+      return;
+    }
+    const chain = this._ikChain;
+    if (chain.length < 2) return;
+
+    _ikTarget.copy(this._grip);
+    this._weapon.updateMatrixWorld(true);
+    this._weapon.localToWorld(_ikTarget);
+
+    // Snapshot the clip's own arm before anything touches it. It is what the solved
+    // arm blends back towards when the fighter lets go, and it has to be captured
+    // before the warm start overwrites the chain.
+    for (let i = 0; i < chain.length; i++) this._preSupport[i].copy(chain[i].quaternion);
+
+    if (this._ikWarm) {
+      for (let i = 0; i < chain.length; i++) chain[i].quaternion.copy(this._ikWarm[i]);
+      chain[chain.length - 1].updateMatrixWorld(true);
+    }
+
+    for (let pass = 0; pass < 4; pass++) {
+      for (const bone of chain) {
+        bone.getWorldPosition(_bonePos);
+        _fist.set(0, HAND_LENGTH, 0);
+        this._handL.localToWorld(_fist);
+        _from.copy(_fist).sub(_bonePos);
+        _to.copy(_ikTarget).sub(_bonePos);
+        if (_from.lengthSq() < 1e-8 || _to.lengthSq() < 1e-8) continue;
+        _q.setFromUnitVectors(_from.normalize(), _to.normalize());
+        bone.getWorldQuaternion(_q2);
+        bone.parent.getWorldQuaternion(_parentQ);
+        bone.quaternion.copy(_parentQ.invert()).multiply(_q).multiply(_q2);
+        bone.updateMatrixWorld(true);
+      }
+    }
+
+    if (!this._ikWarm) this._ikWarm = chain.map((b) => b.quaternion.clone());
+    else for (let i = 0; i < chain.length; i++) this._ikWarm[i].copy(chain[i].quaternion);
+
+    // Blend the solved arm back towards the clip's own arm as the weight drops, so a
+    // fighter letting go does it over a few frames instead of snapping.
+    if (this._supportK < 0.999) {
+      for (let i = 0; i < chain.length; i++) {
+        chain[i].quaternion.slerp(this._preSupport[i], 1 - this._supportK);
+      }
+      chain[chain.length - 1].updateMatrixWorld(true);
+    }
   }
 
   _setPole(name, weight) {
@@ -565,7 +700,19 @@ export class FighterRig {
 }
 
 const _q = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _parentQ = new THREE.Quaternion();
 const _X = new THREE.Vector3(1, 0, 0);
+const _ikTarget = new THREE.Vector3();
+const _bonePos = new THREE.Vector3();
+const _fist = new THREE.Vector3();
+const _from = new THREE.Vector3();
+const _to = new THREE.Vector3();
+
+// Hand bone head to closed fist, from the bone table in tools/blender/fighter.py.
+// The IK aims the *fist*, not the wrist: solving for the wrist leaves the hand
+// dangling a hand's length short of what it is supposed to be holding.
+const HAND_LENGTH = 0.11;
 
 /**
  * One shared material for every hitbox proxy. It never renders (the meshes are

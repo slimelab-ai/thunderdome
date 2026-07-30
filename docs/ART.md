@@ -168,6 +168,35 @@ a foot travelling the diagonal, and the diagonal of two half-weighted perpendicu
 strides is 0.71 of either, not the 1.0 a scalar average gives. Averaging the numbers
 instead of the vectors slid every diagonal by 40%.
 
+### 6.2 Holding the weapon
+
+**Both hands are solved from the weapon, not posed independently.** There are two
+holds — carry and shouldered — and each is authored as a *target*: where the firing
+wrist sits and which way the bore points. The right arm is solved to that, the hand is
+turned so the socket's bore runs down the barrel, and then the weapon's grip point
+falls out of the resulting pose and the left arm is solved to *it*. That order is the
+whole trick. Posing the two arms independently is how every fighter came to carry his
+rifle at arm's length off his right hip with his support hand gripping air 20 cm away —
+and worse, with the handguard 80 cm from a 60 cm arm, no runtime IK could have saved it
+either.
+
+At runtime a two-bone CCD keeps the left fist on the grip as the weapon moves with the
+walk, the aim offset and the recoil. It warm-starts, for the reason in the traps below.
+It lets go — eased, not cut — while a clip has the hand somewhere else, and a shieldman
+opts out entirely by pinning his support arm.
+
+**Bots aim down sights.** Shouldering is a state with a cost and a payoff: it takes
+about a third of a second, it slows the fighter by a third while it is up, and it
+roughly halves his group size. He will not take a shot at range until he is settled,
+which is the visible tell that he is aiming rather than hosing. Measured over six
+matches, fights resolve in 13.4 s with it against 14.1 s without, on 30% fewer shots —
+so the pacing is unchanged and the shots that are taken mean something.
+
+**The recoil impulse is not restarted while it is still reading.** `fire` is additive,
+and resetting an additive clip puts it back at its zero frame — so an automatic weapon
+retriggering every five frames pinned it to nothing and the fighters fired without
+moving at all. Past the peak, restarting is what makes sustained fire punch.
+
 An **aim offset** replaces rotating the spine in code. An authored pose distributes the
 turn across spine, chest, neck and head the way a body does; the procedural version bent
 one joint and read as a broken neck. Yaw is what lets a fighter track a target beside
@@ -304,6 +333,8 @@ at its worst — and asserts:
 | `pop` | biggest single-frame foot move as a multiple of the typical one |
 | `sink` | a foot below the floor |
 | `air` | both feet off the ground in a walk |
+| `grip` | distance from the left fist to the weapon it is holding, per weapon, standing / walking / crouched / firing |
+| `recoil` | that the muzzle actually swings under sustained automatic fire |
 | locked | the feet must not move *at all* when only aim or lean changes |
 | reach | aim pitch, aim yaw and lean each sweep far enough, and the right way |
 
@@ -403,6 +434,21 @@ pre-offset rotation before the mixer runs.
 solver that cold-starts from the animation pose closes only part of the gap and is
 reset before it finishes — the support hand trailed the magazine well by 11 cm forever
 while converging perfectly in isolation. Resume from last frame's solution.
+
+**Two hands on one object cannot be posed separately.** Author one of them from the
+object and derive the other. Both fighter arms were hand-keyed toward a rifle that was
+itself hand-keyed, and the result was a weapon held out at arm's length with the support
+hand 20 cm from the handguard — in every clip, on every weapon, for the whole game.
+
+**An additive one-shot that is reset faster than it plays contributes nothing.** The
+recoil clip peaks three frames in; an automatic weapon retriggered it every five, and
+`reset()` puts an additive clip back at its zero frame. The fighters fired without
+moving and the clip was perfectly correct.
+
+**An action that was never played still reports its default weight of 1.** Testing
+`getEffectiveWeight()` alone to decide whether a clip is active declares every clip
+active from the moment the rig is built — which switched the support-hand IK off
+permanently the first time it was tried. Test `isRunning()` too.
 
 **An FK leg has no notion of the floor.** Keying thigh and knee angles gives a walk
 that skates, and the skating rate depends on the stride distance the runtime happens to
