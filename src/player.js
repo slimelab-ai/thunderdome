@@ -745,7 +745,7 @@ export class Player {
     vm.getWorldQuaternion(_tmpQ).invert();
     _sUp.applyQuaternion(_tmpQ).normalize();
 
-    const relief = adsRelief(this.weapon.id, held, vm.scale.x);
+    const relief = adsRelief(this.weapon.id);
     return solveSightAlignment(_sRear, _sFront, _sUp, relief, vm.scale.x, outPos, outQuat);
   }
 

@@ -11,6 +11,7 @@ g.sandbox(['pistol', 'smg', 'shotgun', 'rifle', 'dmr']);
 g.step(1 / 60, 30);
 const p = g.player;
 p.alive = true; p.hp = p.maxHp; g.setLocked(true);
+p.pos.set(0, 0, 6); p.yaw = 0; p.pitch = 0;
 p.slots = [id]; p.slotIdx = 0; p.knifeOut = false;
 p._mountViewmodel();
 p.mag = p.weapon.mag;
@@ -29,8 +30,8 @@ const T = g.THREE;
 const dir = new T.Vector3();
 g.camera.getWorldDirection(dir);
 const mark = new T.Mesh(
-  new T.SphereGeometry(0.12, 16, 12),
-  new T.MeshBasicMaterial({ color: 0xff3020 }),
+  new T.SphereGeometry(0.09, 16, 12),
+  new T.MeshBasicMaterial({ color: 0xff2a10 }),
 );
-mark.position.copy(g.camera.position).addScaledVector(dir, 12);
+mark.position.copy(g.camera.position).addScaledVector(dir, 4);
 g.scene.add(mark);

@@ -180,25 +180,30 @@ export function solveSightAlignment(rear, front, up, relief, scale, outPos, outQ
  * whatever distance this says. Bigger numbers hold the weapon further out; the scope
  * comes in close because a scope you cannot see through is not a scope.
  */
+/**
+ * How far in front of the eye the rear sight sits when aiming, in metres.
+ *
+ * Close, because close is what makes a sight usable: the notch and post want to be
+ * big enough to place on a target. The weapon's tail is *allowed* to end up behind
+ * the camera — the near plane is at 5 cm and anything past it is simply not drawn,
+ * which is how a stock has always been kept out of a first-person view.
+ *
+ * Pushing the weapon out until the whole of it cleared the eye was the other way
+ * round, and it made things worse: at 39 cm the rifle's stock sat 17 cm away and 22
+ * degrees below the axis, which is inside the frame, so a third of the screen filled
+ * with wood. `npm run sightcheck` measures how much of the aimed view each weapon
+ * eats.
+ */
 export const ADS_RELIEF = {
-  pistol: 0.34,
-  smg: 0.30,
-  shotgun: 0.32,
-  rifle: 0.30,
-  dmr: 0.26,
+  pistol: 0.30,
+  smg: 0.25,
+  shotgun: 0.26,
+  rifle: 0.24,
+  dmr: 0.22,
 };
 
-/** How much air to leave between the back of the weapon and the player's eye. */
-export const ADS_CLEARANCE = 0.17;
-
-/**
- * Eye relief for a weapon: whichever is greater of the look choice above and the
- * distance needed to keep the weapon's own tail out of the player's face.
- */
-export function adsRelief(id, group, scale = 1) {
-  const want = ADS_RELIEF[id] ?? 0.30;
-  const tail = (group && group.userData.sightTail) || 0;
-  return Math.max(want, tail * scale + ADS_CLEARANCE);
+export function adsRelief(id) {
+  return ADS_RELIEF[id] ?? 0.26;
 }
 
 export const SUPPORT_GRIP = {
@@ -279,6 +284,9 @@ export function buildWeaponModel(id) {
       // than against a per-weapon offset somebody tuned by eye, so they have to
       // survive the export as findable objects. See tools/blender/weapons.py.
       if (child.name === 'sight_rear' || child.name === 'sight_front') {
+        // Reference points, not art: they mark the middle of the notch and the tip of
+        // the post, which are places you look *through* and *at*. Never drawn.
+        child.visible = false;
         group.userData[child.name === 'sight_rear' ? 'sightRear' : 'sightFront'] = child;
       }
     });
