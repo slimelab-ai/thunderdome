@@ -43,25 +43,41 @@ export function offsetBreachGoal(target, attacker, lane, {
 }
 
 /**
- * The assigned breach lane if its approach is clear, otherwise the nearest one that is.
+ * A route so thoroughly covered that no approach is worth taking.
  *
- * `routeCovered(goal, lane)` is the caller's business — it answers whether getting
- * to that goal means crossing ground somebody is presently working. The squad's lane
- * assignment still comes first, so a crossfire stays a crossfire whenever the fire
- * allows it; rerouting is what happens when it does not.
- *
- * When every lane is covered it returns the assigned one with `covered: true`. That
- * is not a failure — it is the signal to *stop advancing*. Picking the least-bad
- * approach there would be exactly the behaviour this exists to remove: somebody
- * always walks into the doorway, it just takes longer to decide which somebody.
+ * Reached only when the destination *and* most of the way to it are being worked;
+ * see `safeBreachLane` for why that distinction is the whole thing.
  */
-export function safeBreachLane(target, attacker, assigned, routeCovered, opts = {}) {
+export const LANE_ABANDON = 0.75;
+
+/**
+ * The assigned breach lane if its approach is clear, otherwise the cheapest one.
+ *
+ * `routeCost(goal, lane)` is the caller's business: 0 for a clear run, up to 1 for
+ * ground that is being worked from end to end. The squad's own assignment is tried
+ * first and ties go to it, so a crossfire stays a crossfire whenever the fire allows.
+ *
+ * This used to take a *boolean* — is the route covered at all — and that was wrong
+ * in the one situation it exists for. A fighter deciding to reroute is, by
+ * definition, already standing in the beaten zone, so every route out of it begins
+ * under fire and every lane came back "covered", including the ones that led
+ * somewhere safe. The squad would reject all seven and cower behind the nearest
+ * crate rather than take four steps right. Crossing the lane to *leave* it is a cost
+ * worth paying; ending up parked in it is not, and only a cost can tell those apart.
+ *
+ * `covered: true` still means stop advancing — but now it means every lane was bad,
+ * not merely that every lane started bad.
+ */
+export function safeBreachLane(target, attacker, assigned, routeCost, opts = {}) {
   const order = [assigned, ...BREACH_LANE_ORDER.filter(lane => lane !== assigned)];
+  let best = null;
   for (const lane of order) {
     const goal = offsetBreachGoal(target, attacker, lane, opts);
-    if (!routeCovered(goal, lane)) return { lane, goal, covered: false };
+    const cost = routeCost(goal, lane);
+    if (cost <= 0) return { lane, goal, cost: 0, covered: false };
+    if (!best || cost < best.cost - 1e-6) best = { lane, goal, cost };
   }
-  return { lane: assigned, goal: offsetBreachGoal(target, attacker, assigned, opts), covered: true };
+  return { ...best, covered: best.cost >= LANE_ABANDON };
 }
 
 export function shouldSprintAtTarget({ sight, melee = false, distance = 0, legDamage = 0 }) {

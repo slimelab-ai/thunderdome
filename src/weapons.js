@@ -3,12 +3,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { bindAuthoredMaterials } from './materials.js';
 
 // dmg = per bullet torso damage. spread in degrees (hipfire base).
+//
+// `suppression` is how hard a round from this weapon pins the people it is fired at,
+// relative to the rifle. Not a damage number — a *threat* number, which is why the
+// DMR outscores the SMG it loses a straight shootout to: a lane covered by something
+// that kills in one is a lane nobody crosses, while a sidearm cracking off across the
+// pit is a nuisance. Without this a player with the starting pistol could hold five
+// men behind a crate as effectively as an AK, which is not what a sidearm is.
 export const WEAPONS = {
   pistol: {
     id: 'pistol', name: 'P9 SIDEARM', price: 0, tier: 0,
     dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
+    // Just above what the decay eats at a fast trigger finger, so sustained
+    // deliberate fire does pin somebody after a few seconds and a couple of
+    // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
+    // at all, which is as wrong in the other direction.
+    suppression: 0.55,
     // When the slide is worked during the reload, as a fraction of the reload's
     // duration. Matches the frames in `anim_reload_pistol` where the support hand is
     // over the top of the weapon — without this the hand mimes a rack the slide never
@@ -21,6 +33,7 @@ export const WEAPONS = {
     dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
+    suppression: 0.75,
     desc: 'A hose of cheap brass. Wild past 12 meters, filthy up close.',
   },
   shotgun: {
@@ -28,6 +41,7 @@ export const WEAPONS = {
     dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
+    suppression: 0.6,
     // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
     // between shots; `shellReload` is the time to feed one round, repeated until the
     // tube is full — a shotgun does not swap a magazine.
@@ -39,6 +53,7 @@ export const WEAPONS = {
     dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9,
     spread: 1.7, adsSpread: 0.4, recoil: 1.5, pellets: 1,
     aiRange: 20, adsFov: 55, sound: 'rifle',
+    suppression: 1,
     desc: 'The workhorse of every syndicate in the league. 2–3 rounds does it.',
   },
   dmr: {
@@ -46,6 +61,7 @@ export const WEAPONS = {
     dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1,
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
+    suppression: 1.15,
     desc: 'One shot, one funeral. Scoped. Slow. Surgical.',
   },
 };

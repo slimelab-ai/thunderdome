@@ -44,6 +44,14 @@ const SUPPRESSION_PERIOD = 0.22;
  */
 const HOLD_BUDGET = 5;
 
+/**
+ * Where along a candidate route to check for incoming fire, and what each point is
+ * worth. Fractions of the way there, paired with weights — the destination counts
+ * for six times the first step, because leaving a beaten zone means crossing it.
+ */
+const ROUTE_SAMPLES = [[0.35, 0.5], [0.6, 1], [0.85, 1.5], [1, 3]];
+const ROUTE_WEIGHT_TOTAL = ROUTE_SAMPLES.reduce((sum, [, weight]) => sum + weight, 0);
+
 /** Sprinting boots are loud. One footfall report per this many seconds. */
 const SPRINT_NOISE_PERIOD = 0.45;
 
@@ -886,11 +894,15 @@ export class Combatant {
         // actively covered, which is the one thing worth breaking formation over.
         const choice = this.archetype === 'rusher'
           ? { lane: assigned, goal: offsetBreachGoal(tp, this.pos, assigned), covered: false }
-          : safeBreachLane(tp, this.pos, assigned, goal => this._routeSwept(world, goal, now));
+          : safeBreachLane(tp, this.pos, assigned, goal => this._routeCost(world, goal, now));
         this.breachLane = choice.lane;
         this.breachTarget = this.target;
         this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
-        this.breachT = 6;
+        // A lane taken to get away from incoming fire is committed to for longer than
+        // a routine one. Re-deciding on the usual six-second cadence sent a fighter
+        // who had successfully broken right back toward the corner he had just left,
+        // because from his new position the old lane scored fine again.
+        this.breachT = choice.lane !== assigned ? 11 : 6;
         if (choice.covered && this.holdSpent < HOLD_BUDGET) {
           // Every way in is being worked. Hold — the gun has to stop eventually, and
           // walking in one at a time until it does is how a squad gets fed to a
@@ -1562,11 +1574,13 @@ export class Combatant {
    * worked*. The second one accumulates — one round is nothing, twenty into the
    * same doorway is a reason to go round.
    */
-  hearNoise(source, pos, kind, now) {
+  hearNoise(source, pos, kind, now, weight = 1) {
     const contact = this.perception.hear(source, pos, kind, this.pos, now);
     // Gated on the contact, which is falsy exactly when the noise was out of
     // earshot — a fighter cannot be pinned by fire he cannot hear.
-    if (contact && kind === 'gunshot') this.suppression.record(pos, SUPPRESSION.shot, now);
+    if (contact && kind === 'gunshot') {
+      this.suppression.record(pos, SUPPRESSION.shot * weight, now);
+    }
     return contact;
   }
 
@@ -1590,7 +1604,7 @@ export class Combatant {
     this.rig.trigger('fire');
     // Firing is a decision to be located. Everyone hostile inside earshot gets a
     // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
-    world.emitNoise?.(this, from, 'gunshot');
+    world.emitNoise?.(this, from, 'gunshot', w.suppression ?? 1);
     const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
     if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
     this.shotsFired = (this.shotsFired || 0) + 1;
@@ -1606,25 +1620,30 @@ export class Combatant {
   }
 
   /**
-   * Does getting to `goal` mean crossing ground somebody is presently covering?
+   * How much of the way to `goal` is ground somebody is presently covering, 0..1.
    *
-   * Sampled along the route rather than at the endpoint, because the endpoint is
-   * rarely the problem — the doorway two thirds of the way there is. Bails
-   * immediately when nothing is hot, which is most of the time.
+   * Weighted hard toward the far end. A fighter who reroutes is already standing in
+   * the beaten zone, so the near samples are covered whichever way he goes — count
+   * them equally and every escape scores as badly as staying put, which is how a
+   * squad ends up cowering behind one crate with a clear route four steps to its
+   * right. What separates a good lane from a bad one is where it *ends*.
+   *
+   * Bails immediately when nothing is hot, which is most of the time.
    */
-  _routeSwept(world, goal, now) {
-    if (!this.suppression.anyHot(now)) return false;
+  _routeCost(world, goal, now) {
+    if (!this.suppression.anyHot(now)) return 0;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
-    for (const t of [0.45, 0.75, 1]) {
+    let swept = 0;
+    for (const [t, weight] of ROUTE_SAMPLES) {
       _routePoint.set(
         this.pos.x + (goal.x - this.pos.x) * t,
         chest,
         this.pos.z + (goal.z - this.pos.z) * t,
       );
-      if (this.suppression.covering(_routePoint, sees, now)) return true;
+      if (this.suppression.covering(_routePoint, sees, now)) swept += weight;
     }
-    return false;
+    return swept / ROUTE_WEIGHT_TOTAL;
   }
 
   removeFrom(world) {
