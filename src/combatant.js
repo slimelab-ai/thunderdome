@@ -717,7 +717,7 @@ export class Combatant {
         // continuing toward a committed breach goal. Distance alone used to
         // keep the gun down across a completely visible gap.
         this.sprintNow = shouldSprintAtTarget({
-          sight,
+          sight: sight || this.peekSide !== 0,
           melee: !!w.melee,
           distance: dist,
           legDamage: this.legDmg,
