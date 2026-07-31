@@ -176,7 +176,13 @@ export class UI {
     // crosshair spread
     const spreadPx = 6 + player.currentSpread() * 14;
     this.el.crosshair.style.setProperty('--sp', `${spreadPx.toFixed(1)}px`);
-    this.el.crosshair.style.opacity = player.ads > 0.7 && player.weapon.id === 'dmr' ? '0.4' : '1';
+    // Fade the crosshair out as the weapon comes up.
+    //
+    // Every weapon has real sights now, and the point of aiming is to use them; a
+    // painted dot sitting on top of the front post is two aiming references arguing.
+    // Gone by the time the weapon is 60% up, so the handover happens while the sights
+    // are still travelling and there is never a moment with both.
+    this.el.crosshair.style.opacity = Math.max(0, 1 - player.ads * 1.7).toFixed(2);
 
     // objective
     const alive = match.enemiesAlive;

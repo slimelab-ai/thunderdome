@@ -30,7 +30,19 @@ const availablePort = () => new Promise((resolvePort, reject) => {
 });
 const collectorPort = await availablePort();
 const vitePort = await availablePort();
-const bundledChrome = resolve('.cache/puppeteer/chrome-headless-shell/linux-151.0.7922.71/chrome-headless-shell-linux64/chrome-headless-shell');
+// Where `@puppeteer/browsers install chrome-headless-shell` leaves the binary. All
+// three of the directory, the archive name and the suffix differ per platform.
+const CHROME_BUILD = '151.0.7922.71';
+const [chromeDir, chromeArchive, chromeSuffix] = {
+  win32: ['win64', 'win64', '.exe'],
+  darwin: process.arch === 'arm64' ? ['mac_arm', 'mac-arm64', ''] : ['mac', 'mac-x64', ''],
+}[process.platform] || ['linux', 'linux64', ''];
+const bundledChrome = resolve(
+  '.cache/puppeteer/chrome-headless-shell',
+  `${chromeDir}-${CHROME_BUILD}`,
+  `chrome-headless-shell-${chromeArchive}`,
+  `chrome-headless-shell${chromeSuffix}`,
+);
 const playwrightChrome = resolve(homedir(), '.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell');
 const chrome = process.env.CHROME_PATH ||
   (existsSync(bundledChrome) ? bundledChrome : playwrightChrome);
@@ -43,12 +55,19 @@ const start = (command, args, env = {}) => {
   child.stderr.on('data', chunk => process.stderr.write(chunk));
   return child;
 };
+// Vite colours its ready banner, and picocolors treats win32 as colour-capable even
+// when stdout is a pipe — so the marker arrives as `Local\x1b[22m:` and a plain
+// substring test never matches. Strip the escapes, and keep a short tail so a marker
+// split across two reads is still found.
+const ANSI = /\x1B\[[0-9;]*m/g;
 const waitFor = (child, text) => new Promise((resolveReady, reject) => {
   child.once('exit', code => reject(new Error(`${text} process exited ${code}`)));
+  let seen = '';
   child.stdout.on('data', chunk => {
     const output = String(chunk);
     process.stdout.write(output);
-    if (output.includes(text)) resolveReady();
+    seen = (seen + output.replace(ANSI, '')).slice(-4096);
+    if (seen.includes(text)) resolveReady();
   });
 });
 
@@ -58,9 +77,12 @@ try {
     PORT: String(collectorPort), ANALYTICS_DATA_DIR: dataDir,
   });
   await waitFor(collector, 'analytics collector listening');
-  const vite = start(resolve('node_modules/.bin/vite'), ['--host', '127.0.0.1', '--port', String(vitePort)], {
-    ANALYTICS_URL: `http://127.0.0.1:${collectorPort}`,
-  });
+  // Vite's own entry point rather than the `.bin` shim: the shim is an extensionless
+  // shell script that Windows cannot spawn, and reaching for the .cmd beside it would
+  // need a shell, whose SIGTERM would not carry through to vite itself.
+  const vite = start(process.execPath, [
+    resolve('node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', String(vitePort),
+  ], { ANALYTICS_URL: `http://127.0.0.1:${collectorPort}` });
   await waitFor(vite, 'Local:');
   browser = await puppeteer.launch({
     executablePath: chrome, headless: true,

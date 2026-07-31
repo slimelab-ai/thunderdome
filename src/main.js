@@ -635,7 +635,7 @@ function clearCombatants() {
   world.hitMeshes.length = 0;
   for (const z of world.zones) removeZoneVisual(z);
   world.zones.length = 0;
-  if (match?.airdrop?.mesh) scene.remove(match.airdrop.mesh);
+  clearAirdrop();
   if (world.grenades) {
     for (const g of world.grenades) scene.remove(g.mesh);
     world.grenades.length = 0;
@@ -1123,9 +1123,65 @@ function updateGrenades(dt) {
 }
 
 // ============================================================ events (tournament master)
+/**
+ * Zone glows come out of a fixed pool.
+ *
+ * Adding a light to the scene changes its light count, which invalidates every cached
+ * shader program — the next frame then recompiles all of them. A molotov spawns three
+ * fire zones at once, and the first render after that measured at 7.5 seconds against
+ * a 6 ms steady frame, recompiling ten programs. It is the same reason fx.js pools its
+ * muzzle flashes rather than making a light per shot.
+ *
+ * Six covers the worst case that can actually arise. Random events land 24-38 s apart
+ * and no zone outlives 18 s, so only one event's zones are ever alight at once — a
+ * molotov's three — alongside at most two overlapping anti-camp fires.
+ */
+const MAX_ZONE_LIGHTS = 6;
+const zoneLights = [];
+for (let i = 0; i < MAX_ZONE_LIGHTS; i++) {
+  // Parked at zero intensity, never hidden: three counts only *visible* lights, so
+  // toggling `visible` would cause exactly the recompile this pool exists to avoid.
+  const light = new THREE.PointLight(0xff6a1a, 0, 12, 1.6);
+  scene.add(light);
+  zoneLights.push({ light, zone: null });
+}
+
+// The care package's beacon, for the same reason and on the same terms. Only one drop
+// is ever in play, so it gets one permanent light rather than a pool.
+const airdropBeacon = new THREE.PointLight(0xffb92e, 0, 14, 1.4);
+scene.add(airdropBeacon);
+
+function clearAirdrop() {
+  if (match?.airdrop?.mesh) scene.remove(match.airdrop.mesh);
+  airdropBeacon.intensity = 0;
+  if (match) match.airdrop = null;
+}
+
+function acquireZoneLight(zone, color, intensity) {
+  let slot = zoneLights.find(candidate => !candidate.zone);
+  if (!slot) {
+    // Nothing free: take the glow off whichever zone is closest to burning out. It
+    // keeps its haze and its damage, it just stops casting.
+    slot = zoneLights.reduce((a, b) => (a.zone.ttl <= b.zone.ttl ? a : b));
+    slot.zone.lightSlot = null;
+  }
+  slot.zone = zone;
+  slot.light.color.setHex(color);
+  slot.light.intensity = intensity;
+  slot.light.distance = zone.r * 3.5;
+  slot.light.position.set(zone.x, 1.2, zone.z);
+  zone.lightSlot = slot;
+}
+
 function removeZoneVisual(z) {
   if (z.mesh) scene.remove(z.mesh);
-  if (z.light) scene.remove(z.light);
+  // The light goes back to the pool rather than out of the scene: removing it would
+  // change the light count and recompile every shader, exactly as adding it does.
+  if (z.lightSlot) {
+    z.lightSlot.light.intensity = 0;
+    z.lightSlot.zone = null;
+    z.lightSlot = null;
+  }
 }
 
 function spawnZone(type, x, z, r, ttl, dps) {
@@ -1136,10 +1192,10 @@ function spawnZone(type, x, z, r, ttl, dps) {
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false })
   );
   mesh.position.set(x, isGas ? 1.3 : 0.25, z);
-  const light = new THREE.PointLight(color, isGas ? 25 : 40, r * 3.5, 1.6);
-  light.position.set(x, 1.2, z);
-  scene.add(mesh, light);
-  world.zones.push({ type, x, z, r, ttl, dps, mesh, light });
+  scene.add(mesh);
+  const zone = { type, x, z, r, ttl, dps, mesh, lightSlot: null };
+  acquireZoneLight(zone, color, isGas ? 25 : 40);
+  world.zones.push(zone);
 }
 
 function randomFloorSpot(margin = 5) {
@@ -1214,12 +1270,13 @@ function fireEvent() {
     const mesh = new THREE.Group();
     const crate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x8a6d2f, roughness: 0.8, metalness: 0.1 }));
     crate.position.y = 0.5;
-    const beacon = new THREE.PointLight(0xffb92e, 50, 14, 1.4);
-    beacon.position.y = 1.6;
-    mesh.add(crate, beacon);
+    mesh.add(crate);
     mesh.position.set(s.x, 14, s.z);
     scene.add(mesh);
-    match.airdrop = { mesh, beacon, x: s.x, z: s.z, landed: false, ttl: 30 };
+    // The beacon is not parented to the crate, so it is positioned to follow it.
+    airdropBeacon.position.set(s.x, 14 + 1.6, s.z);
+    airdropBeacon.intensity = 50;
+    match.airdrop = { mesh, beacon: airdropBeacon, x: s.x, z: s.z, landed: false, ttl: 30 };
     ui.eventBanner('CARE PACKAGE', 'Full patch-up + cash for whoever grabs it', 'var(--gold)');
     announcer.say('event_airdrop', {}, { force: true });
   } else if (ev === 'molotov') {
@@ -1323,6 +1380,7 @@ function updateEvents(dt) {
     if (!ad.landed) {
       ad.mesh.position.y -= dt * 5;
       if (ad.mesh.position.y <= 0) { ad.mesh.position.y = 0; ad.landed = true; audio.drop(); }
+      airdropBeacon.position.y = ad.mesh.position.y + 1.6;
     } else {
       ad.mesh.rotation.y += dt * 1.2;
       ad.beacon.intensity = 35 + Math.sin(match.time * 6) * 20;
@@ -1335,11 +1393,10 @@ function updateEvents(dt) {
         const amt = payout(250);
         if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); }
         ui.eventBanner('PACKAGE CLAIMED', 'Full patch-up. Back to work.', '#86ff3c');
-        scene.remove(ad.mesh);
-        match.airdrop = null;
+        clearAirdrop();
       }
     }
-    if (match.airdrop && ad.ttl <= 0) { scene.remove(ad.mesh); match.airdrop = null; }
+    if (match.airdrop && ad.ttl <= 0) clearAirdrop();
   }
 }
 
@@ -2468,6 +2525,14 @@ window.__game = {
   assetsReady,                            // tools/shot.mjs waits on this before posing
   setQuality(name) { pipeline.setQuality(name); saveGraphicsQuality(pipeline.quality); },
   sandbox(weapons, opts) { return enterSandbox(weapons, opts); },
+  // Hazard zones are otherwise only reachable by camping for 22 s or waiting out the
+  // event timer, which makes the cost of lighting them awkward to measure.
+  spawnZone(type, x, z, r, ttl, dps) { return spawnZone(type, x, z, r, ttl, dps); },
+  // The same teardown the expiry branch runs, so the light really goes back to the pool.
+  expireZones() {
+    for (const z of world.zones) removeZoneVisual(z);
+    world.zones.length = 0;
+  },
   get stats() { return pipeline.stats(); },
   tuning: { STICK, TOUCH, AIM_ASSIST },
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },

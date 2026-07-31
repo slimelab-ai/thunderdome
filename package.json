@@ -14,6 +14,7 @@
     "shot": "node tools/shot.mjs",
     "animcheck": "node tools/animcheck.mjs",
     "fightercheck": "node tools/fightercheck.mjs",
+    "sightcheck": "node tools/sightcheck.mjs",
     "simulate:liquidation": "node tools/liquidation-sim/run.mjs"
     ,"simulate:liquidation:real": "node tools/headless-liquidation.mjs"
   },

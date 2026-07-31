@@ -286,7 +286,78 @@ the shoulder also swings the hand forward past the muzzle. `tools/poses/hands.js
 reports both hand positions in camera space so the pose can be solved against a
 target instead of nudged.
 
-### 6.3 Hit volumes
+### 6.3 Aiming down sights
+
+**Alignment is solved against the sights that are modelled, not authored per weapon.**
+Every gun exports `sight_rear` and `sight_front` unjoined, and the runtime computes the
+viewmodel transform that puts the line between them on the camera's axis with the rear
+sight at the eye relief. Adding a weapon needs nothing but a pair of sights; moving a
+weapon's sights needs nothing at all.
+
+The whole of ADS used to be one offset —
+
+    const adsPos = new THREE.Vector3(0, -0.148, -0.3);
+
+— shared by every weapon and evidently fitted against the rifle. Every other gun was
+off by however far its sights sat from the rifle's, and nothing in the project could
+say by how much. `npm run sightcheck` says: it aims each weapon and measures where the
+sights land **in pixels from the crosshair**, which is the only definition of aligned
+that matters.
+
+**The markers go where you look, not where the metal is.** The rear marker sits in the
+middle of the *notch* — the gap — and the front marker at the *tip* of the post. Put
+them at the centres of the blades instead and the solve is still exact and the weapon is
+useless: the metal lands dead on the crosshair and covers the thing being aimed at.
+Both markers sit at the same height above the bore, so the sight line runs parallel to
+it and the target sits on top of the post where it belongs.
+
+**Every weapon gets a notch and a post, not a block.** Two blades with a gap you sight
+through, a post whose tip meets the crosshair, ears where the weapon would have them.
+Solid cubes are what were there before, and a solid cube on the sight line is a blindfold.
+
+**The stock goes behind the near plane, not further away.** A rifle is mostly *behind*
+its rear sight — a receiver, a grip, and a stock that ends at a shoulder which in first
+person is where the camera is. Pushing the weapon out until all of it cleared the eye
+made things worse: at 39 cm the rifle's stock sat 17 cm away and 22 degrees below the
+axis, which is inside the frame, so a third of the screen filled with wood. Bringing the
+sights *closer* puts the tail past the 5 cm near plane, where it is simply not drawn —
+which is how first-person weapons have always been held — and makes the sights bigger
+and easier to use at the same time.
+
+**A sight on the axis is necessary and not sufficient.** A hand parked on the sight line
+is perfectly aligned and completely useless, and neither shows up in a check that only
+asks where the sights are. The bench fires a ray down the middle to see what it meets
+first, and fans out over the couple of degrees a player is actually looking through.
+
+**The painted crosshair goes away as the sights arrive.** Two aiming references
+disagreeing with each other is worse than either alone, and a dot sitting on top of a
+front post is exactly that. It is gone by the time the weapon is 60% up, so the handover
+happens while the sights are still travelling.
+
+**A scope vignettes; irons do not.** Looking down a tube costs you the edge of the view
+by construction, so the clear-picture figure for a scoped weapon describes the tube
+rather than the alignment and gets its own limit. Widening the bore to satisfy the
+iron-sight number made the picture worse, not better — the honest move was to admit the
+two are different things.
+
+**Sights need something to stand on.** The SMG's front post sat 3 cm above the barrel
+and well past the end of its rail, so it floated in mid-air; a scope tube open at both
+ends has no end at all, and from the hip it stopped with a hole where its lenses should
+be. Neither shows up in an alignment check — both are things you can only see by
+looking, from the hip, which is where a weapon spends most of its time.
+
+**Do not write the failure out of the check.** The first version of that ray test
+skipped the sight objects themselves, on the theory that sights belong on the aim line.
+They belong *around* it. Excusing them meant the bench reported a spotless sight picture
+while solid metal sat in the middle of the screen — a metric written to ignore the exact
+failure it exists to catch.
+
+**Recoil is damped in the viewmodel while aiming, not removed.** At full hip-fire kick
+the sight picture washes off the screen and back on every shot. How much a weapon should
+kick is the recoil system's business; what aiming has to guarantee is that the picture
+*returns* — which the bench checks by releasing the trigger and looking again.
+
+### 6.4 Hit volumes
 
 Fighters are hit through invisible boxes parented to bones; the player is hit through a
 capsule and a head sphere. Neither has a visible representation, so both can be wrong
@@ -483,6 +554,12 @@ at its worst — and asserts:
 | `recoil` | that the muzzle actually swings under sustained automatic fire |
 | bore height | the shouldered weapon's bore against the sight line — a weapon carried at the chest cannot clear cover its owner can see over |
 | peek reach | how far a lean carries the muzzle, which is what combat may size its corner peek to |
+
+`tools/sightcheck.mjs` (`npm run sightcheck`) aims every weapon in the sandbox and
+measures the sight picture in screen pixels: distance from the crosshair, how far apart
+the two sights sit, whether the raise swings wide, where it settles after a burst,
+whether the weapon is rolled, and whether the player's own hands or stock are in the
+way. `--pose ads` captures the matching picture to look at.
 | coverage | fraction of the drawn fighter the bone hitboxes actually cover, how much sticks out past him, and whether skull hits come back as head hits |
 | transitions | worst single-frame head movement and blendspace churn through a dead stop, a standing start, an instant reversal, and per-frame heading noise |
 | bob | how far the head rides up and down and side to side over one cycle |
@@ -603,6 +680,23 @@ be small enough to look like a bug in something else.** The camera and the hit m
 each derived a head position independently and landed 5 cm apart; the symptom was bots
 declining to shoot, which looks like an AI problem and is a geometry problem. One of
 them has to own the answer and the other has to read it.
+
+**Take a ray from the projection, not from the transform.** `camera.getWorldDirection`
+returned a vector 26 degrees off the view while the sights projected to the middle of
+the screen. Both cannot be right, and the one the player sees is the projection — every
+ray cast down the other sailed past the weapon and reported a spotless sight picture.
+Unprojecting the centre of the screen is the only definition guaranteed to agree with
+where things appear, and starting at the near plane excludes clipped geometry for free.
+
+**A metric you cannot justify is worse than no metric.** A screen-coverage measure
+added alongside these read 2% while the weapon visibly filled a fifth of the frame. It
+was removed rather than shipped: a number nobody trusts still gets quoted.
+
+**`__game.step()` does nothing unless a match is running.** A bench that arms the
+player and starts stepping without starting one runs no frames at all, and then reports
+the viewmodel's *constructor* position as a 300-pixel alignment error with complete
+confidence. Start a match or the sandbox first, and assert that the thing being driven
+actually ran — this harness now fails loudly rather than measuring a static scene.
 
 **A resolver that samples cannot see anything smaller than its step.** The player's hit
 model marched in 0.35 m steps past a 0.22 m head. Every part of the system around it was

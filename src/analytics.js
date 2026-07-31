@@ -9,19 +9,50 @@ const MAX_BATCH_EVENTS = 100;
 const MAX_BATCH_BYTES = 48_000;
 const MAX_EVENT_BYTES = 40_000;
 const MAX_OUTBOX_BYTES = 3_500_000;
+// Shedding down to a low-water mark keeps trimming amortized. Trimming to the cap
+// exactly means the very next event is over budget again, so every later emit
+// re-scans the whole outbox to drop exactly one record.
+const TRIM_TARGET_BYTES = 3_150_000;
 
-const jsonBytes = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+const encoder = new TextEncoder();
+
+// Serialising a record is the hottest operation in this module: the outbox is written
+// whole on every persist, and each write used to re-walk every queued object. Records
+// are never mutated once queued, so one cached string per record stays valid for life.
+const serialCache = new WeakMap();
+
+function serialize(event) {
+  let cached = serialCache.get(event);
+  if (!cached) {
+    const json = JSON.stringify(event);
+    cached = { json, bytes: encoder.encode(json).byteLength };
+    serialCache.set(event, cached);
+  }
+  return cached;
+}
+
+// The outbox on disk is a JSON array: two brackets plus one comma between records.
+const framedBytes = (bytes, count) => 2 + bytes + Math.max(0, count - 1);
+
+function serializeEvents(events) {
+  if (!events.length) return '[]';
+  const fragments = new Array(events.length);
+  for (let i = 0; i < events.length; i++) fragments[i] = serialize(events[i]).json;
+  return `[${fragments.join(',')}]`;
+}
+
 const protectedLifecycleEvent = event =>
   event?.event_type === 'match_enter' || event?.event_type === 'match_terminal';
 
 function compactOversizedEvent(event) {
   try {
-    if (jsonBytes(event) <= MAX_EVENT_BYTES) return event;
+    const bytes = serialize(event).bytes;
+    if (bytes <= MAX_EVENT_BYTES) return event;
     return {
       ...event,
       payload: {
         payload_omitted: true,
-        original_bytes: jsonBytes(event),
+        original_bytes: bytes,
         reason: 'event_exceeded_client_limit',
       },
     };
@@ -76,7 +107,8 @@ export class Analytics {
     this.now = now;
     this.installationId = stableId('thunderdome_analytics_installation_id', storage, randomUUID);
     this.sessionId = randomUUID();
-    this.queue = loadOutbox(storage);
+    this.persistScheduled = false;
+    this.setQueue(loadOutbox(storage));
     this.context = {};
     this.flushing = false;
     this.deliveryFailures = 0;
@@ -155,9 +187,62 @@ export class Analytics {
     };
   }
 
+  // Every queue replacement goes through here so the id index and the byte total
+  // can never drift from the array they describe.
+  setQueue(events) {
+    this.queue = events;
+    this.queuedIds = new Set();
+    this.queueBytes = 0;
+    for (const event of events) {
+      this.queuedIds.add(event.event_id);
+      this.queueBytes += serialize(event).bytes;
+    }
+  }
+
+  outboxBytes() {
+    return framedBytes(this.queueBytes, this.queue.length);
+  }
+
+  // Drops the oldest expendable records in one pass. Lifecycle events are never shed:
+  // a missing match_terminal silently corrupts every funnel built on it.
+  trimOutbox() {
+    if (this.outboxBytes() <= MAX_OUTBOX_BYTES) return;
+    const dropped = new Set();
+    let bytes = this.queueBytes;
+    let count = this.queue.length;
+    for (let i = 0; i < this.queue.length; i++) {
+      if (count <= 1 || framedBytes(bytes, count) <= TRIM_TARGET_BYTES) break;
+      const event = this.queue[i];
+      if (protectedLifecycleEvent(event)) continue;
+      dropped.add(i);
+      bytes -= serialize(event).bytes;
+      count--;
+    }
+    if (!dropped.size) return;
+    this.setQueue(this.queue.filter((_, index) => !dropped.has(index)));
+  }
+
+  // Lifecycle events reach storage before emit() returns. Ordinary telemetry coalesces
+  // onto the next microtask: rewriting the whole outbox per event is quadratic, and a
+  // headless match emitting thousands of frames in one synchronous burst spent minutes
+  // of wall clock re-serialising records that had not changed.
+  schedulePersist(event) {
+    if (protectedLifecycleEvent(event)) {
+      this.persist();
+      return;
+    }
+    if (this.persistScheduled) return;
+    this.persistScheduled = true;
+    queueMicrotask(() => this.persistPending());
+  }
+
+  persistPending() {
+    if (this.persistScheduled) this.persist();
+  }
+
   emit(type, payload = {}, { eventId = null, context = null } = {}) {
     const id = eventId || this.randomUUID();
-    if (this.queue.some(event => event.event_id === id)) return id;
+    if (this.queuedIds.has(id)) return id;
     let event = {
       schema_version: SCHEMA_VERSION,
       client_time: this.now().toISOString(),
@@ -174,19 +259,20 @@ export class Analytics {
     event = compactOversizedEvent(event);
     if (!event) return id;
     this.queue.push(event);
-    this.persist();
+    this.queuedIds.add(event.event_id);
+    this.queueBytes += serialize(event).bytes;
+    // Bound memory even inside a synchronous burst that never reaches a persist.
+    this.trimOutbox();
+    this.schedulePersist(event);
     if (this.queue.length >= MAX_BATCH_EVENTS) this.flush();
     return id;
   }
 
   persist() {
+    this.persistScheduled = false;
     try {
-      while (this.queue.length > 1 && jsonBytes(this.queue) > MAX_OUTBOX_BYTES) {
-        const expendable = this.queue.findIndex(event => !protectedLifecycleEvent(event));
-        if (expendable < 0) break;
-        this.queue.splice(expendable, 1);
-      }
-      this.storage.setItem(OUTBOX_KEY, JSON.stringify(this.queue));
+      this.trimOutbox();
+      this.storage.setItem(OUTBOX_KEY, serializeEvents(this.queue));
       return true;
     } catch {
       this.storageFailures++;
@@ -197,6 +283,9 @@ export class Analytics {
   }
 
   isDurablyQueued(eventId) {
+    // Settle any coalesced write first, so the answer describes storage as callers
+    // will find it rather than as it was one microtask ago.
+    this.persistPending();
     try {
       const parsed = JSON.parse(this.storage.getItem(OUTBOX_KEY) || '[]');
       return Array.isArray(parsed) && parsed.some(event => event?.event_id === eventId);
@@ -209,7 +298,7 @@ export class Analytics {
     const events = [];
     let bytes = 20;
     for (const event of this.queue) {
-      const eventBytes = jsonBytes(event) + 1;
+      const eventBytes = serialize(event).bytes + 1;
       if (eventBytes > MAX_BATCH_BYTES) continue;
       if (events.length && (events.length >= MAX_BATCH_EVENTS || bytes + eventBytes > MAX_BATCH_BYTES)) break;
       events.push(event);
@@ -222,7 +311,7 @@ export class Analytics {
     if (!this.queue.length || this.flushing) return;
     const events = this.nextBatch();
     if (!events.length) return;
-    const body = JSON.stringify({ events });
+    const body = `{"events":${serializeEvents(events)}}`;
     if (beacon && this.navigator?.sendBeacon?.(ENDPOINT, new Blob([body], { type: 'application/json' }))) {
       // Keep beaconed records in the persistent outbox until a later acknowledged
       // fetch removes them. Duplicate event_ids are safer than silent data loss.
@@ -247,7 +336,7 @@ export class Analytics {
         throw new Error('analytics acknowledgement did not cover the batch');
       }
       const sentIds = new Set(events.map(event => event.event_id));
-      this.queue = this.queue.filter(event => !sentIds.has(event.event_id));
+      this.setQueue(this.queue.filter(event => !sentIds.has(event.event_id)));
       this.deliveryFailures = 0;
       this.acknowledgedEvents += events.length;
       this.lastSuccessfulFlushAt = this.now().toISOString();
