@@ -747,6 +747,20 @@ export class Combatant {
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
       }
+      // Two ways of getting a fighter to use the cover on his own side have now been
+      // tried and both cost more than they saved, so the note is here rather than the
+      // code. Walking him to a spot  picks: deaths 14 to 18 of 30, damage
+      // on the shooter 80,700 down to 68,100 — he stops shooting and is caught in
+      // transit. Biasing his jink toward the unswept side instead, which is the same
+      // instinct at a tenth of the price: deaths 18 to 22, damage 71,000 down to
+      // 55,700. Cheaper and worse.
+      //
+      // Both fail the same way. He is already winning the damage race from the open,
+      // so any movement that is not *at* the enemy trades a firing solution for a
+      // better place to stand, and the exposure saved never covers it. The thing to
+      // fix is probably not his footwork at all — it is that the goal he was sent to
+      // had no cover on it. Choosing breach goals that come with an angle and
+      // something to lean on is a different mechanism, and the one worth building.
       // Fighting *from* cover, rather than wherever the walk happened to end, is
       // the obvious next thing and it does not work. A fighter who has flanked wide
       // is out of the beaten zone and so not pinned, and he stands in the open
@@ -1015,13 +1029,17 @@ export class Combatant {
         // if the lanes stay spread. It gets overruled only by ground that is being
         // actively covered, which is the one thing worth breaking formation over.
         const sideByLane = new Map();
-        const choice = this.archetype === 'rusher'
-          ? { lane: assigned, goal: offsetBreachGoal(tp, this.pos, assigned), covered: false }
-          : safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
-            const { cost, side } = this._routeCostBothWays(world, goal, now);
-            sideByLane.set(lane, side);
-            return cost;
-          });
+        const priced = safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
+          const { cost, side } = this._routeCostBothWays(world, goal, now);
+          sideByLane.set(lane, side);
+          return cost;
+        });
+        // The rusher gets the same survey and a different conclusion. He is never
+        // pinned down and never routes the long way — but he was previously handed
+        // the squad assignment untested, which on the centre lane is a charge
+        // straight down the barrel. Brave is picking the cheapest way in and going
+        // anyway; walking the worst one because nobody looked is just stupid.
+        const choice = this.archetype === 'rusher' ? { ...priced, covered: false } : priced;
         // Walk it the way it was costed.
         this.breachSide = sideByLane.get(choice.lane) ?? this.flankSide;
         this.breachLane = choice.lane;
