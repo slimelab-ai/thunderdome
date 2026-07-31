@@ -12,7 +12,9 @@ import {
 import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
 } from './perception.js';
-import { SuppressionMap, SUPPRESSION, coverStep } from './suppression.js';
+import {
+  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, worthSuppressing,
+} from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
@@ -24,12 +26,23 @@ const _targetBelief = new THREE.Vector3();
 const _laneFrom = new THREE.Vector3();
 const _laneTo = new THREE.Vector3();
 const _routePoint = new THREE.Vector3();
+const _suppressAt = new THREE.Vector3();
 
 /** How often a fighter sweeps every hostile for line of sight, in seconds. */
 const SCAN_PERIOD = 0.18;
 
 /** How often he re-checks whether the ground he is on is being covered. */
 const SUPPRESSION_PERIOD = 0.22;
+
+/**
+ * Total seconds a fighter will refuse to advance before going anyway.
+ *
+ * Holding re-ups itself for as long as the lane stays hot, which against someone
+ * who simply never stops firing is forever — a fighter jinking on the spot behind
+ * a crate until the match times out. Somebody has to move eventually, and a budget
+ * is what makes camping a dominant angle strong rather than absolute.
+ */
+const HOLD_BUDGET = 5;
 
 /** Sprinting boots are loud. One footfall report per this many seconds. */
 const SPRINT_NOISE_PERIOD = 0.45;
@@ -164,6 +177,8 @@ export class Combatant {
     this.suppressT = Math.random() * SUPPRESSION_PERIOD;
     /** Seconds left of refusing to advance because every way in is covered. */
     this.holdT = 0;
+    /** ...and how much of the budget for doing so he has already spent. */
+    this.holdSpent = 0;
     this.senseT = Math.random() * SCAN_PERIOD;
     this.sprintNoiseT = 0;
     /** Where to sweep when the picture is empty. */
@@ -193,6 +208,11 @@ export class Combatant {
     this.stanceTimer = 0.5 + Math.random() * 2;
     this.leanK = 0;
     this.peekSide = 0;
+    /** Seconds left committed to the current lean, and until the next one is allowed. */
+    this.peekT = 0;
+    this.peekCd = 0;
+    /** Rounds left in the current burst of area fire. */
+    this.suppressLeft = 0;
     // Aiming down sights, 0..1.
     //
     // Bots used to shoot the instant their reaction timer expired, from whatever pose
@@ -616,7 +636,14 @@ export class Combatant {
     // Am I standing in something's beaten zone, and if so where is out of it?
     // Rushers were told and do not care, which is the whole archetype.
     this.suppression.decayTo(now);
-    if (this.holdT > 0) this.holdT -= dt;
+    if (this.holdT > 0) {
+      this.holdT -= dt;
+      this.holdSpent += dt;
+    } else if (!this.pinnedBy) {
+      // The budget refills once he is out of it, but slowly, so a fighter who has
+      // just spent five seconds pinned does not immediately buy another five.
+      this.holdSpent = Math.max(0, this.holdSpent - dt * 0.5);
+    }
     this.suppressT -= dt;
     if (this.suppressT <= 0 && this.archetype !== 'rusher') {
       this.suppressT = SUPPRESSION_PERIOD * (0.85 + Math.random() * 0.3);
@@ -632,7 +659,9 @@ export class Combatant {
         this.coverGoal = null;
       } else if (!this.coverGoal || this.pinnedBy !== before ||
                  sees(this.pinnedBy, _routePoint.set(this.coverGoal.x, this.coverGoal.y + 1.15, this.coverGoal.z))) {
-        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees);
+        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees, {
+          standable: (p) => this._standable(world, p),
+        });
       }
       if (before && !this.pinnedBy) {
         // He just made it out of the lane. Settle here for a beat rather than
@@ -756,11 +785,26 @@ export class Combatant {
       //
       // The shot itself is fired from the real muzzle regardless of what this decides,
       // so the worst a wrong guess here can do is make him lean out and find nothing.
-      this.peekSide = 0;
-      if (!sight && dist < engage * 1.8) {
+      // A peek is *committed to*, not re-decided every frame.
+      //
+      // Recomputing it per frame meant a fighter who leaned out far enough to see
+      // immediately stopped having a reason to lean, snapped back, re-found the angle
+      // and leaned again — a flicker several times a second that is unreadable to
+      // shoot at and looks nothing like working a corner. He now commits for the best
+      // part of a second, and waits a beat before the next one, so the rhythm is
+      // something the other side can actually play against.
+      this.peekT -= dt;
+      this.peekCd -= dt;
+      if (this.peekT <= 0) this.peekSide = 0;
+      if (this.peekSide === 0 && this.peekCd <= 0 && !sight && dist < engage * 1.8) {
         for (const side of [this.strafeDir, -this.strafeDir]) {
           _peekEye.set(eye.x + -fz * PEEK_REACH * side, eye.y, eye.z + fx * PEEK_REACH * side);
-          if (hasLoS(world.colliders, _peekEye, aim)) { this.peekSide = side; break; }
+          if (hasLoS(world.colliders, _peekEye, aim)) {
+            this.peekSide = side;
+            this.peekT = 0.75 + Math.random() * 0.6;
+            this.peekCd = this.peekT + 0.55 + Math.random() * 0.5;
+            break;
+          }
         }
       }
 
@@ -847,7 +891,7 @@ export class Combatant {
         this.breachTarget = this.target;
         this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
         this.breachT = 6;
-        if (choice.covered) {
+        if (choice.covered && this.holdSpent < HOLD_BUDGET) {
           // Every way in is being worked. Hold — the gun has to stop eventually, and
           // walking in one at a time until it does is how a squad gets fed to a
           // doorway. Re-decide the moment the hold runs out, not in six seconds.
@@ -896,9 +940,25 @@ export class Combatant {
         this.archetype !== 'rusher';
       if (breakingCover) {
         this._traveling = true;
-        this.sprintNow = this.legDmg < 0.6;
+        // Only sprint if the cover is actually far enough to be worth the gun coming
+        // down. Sprinting is what makes a fighter unable to shoot, so sprinting the
+        // last two metres into cover buys nothing and costs the whole exchange.
+        const coverGap = Math.hypot(this.coverGoal.x - this.pos.x, this.coverGoal.z - this.pos.z);
+        this.sprintNow = coverGap > 3.5 && this.legDmg < 0.6;
         this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
-      } else if ((needTravel || opening) && (this.cautionT > 0 || this.holdT > 0) && !assist) {
+      } else if (this.peekSide && !sight) {
+        // Working a corner outranks holding behind it.
+        //
+        // This branch used to sit below the hold, which made it unreachable in the
+        // one situation it exists for: a fighter who has taken cover has no sight, so
+        // `needTravel` is true, so the hold branch caught him and he sat there. Three
+        // riflemen would take cover from a player and then simply never shoot at him
+        // again. Cover is a place to fight *from*.
+        this._strafing = true;
+        move.x += -fz * this.peekSide * 0.5;
+        move.z += fx * this.peekSide * 0.5;
+      } else if ((needTravel || opening) && !assist &&
+                 (this.cautionT > 0 || (this.holdT > 0 && this.holdSpent < HOLD_BUDGET))) {
         // A squadmate just died up ahead, or every approach is covered: hold the
         // angle and jink rather than feeding the corner one man at a time.
         this._strafing = true;
@@ -929,16 +989,6 @@ export class Combatant {
           legDamage: this.legDmg,
         });
         this._steerToward(world, dt, gx, gy, gz, move);
-      } else if (this.peekSide && !sight) {
-        // Working a corner peek: step out into the angle.
-        //
-        // Planting and shooting around it was only viable while the shot came from a
-        // point 60 cm outside his own body. It comes off the real barrel now, and a
-        // lean carries that 29 cm, so the rest has to be movement — which is movement
-        // the other side can see, which is the entire point.
-        this._strafing = true;
-        move.x += -fz * this.peekSide * 0.5;
-        move.z += fx * this.peekSide * 0.5;
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && !w.melee && heightGap < 0.8) {
         this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
@@ -1047,36 +1097,56 @@ export class Combatant {
         // would be pure cost and the AI would be strictly worse for doing it.
         const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
           * distFactor * (this.crouchK < 0.9 ? 0.8 : 1) * (1.35 - 0.72 * this.adsK);
-        const pellets = w.pellets;
-        for (let i = 0; i < pellets; i++) {
-          const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
-          const res = fireRay(world, this, fireEye, sdir, w,
-            this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
-          world.fx.tracer(fireEye, res.point);
-          if (res.type === 'wall') { world.fx.sparks(res.point, sdir); if (Math.random() < 0.3) audio.ricochet(); }
-        }
-        const camDist = fireEye.distanceTo(world.cameraPos);
-        audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
-        world.fx.muzzleFlash(fireEye, dir, { source: this });
-        this.rig.trigger('fire');
-
-        // Firing is a decision to be located. Everyone hostile inside earshot gets a
-        // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
-        world.emitNoise?.(this, muzzle, 'gunshot');
-
-        this.shotsFired = (this.shotsFired || 0) + 1;
+        this._sendRounds(world, w, fireEye, dir, spreadDeg);
         world.onCombatEvent?.('shot', this, {
           target: this.target?.name || null, weapon: this.weaponId, range: fireDist,
-          line_of_sight: los, role: this.role,
+          line_of_sight: los, role: this.role, suppressive: false,
         });
-        const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
-        if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
         this.burstLeft--;
         if (this.burstLeft <= 0) {
           this.burstLeft = this._burstSize();
           this.cooldown = (60 / w.rpm) + 0.5 + Math.random() * 0.5 + (w.auto ? 0.2 : 0);
         } else {
           this.cooldown = 60 / w.rpm;
+        }
+      } else if (!w.melee && !los && this.cooldown <= 0 && !this.sprintNow &&
+                 this.reactionLeft <= 0 && this.contact && !this.contact.visible &&
+                 worthSuppressing({
+                   radius: uncertainty, age: now - this.contact.t,
+                   rounds: this._poolFor(this.weaponId), role: this.role, auto: !!w.auto,
+                 })) {
+        // Area fire at a place, not a person.
+        //
+        // The missing half of the model: fighters knew how to be suppressed and never
+        // how to suppress, so a squad that lost sight went silent and handed the
+        // initiative straight back. Against a player that read as three men with
+        // rifles waiting politely while he reloaded.
+        //
+        // It only happens onto a belief tight enough for the rounds to land somewhere
+        // that matters, and only along a line the muzzle can genuinely send them —
+        // otherwise he is shooting the wall in front of his own face.
+        _suppressAt.set(this.contact.x, (this.contact.y || 0) + 1.05, this.contact.z);
+        if (hasLoS(world.colliders, muzzle, _suppressAt)) {
+          const fireEye = muzzle.clone();
+          const dir = _suppressAt.clone().sub(fireEye).normalize();
+          const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
+            * (0.7 + dist / 30) + SUPPRESSING.spread;
+          this._sendRounds(world, w, fireEye, dir, spreadDeg);
+          world.onCombatEvent?.('shot', this, {
+            target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+            weapon: this.weaponId, range: +dist.toFixed(2),
+            line_of_sight: false, role: this.role, suppressive: true,
+            belief_error: +uncertainty.toFixed(2),
+          });
+          this.suppressLeft--;
+          if (this.suppressLeft <= 0) {
+            this.suppressLeft = 2 + (Math.random() * 3 | 0);
+            this.cooldown = 0.8 + Math.random() * 0.9;
+          } else {
+            this.cooldown = 60 / w.rpm;
+          }
+        } else {
+          this.cooldown = 0.4;   // no line to it; look again shortly
         }
       }
       // Nothing in view: let the weapon down.
@@ -1424,6 +1494,24 @@ export class Combatant {
     this.yaw += Math.sin(now * 0.9 + this.animPhase) * dt * 0.7;
   }
 
+  /**
+   * Could he actually stand at this point?
+   *
+   * A piece of "cover" inside a crate is a fighter grinding into it until the fire
+   * stops, which is one of the ways these two systems produced a bot stuck on the
+   * spot. Same reachability test the steering uses, so the two agree about what is
+   * walkable.
+   */
+  _standable(world, point) {
+    const gy = groundHeight(world.colliders, point.x, point.z, this.pos.y);
+    if (Math.abs(gy - this.pos.y) > 1.2) return false;
+    for (const box of world.colliders) {
+      if (box.max.y - gy <= STEP_REACH || box.min.y > gy + 1.5) continue;
+      if (box.containsXZ(point.x, point.z, this.radius)) return false;
+    }
+    return true;
+  }
+
   // would moving 0.9m in (dx,dz) walk us off a >0.8m ledge?
   _ledgeAhead(world, dx, dz) {
     const d = Math.hypot(dx, dz) || 1;
@@ -1480,6 +1568,32 @@ export class Combatant {
     // earshot — a fighter cannot be pinned by fire he cannot hear.
     if (contact && kind === 'gunshot') this.suppression.record(pos, SUPPRESSION.shot, now);
     return contact;
+  }
+
+  /**
+   * Send one weapon's worth of rounds down `dir` from `from`.
+   *
+   * Shared by aimed fire and area fire so the two cannot drift apart on the things
+   * that have to stay true of both: the rounds leave the real muzzle, they cost real
+   * ammunition, and they make the noise that gives the shooter away.
+   */
+  _sendRounds(world, w, from, dir, spreadDeg) {
+    for (let i = 0; i < w.pellets; i++) {
+      const sdir = applySpread(dir, spreadDeg + (w.pellets > 1 ? 3.5 : 0));
+      const res = fireRay(world, this, from, sdir, w,
+        this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
+      world.fx.tracer(from, res.point);
+      if (res.type === 'wall') { world.fx.sparks(res.point, sdir); if (Math.random() < 0.3) audio.ricochet(); }
+    }
+    audio.shot(w.sound, 1.2 / (1 + from.distanceTo(world.cameraPos) * 0.09));
+    world.fx.muzzleFlash(from, dir, { source: this });
+    this.rig.trigger('fire');
+    // Firing is a decision to be located. Everyone hostile inside earshot gets a
+    // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
+    world.emitNoise?.(this, from, 'gunshot');
+    const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
+    if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
+    this.shotsFired = (this.shotsFired || 0) + 1;
   }
 
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
