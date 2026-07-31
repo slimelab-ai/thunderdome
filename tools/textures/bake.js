@@ -692,14 +692,16 @@
   /** Gunmetal: the one material every weapon shares. */
   SETS.gunmetal = (size = 512) => {
     const rand = rng(0x9e2a);
-    // Base 64 over three octaves put the finest detail at two texels per cycle — the
-    // Nyquist limit, i.e. noise the renderer cannot resolve. On a dielectric that is
-    // merely wasted; on a metal it is a lattice of per-texel mirrors, and a viewmodel
-    // is *magnified*, so mipping never gets a chance to average it away. 32 over two
-    // octaves lands the finest at eight texels: still machined micro-texture, and
-    // shadable. Every cell count here has to divide `size` or fbm silently drops the
-    // octave — pick 40 and it drops all of them and hands back NaN.
-    const fine = fbm(0x33aa, size, 32, 2);
+    // Do not coarsen this. Dropping to 32 cells over two octaves — on the theory that
+    // detail near the Nyquist limit was what sparkled — makes the value-noise lattice
+    // itself the largest feature, and `blurHeight` can no longer smooth a cell that is
+    // sixteen texels across. The result is a grid of smooth square bumps, each one
+    // catching its own specular highlight, and the gun grows a neat row of glowing
+    // squares along the receiver. The sparkle was never here; it was a NaN roughness
+    // field (see `checkField`).
+    //
+    // Every cell count must divide `size`, or fbm drops the octave silently.
+    const fine = fbm(0x33aa, size, 64, 3);
     const wear = fbm(0x1c3d, size, 8, 3);
     const height = new Float32Array(size * size);
     for (let i = 0; i < height.length; i++) height[i] = 0;
@@ -751,10 +753,11 @@
     }
     return {
       albedo: alb,
-      // Strength went up and the blur went down together with the roughness floor:
-      // a blur of 3 over six-texel noise erased the machining entirely, and once the
-      // surface is no longer a mirror it can carry the detail again.
-      normal: heightToNormal(height, size, 2.4, 1),
+      // Gentle, and blurred. See `blurHeight`: a normal map does not antialias, so
+      // height detail the filter cannot resolve turns into specular fizz rather than
+      // into bumps. Cutting the blur to 1 to "put the machining back" is how the
+      // squares got here.
+      normal: heightToNormal(height, size, 1.6, 3),
       orm: packORM(size, 1, rough, 0.88),
     };
   };
