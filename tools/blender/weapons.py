@@ -159,17 +159,30 @@ def shotgun():
     pump = cube("pump", (0, 0.24, 0.012), (0.048, 0.13, 0.050), WOOD, 0.014, uv_scale=UV)
     cube("receiver", (0, 0.03, 0.030), (0.044, 0.20, 0.070), METAL, 0.010, uv_scale=UV)
     cube("ejection port", (0.024, 0.06, 0.042), (0.010, 0.075, 0.030), DARK, 0.003, uv_scale=UV)
-    cube("grip wrist", (0, -0.09, -0.020), (0.040, 0.11, 0.070), WOOD, 0.016,
+    cube("grip wrist", (0, -0.09, -0.038), (0.040, 0.11, 0.070), WOOD, 0.016,
          rotation=(math.radians(-14), 0, 0), uv_scale=UV)
-    cube("stock", (0, -0.22, -0.010), (0.048, 0.18, 0.090), WOOD, 0.018,
+    # Drop at the comb, which a shotgun has plenty of and this one had none of.
+    #
+    # It is not only period-correct: the stock sat only 7.5 cm under the sight line, so
+    # with this weapon's wide aimed field of view its top half stayed in frame at 10 cm
+    # from the eye — a slab of wood across the bottom of the sight picture. The rifle
+    # escaped it by having a narrower field of view, not by being built better.
+    cube("stock", (0, -0.22, -0.052), (0.048, 0.18, 0.090), WOOD, 0.018,
          rotation=(math.radians(-6), 0, 0), uv_scale=UV)
-    cube("butt plate", (0, -0.305, -0.020), (0.050, 0.016, 0.100), GRIP, 0.006, uv_scale=UV)
+    cube("butt plate", (0, -0.305, -0.064), (0.050, 0.016, 0.100), GRIP, 0.006, uv_scale=UV)
     # A bead alone has no rear reference, so aiming one is guesswork. A shallow notch
     # on the receiver gives the pair a line; the bead keeps the silhouette. The aim
     # point is the bead itself, so the line runs through its centre.
     sphere("bead", (0, 0.63, 0.0655), 0.0055, METAL, segments=10, rings=6)
-    notch(-0.045, 0.0705, gap=0.010, blade=0.010, tall=0.011)
-    aim_marks(-0.045, 0.63, 0.0655)
+    # Aim over the top of the bead, not through the middle of it — the same rule as
+    # every post on every other weapon here. A bead centred on the aim point is
+    # traditional and covers the thing being shot at, which is what the sight-picture
+    # check was reporting when this one measured the least open of the five.
+    # The notch top *is* the sight line, as everywhere else. It was 5 mm above the
+    # marker, so the blades stood proud of the line they define and ate the edges of
+    # the picture — this weapon measured the least open of the five.
+    notch(-0.045, 0.0710, gap=0.010, blade=0.010, tall=0.011)
+    aim_marks(-0.045, 0.63, 0.0710)
     finish("shotgun", moving=(pump,), budget=900)
 
 

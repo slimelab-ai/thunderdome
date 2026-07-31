@@ -126,7 +126,9 @@ const report = await page.evaluate(async (opts) => {
     const breechW = new T.Vector3();
     p.currentVM.group.getWorldPosition(breechW);
     s.barrelY = tipW.sub(breechW).normalize().y;
-    s.camPitch = p.recoilPitch;
+    // Recoil is an offset on the aim now, in degrees, up positive — same sign as the
+    // camera pitch it replaced, so the check below reads the same way.
+    s.camPitch = p.recoil ? p.recoil.posY : 0;
     const t = vm._supportTarget && vm._supportTarget();
     if (t) {
       // Measured in world space: a distance is invariant under the camera transform,
