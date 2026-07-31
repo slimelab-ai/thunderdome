@@ -357,7 +357,45 @@ the sight picture washes off the screen and back on every shot. How much a weapo
 kick is the recoil system's business; what aiming has to guarantee is that the picture
 *returns* — which the bench checks by releasing the trigger and looking again.
 
-### 6.4 Hit volumes
+### 6.4 Recoil
+
+Modelled on DogEater's, in `src/recoil.js`. The idea it is built on is that recoil is
+**not a change to where you are aiming** — it is an offset layered on top of your aim,
+which the weapon pushes and which recovers on its own. Every property worth having
+follows from that.
+
+**A pattern, not a random kick.** Each weapon carries a list of kicks, one per shot,
+walked in order and repeated if the magazine outlasts it. The same burst always walks
+the same way, so it can be learned and fought; a little scatter is added so it is not a
+machine. The index resets after a cooldown without firing, so every burst opens
+identically. Sprays climb hard for the first handful of rounds and then break sideways,
+which is where the skill is — the rifle's is 30 entries long and spells out a shape.
+
+**Velocity, then position.** A shot adds angular *velocity*; position integrates it and
+the velocity decays. The sights accelerate away and coast rather than teleporting, and
+a fast weapon stacks its kicks into a climb.
+
+**Drawback.** Once the velocity has bled off, the offset eases home over a duration
+proportional to how far it went, clamped at both ends: a long burst takes longer to
+settle than a tap, and neither is unbounded. Firing again interrupts it.
+
+**Fighting it is free, and that is the whole point.** Look input that *opposes* the
+current offset is spent cancelling the offset instead of moving the aim. Pull down
+against a climbing gun and the sights come back to where you were pointing and stop.
+A game that adds recoil to the player's pitch instead makes every correction drag the
+aim below where it started, so the player is fighting their own compensation as well as
+the weapon.
+
+The invariant that keeps all of this honest is that the offset returns to **exactly**
+zero and the player's aim is never touched — measured live, every weapon settles to
+`[0, 0]` with the yaw and pitch unchanged from before the burst. A residue would
+accumulate over a match into a gun that no longer points where it is aimed.
+
+Weapon strength lives in `recoilVelocity`; `w.recoil` scales only the modifiers (ADS,
+skill, arm damage). Multiplying by both counts it twice and makes the heavy guns
+quadratically worse than the light ones.
+
+### 6.5 Hit volumes
 
 Fighters are hit through invisible boxes parented to bones; the player is hit through a
 capsule and a head sphere. Neither has a visible representation, so both can be wrong
