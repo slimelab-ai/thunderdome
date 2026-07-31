@@ -63,6 +63,34 @@ test('ties go to the squad assignment, so a crossfire stays a crossfire', () => 
   assert.equal(flat.lane, 2);
 });
 
+test('with every position beside him covered, it stages partway round first', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  // Anything level with the target is swept; the ground short of him is not. That is
+  // the shape of a defender covering a wide arc, and the old chooser had no candidate
+  // it could offer for it.
+  const levelSwept = goal => (goal.z > 6 ? 1 : 0);
+  const staged = safeBreachLane(target, attacker, 0, levelSwept);
+  assert.equal(staged.covered, false, 'there is somewhere to go after all');
+  assert.equal(staged.staging, true);
+  assert.ok(staged.goal.z < 10, 'short of him, not level with him');
+
+  // ...and when the direct ring is clean it is still preferred, untouched.
+  const clean = safeBreachLane(target, attacker, -1, () => 0);
+  assert.equal(clean.goal.z, 10, 'the ordinary breach still goes all the way in');
+  assert.ok(!clean.staging);
+});
+
+test('a staging goal sits between the attacker and the target, offset to the side', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const full = offsetBreachGoal(target, attacker, -1);
+  const half = offsetBreachGoal(target, attacker, -1, { reach: 0.5 });
+  assert.equal(full.z, 10);
+  assert.equal(half.z, 0, 'halfway along the approach');
+  assert.equal(half.x, full.x, 'and offset the same distance to the side');
+});
+
 test('when every approach is covered end to end the answer is stop, not least-bad', () => {
   const target = { x: 0, y: 0, z: 10 };
   const attacker = { x: 0, y: 0, z: -10 };

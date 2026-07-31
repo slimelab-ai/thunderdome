@@ -27,6 +27,16 @@ export function offsetBreachGoal(target, attacker, lane, {
   outerStep = 3,
   xLimit = 20,
   zLimit = 14.5,
+  /**
+   * How far along the line to the target the goal sits, 0..1.
+   *
+   * 1 puts it level with him, which is what a breach lane has always meant. Less
+   * than that is a *staging* point — get around the side first, arrive second — and
+   * it exists because every lane ending level with the target is every lane ending
+   * inside whatever arc he is covering. A squad offered only those correctly
+   * rejects all of them and then has nowhere to go but through one.
+   */
+  reach = 1,
 } = {}) {
   const dx = target.x - attacker.x;
   const dz = target.z - attacker.z;
@@ -35,10 +45,12 @@ export function offsetBreachGoal(target, attacker, lane, {
   const fz = dz / distance;
   const width = lane === 0 ? 0 : Math.sign(lane) *
     (innerWidth + Math.max(0, Math.abs(lane) - 1) * outerStep);
+  const alongX = attacker.x + dx * reach;
+  const alongZ = attacker.z + dz * reach;
   return {
-    x: Math.max(-xLimit, Math.min(xLimit, target.x + -fz * width)),
+    x: Math.max(-xLimit, Math.min(xLimit, alongX + -fz * width)),
     y: target.y || 0,
-    z: Math.max(-zLimit, Math.min(zLimit, target.z + fx * width)),
+    z: Math.max(-zLimit, Math.min(zLimit, alongZ + fx * width)),
   };
 }
 
@@ -71,15 +83,34 @@ export const LANE_ABANDON = 0.5;
  * `covered: true` still means stop advancing — but now it means every lane was bad,
  * not merely that every lane started bad.
  */
+/**
+ * How far along the approach the staging ring sits, tried after the full-depth
+ * lanes have all come back covered.
+ */
+const STAGING_REACH = 0.6;
+
 export function safeBreachLane(target, attacker, assigned, routeCost, opts = {}) {
   const order = [assigned, ...BREACH_LANE_ORDER.filter(lane => lane !== assigned)];
   let best = null;
-  for (const lane of order) {
-    const goal = offsetBreachGoal(target, attacker, lane, opts);
-    const cost = routeCost(goal, lane);
-    if (cost <= 0) return { lane, goal, cost: 0, covered: false };
-    if (!best || cost < best.cost - 1e-6) best = { lane, goal, cost };
-  }
+  const consider = (reach) => {
+    for (const lane of order) {
+      const goal = offsetBreachGoal(target, attacker, lane, { ...opts, reach });
+      const cost = routeCost(goal, lane);
+      if (cost <= 0) return { lane, goal, cost: 0, covered: false, staging: reach < 1 };
+      if (!best || cost < best.cost - 1e-6) best = { lane, goal, cost, staging: reach < 1 };
+    }
+    return null;
+  };
+  const direct = consider(1);
+  if (direct) return direct;
+  // Everything level with him is covered — which it will be, if he is covering a
+  // wide arc, because that is exactly where those goals sit. Before concluding there
+  // is nowhere to go, try getting *partway* round: a staging point out to the side
+  // is often clean when the position beside him is not, and from there the arc looks
+  // different. Without this ring the squad's only remaining option was to hold until
+  // the budget ran out and then walk through the best of a bad set.
+  const staged = consider(STAGING_REACH);
+  if (staged) return staged;
   return { ...best, covered: best.cost >= LANE_ABANDON };
 }
 

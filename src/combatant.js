@@ -6,8 +6,8 @@ import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
 import {
-  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, shouldSprintAtTarget,
-  searchProbe, SEARCH_PROBES,
+  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
+  shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
 } from './tactics.js';
 import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
@@ -281,6 +281,7 @@ export class Combatant {
     this.breachTarget = null;
     this.breachGoal = new THREE.Vector3();
     this.breachLane = 0;
+    this.breachStaging = false;
     this.cooldown = 0.5 + Math.random();
     this.burstLeft = this._burstSize();
     this.reactionLeft = 0;
@@ -647,7 +648,11 @@ export class Combatant {
     if (sdx * sdx + sdz * sdz > 9) {
       this.stallAnchor.x = this.pos.x; this.stallAnchor.z = this.pos.z;
       this.stallT = 0;
-    } else if (this.target) {
+    } else if (this.target && !this.pinnedBy && this.holdT <= 0) {
+      // Standing still because an angle is being worked is not impatience, and the
+      // surge it used to earn walked him out of cover and into the open on a timer.
+      // The patience meter is for a fighter who has run out of ideas, not one who is
+      // waiting out a gun — the hold has its own budget for that.
       this.stallT += dt;
       if (this.stallT > (this.role === 'support' ? 13 : 8)) {
         this.stallT = 0;
@@ -724,6 +729,26 @@ export class Combatant {
         // stepping straight back into it — without this he oscillates on the edge of
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
+      }
+      // A committed lane is re-examined while he walks it.
+      //
+      // The route was costed once, at the moment of commitment, and then honoured for
+      // the next six to eleven seconds no matter what happened in them. That is the
+      // largest remaining way a fighter ends up in the open: he picks a clean lane,
+      // sets off, the gun shifts onto it, and nothing in him is still asking. Eighty
+      // three percent of the trips into a beaten zone that were left came from a
+      // commitment made before the danger existed.
+      //
+      // Held for a beat first, so a lane cannot be abandoned the instant it is taken
+      // and the two decisions oscillate.
+      if (this.breachT > 0 && this.breachLane !== 0 && this.breachTarget === this.target &&
+          now - (this._breachAt ?? -99) > 0.8 && this.suppression.anyDanger(now) &&
+          this._routeCost(world, this.breachGoal, now) >= LANE_ABANDON) {
+        this.breachT = 0;   // re-decide on the next think, with the fire as it is now
+        world.onCombatEvent?.('breach_abandoned', this, {
+          lane: this.breachLane,
+          target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+        });
       }
       if (this.pinnedBy && !before) {
         world.onCombatEvent?.('suppressed', this, {
@@ -968,6 +993,11 @@ export class Combatant {
         this.breachLane = choice.lane;
         this.breachTarget = this.target;
         this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
+        // A staging point is short of the target, so it has to be walked to even on
+        // the centre lane — otherwise lane 0 falls through to "go straight at him"
+        // and the whole point of staging is thrown away.
+        this.breachStaging = !!choice.staging;
+        this._breachAt = now;
         // A lane taken to get away from incoming fire is committed to for longer than
         // a routine one. Re-deciding on the usual six-second cadence sent a fighter
         // who had successfully broken right back toward the corner he had just left,
@@ -1000,7 +1030,8 @@ export class Combatant {
         }
       }
       const breachDistance = this.pos.distanceToSquared(this.breachGoal);
-      const breaching = this.breachLane !== 0 && this.breachTarget === this.target &&
+      const breaching = (this.breachLane !== 0 || this.breachStaging) &&
+        this.breachTarget === this.target &&
         this.breachT > 0 && breachDistance > 2.2 * 2.2;
       if (!breaching && this.breachT > 0 && breachDistance <= 2.2 * 2.2) this.breachT = 0;
 
