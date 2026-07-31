@@ -1,9 +1,22 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import puppeteer from 'puppeteer-core';
+
+const valueAfter = flag => {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : null;
+};
+const matchCount = Number.parseInt(valueAfter('--matches') || '10', 10);
+const baseSeed = Number.parseInt(valueAfter('--seed') || '2026073000', 10);
+if (!Number.isInteger(matchCount) || matchCount <= 0 || matchCount % 2 !== 0) {
+  throw new Error('--matches must be a positive even number so every seed has a side-swapped pair');
+}
+if (!Number.isInteger(baseSeed) || baseSeed < 0) throw new Error('--seed must be a non-negative integer');
 
 const batchId = `headless-${new Date().toISOString().replaceAll(':', '-')}`;
 const dataDir = resolve('data/headless-liquidation', batchId);
@@ -17,7 +30,10 @@ const availablePort = () => new Promise((resolvePort, reject) => {
 });
 const collectorPort = await availablePort();
 const vitePort = await availablePort();
-const chrome = process.env.CHROME_PATH || resolve('.cache/puppeteer/chrome-headless-shell/linux-151.0.7922.71/chrome-headless-shell-linux64/chrome-headless-shell');
+const bundledChrome = resolve('.cache/puppeteer/chrome-headless-shell/linux-151.0.7922.71/chrome-headless-shell-linux64/chrome-headless-shell');
+const playwrightChrome = resolve(homedir(), '.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell');
+const chrome = process.env.CHROME_PATH ||
+  (existsSync(bundledChrome) ? bundledChrome : playwrightChrome);
 await mkdir(dataDir, { recursive: true });
 
 const children = [];
@@ -56,8 +72,8 @@ try {
   await page.waitForFunction('window.__game', { timeout: 30000 });
   await page.evaluate('window.__game.assetsReady');
   const results = [];
-  for (let index = 0; index < 10; index++) {
-    const seed = 2026073000 + Math.floor(index / 2);
+  for (let index = 0; index < matchCount; index++) {
+    const seed = baseSeed + Math.floor(index / 2);
     const sideSwap = index % 2 === 1;
     const result = await page.evaluate(async ({ batchId, seed, sideSwap, index }) => {
       let state = seed >>> 0;
@@ -82,13 +98,15 @@ try {
       return outcome;
     }, { batchId, seed, sideSwap, index });
     results.push(result);
-    process.stdout.write(`real match ${index + 1}/10: ${JSON.stringify(result.result)}\n`);
+    process.stdout.write(`real match ${index + 1}/${matchCount}: ${JSON.stringify(result.result)}\n`);
   }
   const eventPath = resolve(dataDir, `events-${new Date().toISOString().slice(0, 10)}.ndjson`);
   const events = (await readFile(eventPath, 'utf8')).trim().split('\n').map(JSON.parse);
   const simulated = events.filter(event => event.simulation === true && event.simulation_batch_id === batchId);
   const terminals = simulated.filter(event => event.event_type === 'match_terminal');
-  if (terminals.length !== 10) throw new Error(`collector contains ${terminals.length}/10 tagged terminals`);
+  if (terminals.length !== matchCount) {
+    throw new Error(`collector contains ${terminals.length}/${matchCount} tagged terminals`);
+  }
   process.stdout.write(`verified ${simulated.length} tagged events and ${terminals.length} terminals in ${eventPath}\n`);
 } finally {
   if (browser) await browser.close();
