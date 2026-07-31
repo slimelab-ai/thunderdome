@@ -37,12 +37,27 @@ const SUPPRESSION_PERIOD = 0.22;
 /**
  * Total seconds a fighter will refuse to advance before going anyway.
  *
- * Holding re-ups itself for as long as the lane stays hot, which against someone
- * who simply never stops firing is forever — a fighter jinking on the spot behind
- * a crate until the match times out. Somebody has to move eventually, and a budget
- * is what makes camping a dominant angle strong rather than absolute.
+ * Holding re-ups itself for as long as the lane stays hot, which against someone who
+ * simply never stops firing is forever — a fighter jinking behind a crate until the
+ * match times out. So there is a budget.
+ *
+ * Twelve seconds rather than the five it started at. Five had a squad breaking cover
+ * into a rifle that was still firing, because a timer said so, and dying one at a
+ * time — the exact behaviour the model exists to prevent, arrived at from the other
+ * direction. The pit already has an answer to a player who roots in one spot: the
+ * crowd gets bored at fourteen seconds and management drops fire on him at
+ * twenty-two. The bots do not need to suicide to break a camp; they need to outlast
+ * it, and this budget is sized to hand the problem to the mechanic that owns it.
  */
-const HOLD_BUDGET = 5;
+const HOLD_BUDGET = 12;
+
+/**
+ * Where along a candidate route to check for incoming fire, and what each point is
+ * worth. Fractions of the way there, paired with weights — the destination counts
+ * for six times the first step, because leaving a beaten zone means crossing it.
+ */
+const ROUTE_SAMPLES = [[0.35, 0.5], [0.6, 1], [0.85, 1.5], [1, 3]];
+const ROUTE_WEIGHT_TOTAL = ROUTE_SAMPLES.reduce((sum, [, weight]) => sum + weight, 0);
 
 /** Sprinting boots are loud. One footfall report per this many seconds. */
 const SPRINT_NOISE_PERIOD = 0.45;
@@ -796,16 +811,38 @@ export class Combatant {
       this.peekT -= dt;
       this.peekCd -= dt;
       if (this.peekT <= 0) this.peekSide = 0;
+      // A lean already under way is abandoned the moment that side starts being
+      // worked. Commitment is what makes a peek readable; committing to lean into
+      // something that has opened up since is just a slower way of dying.
+      if (this.peekSide && this._peekSwept(world, this.peekSide, fx, fz, now)) {
+        this.peekSide = 0;
+        this.peekT = 0;
+        this.peekCd = Math.max(this.peekCd, 0.6 + Math.random() * 0.5);
+      }
+      let peekRefused = false;
       if (this.peekSide === 0 && this.peekCd <= 0 && !sight && dist < engage * 1.8) {
         for (const side of [this.strafeDir, -this.strafeDir]) {
           _peekEye.set(eye.x + -fz * PEEK_REACH * side, eye.y, eye.z + fx * PEEK_REACH * side);
-          if (hasLoS(world.colliders, _peekEye, aim)) {
-            this.peekSide = side;
-            this.peekT = 0.75 + Math.random() * 0.6;
-            this.peekCd = this.peekT + 0.55 + Math.random() * 0.5;
-            break;
-          }
+          if (!hasLoS(world.colliders, _peekEye, aim)) continue;
+          // An angle that exists is not the same as an angle worth taking. Without
+          // this the whole suppression model stopped at the edge of cover: a fighter
+          // would sit out a hot lane correctly, work the safe corner a few times, and
+          // then lean straight into the one being worked because the geometry said
+          // there was a shot there.
+          if (this._peekSwept(world, side, fx, fz, now)) { peekRefused = true; continue; }
+          this.peekSide = side;
+          this.peekT = 0.75 + Math.random() * 0.6;
+          this.peekCd = this.peekT + 0.55 + Math.random() * 0.5;
+          break;
         }
+      }
+      // Refusing the angle has to mean *staying put*. On its own, blocking the peek
+      // only sent him down the travel branch instead — and walking into the lane is
+      // strictly worse than leaning into it, because a lean is over in a second. The
+      // first cut of this fix measurably got more of them killed for exactly that
+      // reason: 84 rounds to wipe the squad before, 65 after.
+      if (peekRefused && this.peekSide === 0 && this.holdSpent < HOLD_BUDGET) {
+        this.holdT = Math.max(this.holdT, 0.5 + Math.random() * 0.6);
       }
 
       // patch up when hurt and out of contact
@@ -886,11 +923,15 @@ export class Combatant {
         // actively covered, which is the one thing worth breaking formation over.
         const choice = this.archetype === 'rusher'
           ? { lane: assigned, goal: offsetBreachGoal(tp, this.pos, assigned), covered: false }
-          : safeBreachLane(tp, this.pos, assigned, goal => this._routeSwept(world, goal, now));
+          : safeBreachLane(tp, this.pos, assigned, goal => this._routeCost(world, goal, now));
         this.breachLane = choice.lane;
         this.breachTarget = this.target;
         this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
-        this.breachT = 6;
+        // A lane taken to get away from incoming fire is committed to for longer than
+        // a routine one. Re-deciding on the usual six-second cadence sent a fighter
+        // who had successfully broken right back toward the corner he had just left,
+        // because from his new position the old lane scored fine again.
+        this.breachT = choice.lane !== assigned ? 11 : 6;
         if (choice.covered && this.holdSpent < HOLD_BUDGET) {
           // Every way in is being worked. Hold — the gun has to stop eventually, and
           // walking in one at a time until it does is how a squad gets fed to a
@@ -1562,11 +1603,13 @@ export class Combatant {
    * worked*. The second one accumulates — one round is nothing, twenty into the
    * same doorway is a reason to go round.
    */
-  hearNoise(source, pos, kind, now) {
+  hearNoise(source, pos, kind, now, weight = 1) {
     const contact = this.perception.hear(source, pos, kind, this.pos, now);
     // Gated on the contact, which is falsy exactly when the noise was out of
     // earshot — a fighter cannot be pinned by fire he cannot hear.
-    if (contact && kind === 'gunshot') this.suppression.record(pos, SUPPRESSION.shot, now);
+    if (contact && kind === 'gunshot') {
+      this.suppression.record(pos, SUPPRESSION.shot * weight, now);
+    }
     return contact;
   }
 
@@ -1590,7 +1633,7 @@ export class Combatant {
     this.rig.trigger('fire');
     // Firing is a decision to be located. Everyone hostile inside earshot gets a
     // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
-    world.emitNoise?.(this, from, 'gunshot');
+    world.emitNoise?.(this, from, 'gunshot', w.suppression ?? 1);
     const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
     if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
     this.shotsFired = (this.shotsFired || 0) + 1;
@@ -1606,25 +1649,52 @@ export class Combatant {
   }
 
   /**
-   * Does getting to `goal` mean crossing ground somebody is presently covering?
+   * Would leaning out this side put him in something's beaten zone?
    *
-   * Sampled along the route rather than at the endpoint, because the endpoint is
-   * rarely the problem — the doorway two thirds of the way there is. Bails
-   * immediately when nothing is hot, which is most of the time.
+   * Checked at the lean itself and again a metre out, because a peek is not a lean —
+   * the body steps sideways with it, so the question is whether the ground he ends up
+   * on is being worked, not just the 29 cm the weapon travels.
    */
-  _routeSwept(world, goal, now) {
+  _peekSwept(world, side, fx, fz, now) {
     if (!this.suppression.anyHot(now)) return false;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
-    for (const t of [0.45, 0.75, 1]) {
+    for (const reach of [PEEK_REACH, 1.1]) {
+      _routePoint.set(
+        this.pos.x + -fz * reach * side,
+        chest,
+        this.pos.z + fx * reach * side,
+      );
+      if (this.suppression.covering(_routePoint, sees, now)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * How much of the way to `goal` is ground somebody is presently covering, 0..1.
+   *
+   * Weighted hard toward the far end. A fighter who reroutes is already standing in
+   * the beaten zone, so the near samples are covered whichever way he goes — count
+   * them equally and every escape scores as badly as staying put, which is how a
+   * squad ends up cowering behind one crate with a clear route four steps to its
+   * right. What separates a good lane from a bad one is where it *ends*.
+   *
+   * Bails immediately when nothing is hot, which is most of the time.
+   */
+  _routeCost(world, goal, now) {
+    if (!this.suppression.anyHot(now)) return 0;
+    const sees = (from, to) => this._laneSees(world, from, to);
+    const chest = this.pos.y + 1.15 * this.scale;
+    let swept = 0;
+    for (const [t, weight] of ROUTE_SAMPLES) {
       _routePoint.set(
         this.pos.x + (goal.x - this.pos.x) * t,
         chest,
         this.pos.z + (goal.z - this.pos.z) * t,
       );
-      if (this.suppression.covering(_routePoint, sees, now)) return true;
+      if (this.suppression.covering(_routePoint, sees, now)) swept += weight;
     }
-    return false;
+    return swept / ROUTE_WEIGHT_TOTAL;
   }
 
   removeFrom(world) {

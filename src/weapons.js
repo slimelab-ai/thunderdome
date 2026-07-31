@@ -4,6 +4,13 @@ import { bindAuthoredMaterials } from './materials.js';
 
 // dmg = per bullet torso damage. spread in degrees (hipfire base).
 //
+// `suppression` is how hard a round from this weapon pins the people it is fired at,
+// relative to the rifle. Not a damage number — a *threat* number, which is why the
+// DMR outscores the SMG it loses a straight shootout to: a lane covered by something
+// that kills in one is a lane nobody crosses, while a sidearm cracking off across the
+// pit is a nuisance. Without this a player with the starting pistol could hold five
+// men behind a crate as effectively as an AK, which is not what a sidearm is.
+//
 // `recoilPattern` is the shape of the climb, one entry per shot, `x` right and `y` up,
 // in roughly unit terms — `recoilVelocity` sets how hard it is in degrees per second.
 // The list is walked in order and repeated if the magazine outlasts it, and the index
@@ -30,6 +37,11 @@ export const WEAPONS = {
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
     recoilVelocity: 7.0, recoilRandom: 1.4, recoilCooldown: 0.45,
+    // Just above what the decay eats at a fast trigger finger, so sustained
+    // deliberate fire does pin somebody after a few seconds and a couple of
+    // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
+    // at all, which is as wrong in the other direction.
+    suppression: 0.55,
     desc: 'Every contestant starts with one. 3 to the chest or 1 to the skull.',
   },
   smg: {
@@ -46,6 +58,7 @@ export const WEAPONS = {
       [0.38, 0.15], [0.2, 0.15], [-0.05, 0.15], [-0.28, 0.15],
     ],
     recoilVelocity: 4.6, recoilRandom: 1.8, recoilCooldown: 0.5,
+    suppression: 0.75,
     desc: 'A hose of cheap brass. Wild past 12 meters, filthy up close.',
   },
   shotgun: {
@@ -61,6 +74,7 @@ export const WEAPONS = {
     // target by the time the next shell is chambered.
     recoilPattern: [[0, 1], [0.12, 1], [-0.12, 1]],
     recoilVelocity: 15.0, recoilRandom: 2.2, recoilCooldown: 0.6,
+    suppression: 0.6,
     desc: '9 pellets of crowd-pleasing violence. Deletes torsos inside 10m.',
   },
   rifle: {
@@ -79,6 +93,7 @@ export const WEAPONS = {
       [-0.36, 0.08], [-0.46, 0.06], [-0.4, 0.06], [-0.22, 0.06],
     ],
     recoilVelocity: 6.2, recoilRandom: 1.1, recoilCooldown: 0.55,
+    suppression: 1,
     desc: 'The workhorse of every syndicate in the league. 2–3 rounds does it.',
   },
   dmr: {
@@ -89,6 +104,7 @@ export const WEAPONS = {
     // A single hard punch straight up. You lose the sight picture and get it back.
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
     recoilVelocity: 17.0, recoilRandom: 1.0, recoilCooldown: 0.8,
+    suppression: 1.15,
     desc: 'One shot, one funeral. Scoped. Slow. Surgical.',
   },
 };

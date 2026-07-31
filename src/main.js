@@ -178,13 +178,13 @@ world.nav = new NavMesh(arena.colliders);
  * contact — never an exact one — and the player is the source of most of it, which
  * is what makes moving quietly a real decision rather than a cosmetic one.
  */
-world.emitNoise = (source, pos, kind) => broadcastNoise(
+world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
   world,
   // The player fires as `playerShooter` but is *targeted* as `playerProxy`. Contacts
   // are keyed by entity, so they have to collapse to one identity here or a bot ends
   // up holding a belief about somebody who is never a candidate to shoot at.
   source === world.playerShooter ? world.playerProxy : source,
-  pos, kind, world.simTime,
+  pos, kind, world.simTime, weight,
 );
 
 const player = new Player(camera, world);

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, shouldSprintAtTarget,
-  searchProbe, SEARCH_PROBES,
+  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
+  shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
 } from '../src/tactics.js';
 
 test('a squad assigns one suppressor and alternating breach lanes', () => {
@@ -32,25 +32,48 @@ test('a covered approach is rerouted, and the assigned lane is kept when it is c
   const target = { x: 0, y: 0, z: 10 };
   const attacker = { x: 0, y: 0, z: -10 };
 
-  const nothingCovered = safeBreachLane(target, attacker, -1, () => false);
+  const nothingCovered = safeBreachLane(target, attacker, -1, () => 0);
   assert.equal(nothingCovered.lane, -1, 'the squad assignment stands while it can');
   assert.equal(nothingCovered.covered, false);
 
   // The whole middle of the pit is being worked; only the wide lanes are clear.
-  const middleSwept = goal => Math.abs(goal.x) < 7;
+  const middleSwept = goal => (Math.abs(goal.x) < 7 ? 1 : 0);
   const rerouted = safeBreachLane(target, attacker, -1, middleSwept);
   assert.equal(rerouted.covered, false);
   assert.ok(Math.abs(rerouted.goal.x) >= 7, 'it goes around rather than through');
   assert.notEqual(rerouted.lane, -1);
 });
 
-test('when every approach is covered the answer is stop, not least-bad', () => {
+test('a route out of the beaten zone beats staying in it, even starting under fire', () => {
   const target = { x: 0, y: 0, z: 10 };
   const attacker = { x: 0, y: 0, z: -10 };
-  const pinned = safeBreachLane(target, attacker, 1, () => true);
+  // The situation that broke the boolean version: a fighter already under fire, so
+  // *every* lane costs something. The cheapest one still has to win.
+  const cost = goal => (Math.abs(goal.x) >= 7 ? 0.2 : 0.6);
+  const out = safeBreachLane(target, attacker, 0, cost);
+  assert.equal(out.covered, false, 'partly-swept is not a reason to stop');
+  assert.ok(Math.abs(out.goal.x) >= 7, 'it takes the way out rather than cowering');
+  assert.equal(out.cost, 0.2);
+});
+
+test('ties go to the squad assignment, so a crossfire stays a crossfire', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const flat = safeBreachLane(target, attacker, 2, () => 0.3);
+  assert.equal(flat.lane, 2);
+});
+
+test('when every approach is covered end to end the answer is stop, not least-bad', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const pinned = safeBreachLane(target, attacker, 1, () => 1);
   assert.equal(pinned.covered, true);
   assert.equal(pinned.lane, 1, 'it reports the assigned lane so the caller can hold on it');
   assert.deepEqual(pinned.goal, offsetBreachGoal(target, attacker, 1));
+
+  // Just under the abandon line is still worth walking.
+  const marginal = safeBreachLane(target, attacker, 1, () => LANE_ABANDON - 0.01);
+  assert.equal(marginal.covered, false);
 });
 
 test('a search sweeps through the last-known point, then the cover either side', () => {
