@@ -304,17 +304,36 @@ say by how much. `npm run sightcheck` says: it aims each weapon and measures whe
 sights land **in pixels from the crosshair**, which is the only definition of aligned
 that matters.
 
-**Eye relief is derived, not chosen.** A rifle is mostly *behind* its rear sight — a
-receiver, a grip, and a stock that ends at a shoulder that in first person is where the
-camera is. The rifle's stock reaches 26 cm past its rear sight, so a 30 cm relief put
-the butt 4 cm from the player's eye with a third of the screen full of wood. The relief
-is the greater of the look choice and what the weapon's own tail needs.
+**The markers go where you look, not where the metal is.** The rear marker sits in the
+middle of the *notch* — the gap — and the front marker at the *tip* of the post. Put
+them at the centres of the blades instead and the solve is still exact and the weapon is
+useless: the metal lands dead on the crosshair and covers the thing being aimed at.
+Both markers sit at the same height above the bore, so the sight line runs parallel to
+it and the target sits on top of the post where it belongs.
+
+**Every weapon gets a notch and a post, not a block.** Two blades with a gap you sight
+through, a post whose tip meets the crosshair, ears where the weapon would have them.
+Solid cubes are what were there before, and a solid cube on the sight line is a blindfold.
+
+**The stock goes behind the near plane, not further away.** A rifle is mostly *behind*
+its rear sight — a receiver, a grip, and a stock that ends at a shoulder which in first
+person is where the camera is. Pushing the weapon out until all of it cleared the eye
+made things worse: at 39 cm the rifle's stock sat 17 cm away and 22 degrees below the
+axis, which is inside the frame, so a third of the screen filled with wood. Bringing the
+sights *closer* puts the tail past the 5 cm near plane, where it is simply not drawn —
+which is how first-person weapons have always been held — and makes the sights bigger
+and easier to use at the same time.
 
 **A sight on the axis is necessary and not sufficient.** A hand parked on the sight line
-is perfectly aligned and completely useless, and so is a stock on the end of the
-player's nose — neither shows up in a check that only asks where the sights are. The
-bench fires a ray down the middle to see what it meets first, and measures how close the
-weapon comes to the camera at all.
+is perfectly aligned and completely useless, and neither shows up in a check that only
+asks where the sights are. The bench fires a ray down the middle to see what it meets
+first, and fans out over the couple of degrees a player is actually looking through.
+
+**Do not write the failure out of the check.** The first version of that ray test
+skipped the sight objects themselves, on the theory that sights belong on the aim line.
+They belong *around* it. Excusing them meant the bench reported a spotless sight picture
+while solid metal sat in the middle of the screen — a metric written to ignore the exact
+failure it exists to catch.
 
 **Recoil is damped in the viewmodel while aiming, not removed.** At full hip-fire kick
 the sight picture washes off the screen and back on every shot. How much a weapon should
@@ -644,6 +663,17 @@ be small enough to look like a bug in something else.** The camera and the hit m
 each derived a head position independently and landed 5 cm apart; the symptom was bots
 declining to shoot, which looks like an AI problem and is a geometry problem. One of
 them has to own the answer and the other has to read it.
+
+**Take a ray from the projection, not from the transform.** `camera.getWorldDirection`
+returned a vector 26 degrees off the view while the sights projected to the middle of
+the screen. Both cannot be right, and the one the player sees is the projection — every
+ray cast down the other sailed past the weapon and reported a spotless sight picture.
+Unprojecting the centre of the screen is the only definition guaranteed to agree with
+where things appear, and starting at the near plane excludes clipped geometry for free.
+
+**A metric you cannot justify is worse than no metric.** A screen-coverage measure
+added alongside these read 2% while the weapon visibly filled a fifth of the frame. It
+was removed rather than shipped: a number nobody trusts still gets quoted.
 
 **`__game.step()` does nothing unless a match is running.** A bench that arms the
 player and starts stepping without starting one runs no frames at all, and then reports

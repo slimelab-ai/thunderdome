@@ -53,9 +53,9 @@ const LIMITS = {
   firing: 70,    // px the picture may wander mid-burst — generous, because this is
                  // recoil doing its job; it only has to catch something diverging
   recover: 6,    // px it must come back to once the trigger is released
-  blocked: 0.02, // m of viewmodel geometry allowed in front of the rear sight, on the
-                 // aim line itself — a hand there is aligned and useless
-  nearest: 0.10, // m the weapon may come to the player's face
+  blocked: 0.01, // m of drawn geometry allowed in front of the front sight on the aim
+                 // line — the crosshair has to be visible through the sights
+  open: 0.80,    // fraction of a 2-degree fan around the crosshair that must be clear
   roll: 3.0,     // degrees of roll on screen
 };
 
@@ -124,6 +124,7 @@ const report = await page.evaluate(async (opts) => {
     return { x: v.x * W / 2, y: -v.y * H / 2, behind: v.z > 1 };
   };
   const dist = (s) => Math.hypot(s.x, s.y);
+  const _camQ = new T.Quaternion();
 
   const AMMO = { pistol: 'ammo_9mm', smg: 'ammo_9mm', shotgun: 'ammo_buck', rifle: 'ammo_762', dmr: 'ammo_308' };
   const weapons = opts.only ? [opts.only] : ['pistol', 'smg', 'shotgun', 'rifle', 'dmr'];
@@ -161,43 +162,70 @@ const report = await page.evaluate(async (opts) => {
     const sRear = toScreen(rear);
     const sFront = toScreen(front);
 
-    // Is the sight picture actually clear?
-    //
-    // The sights being on the axis is necessary and not sufficient — a hand parked on
-    // the sight line is perfectly aligned and completely useless. Fire a ray straight
-    // down the middle and see what it meets first: anything nearer than the rear
-    // sight is between the player and his own sights.
+    // ---- what the player is actually looking at ----
     g.camera.updateMatrixWorld(true);
+    p.vmRoot.updateMatrixWorld(true);
     const camPos = new T.Vector3();
     const camDir = new T.Vector3();
-    g.camera.getWorldPosition(camPos);
-    g.camera.getWorldDirection(camDir);
+    // The aim ray, taken from the projection itself.
+    //
+    // Unprojecting the centre of the screen is the only definition guaranteed to agree
+    // with where things *appear*, which is what this whole tool is about. Deriving it
+    // from the camera's transform instead gave a direction 26 degrees off the view
+    // while the sights projected to the middle of the screen, and every ray cast down
+    // it missed the weapon entirely and reported a spotless sight picture. Starting at
+    // the near plane also means anything clipped away is excluded for free.
+    g.camera.updateProjectionMatrix();
+    camPos.set(0, 0, -1).unproject(g.camera);
+    camDir.set(0, 0, 1).unproject(g.camera).sub(camPos).normalize();
+
     const meshes = [];
-    p.vmRoot.traverse((o) => { if (o.isMesh || o.isSkinnedMesh) meshes.push(o); });
-    const rc = new T.Raycaster(camPos, camDir, 0.01, 3);
-    const hits = rc.intersectObjects(meshes, false);
-    const rearDist = camPos.distanceTo(rear.getWorldPosition(new T.Vector3()));
-    // And how close the weapon gets to the player's face at all — the stock is below
-    // the aim line, so nothing above notices it sitting on the end of his nose.
-    let nearest = Infinity;
-    p.vmRoot.updateMatrixWorld(true);
-    for (const m of meshes) {
-      const b = new T.Box3().setFromObject(m);
-      nearest = Math.min(nearest, b.distanceToPoint(camPos));
-    }
+    p.vmRoot.traverse((o) => {
+      // Everything drawn, with no exceptions.
+      //
+      // The first version skipped the sight objects themselves, on the theory that
+      // sights belong on the aim line. They belong *around* it: a notch is a gap and a
+      // post stops at the crosshair. Excusing them meant this reported a clear sight
+      // picture while solid metal sat in the middle of the screen — a metric written
+      // to ignore the exact failure it exists to catch.
+      if ((o.isMesh || o.isSkinnedMesh) && o.visible) meshes.push(o);
+    });
+    const rc = new T.Raycaster(camPos, camDir, 0, 6);
+    const sideV = new T.Vector3().crossVectors(camDir, new T.Vector3(0, 1, 0)).normalize();
+    const upV = new T.Vector3().crossVectors(sideV, camDir).normalize();
+    const frontDist = camPos.distanceTo(front.getWorldPosition(new T.Vector3()));
+
+    // Anything solid between the eye and the front sight is over the crosshair.
     let blocked = 0;
-    for (const h of hits) {
-      if (h.object === rear || h.object === front) continue;
-      if (h.distance < rearDist - 0.005) blocked = Math.max(blocked, rearDist - h.distance);
+    for (const h of rc.intersectObjects(meshes, false)) {
+      if (h.distance < frontDist - 0.004) {
+        blocked = Math.max(blocked, frontDist - h.distance);
+      }
     }
+
+    // How open the sight picture is, over the couple of degrees a player is looking
+    // through. One ray down the middle can thread a gap nothing else does.
+    const fan = new T.Vector3();
+    let openRays = 0, fanRays = 0;
+    for (let ax = -3; ax <= 3; ax++) {
+      for (let ay = -3; ay <= 3; ay++) {
+        fan.copy(camDir)
+          .addScaledVector(sideV, Math.tan(ax * 0.35 * Math.PI / 180))
+          .addScaledVector(upV, Math.tan(ay * 0.35 * Math.PI / 180))
+          .normalize();
+        rc.set(camPos, fan);
+        const h = rc.intersectObjects(meshes, false);
+        fanRays++;
+        if (!h.length || h[0].distance > frontDist - 0.004) openRays++;
+      }
+    }
+    const open = openRays / fanRays;
 
     // Roll: the weapon's own up, projected. A rolled gun still has its sights on the
     // crosshair, so nothing above would catch it.
     const upWorld = new T.Vector3();
     held.matrixWorld.extractBasis(new T.Vector3(), upWorld, new T.Vector3());
-    const camQ = new T.Quaternion();
-    g.camera.getWorldQuaternion(camQ);
-    upWorld.applyQuaternion(camQ.invert()).normalize();
+    upWorld.applyQuaternion(_camQ.clone().invert()).normalize();
     const roll = Math.atan2(upWorld.x, upWorld.y) * 57.3;
 
     // Now fire, with the weapon still up.
@@ -210,10 +238,10 @@ const report = await page.evaluate(async (opts) => {
       firing = Math.max(firing, dist(toScreen(rear)), dist(toScreen(front)));
     }
     p.triggerHeld = false; p.triggerQueued = false;
-    // And back. Recoil is allowed to move the sight picture — that is what recoil is
-    // for, and how much is the recoil system's business, not alignment's. What
-    // alignment has to guarantee is that it *returns*: a weapon that creeps a little
-    // further off with every shot is broken in a way no single frame reveals.
+    // And back. Recoil is allowed to move the picture — how much is the recoil
+    // system's business, not alignment's. What alignment guarantees is that it
+    // returns: a weapon creeping further off with every shot is broken in a way no
+    // single frame reveals.
     for (let i = 0; i < 45; i++) g.step(1 / 60, 1);
     const recover = Math.max(dist(toScreen(rear)), dist(toScreen(front)));
 
@@ -221,7 +249,7 @@ const report = await page.evaluate(async (opts) => {
       id,
       rear: dist(sRear), front: dist(sFront),
       spread: Math.hypot(sRear.x - sFront.x, sRear.y - sFront.y),
-      settle, firing, recover, roll, blocked, nearest,
+      settle, firing, recover, roll, blocked, open,
       behind: sRear.behind || sFront.behind,
     });
   }
@@ -234,7 +262,7 @@ let failures = 0;
 const bad = (cond, msg) => { if (cond) { failures++; return ` FAIL(${msg})`; } return ''; };
 
 console.log('\nironsight alignment — pixels from the crosshair at 1280x720\n');
-console.log('  weapon     rear   front  spread   swing  firing recover    roll blocked   near');
+console.log('  weapon     rear   front  spread   swing  firing recover    roll blocked   open');
 for (const w of report) {
   if (w.missing) {
     failures++;
@@ -251,9 +279,9 @@ for (const w of report) {
   flags += bad(w.firing > LIMITS.firing, `${w.id} drifts ${w.firing.toFixed(0)} px under fire`);
   flags += bad(Math.abs(w.roll) > LIMITS.roll, `${w.id} rolled ${w.roll.toFixed(1)} deg`);
   flags += bad(w.recover > LIMITS.recover, `${w.id} sits ${w.recover.toFixed(1)} px off after firing`);
-  flags += bad(w.blocked > LIMITS.blocked, `${w.id} has hands ${(w.blocked * 100).toFixed(0)} cm in front of its sights`);
-  flags += bad(w.nearest < LIMITS.nearest, `${w.id} comes ${(w.nearest * 100).toFixed(0)} cm from the player's face`);
-  console.log(`  ${w.id.padEnd(9)} ${n(w.rear)}  ${n(w.front)}  ${n(w.spread)}  ${n(w.settle)}  ${n(w.firing)} ${n(w.recover)}  ${n(w.roll)} ${n(w.blocked)} ${n(w.nearest)}${flags}`);
+  flags += bad(w.blocked > LIMITS.blocked, `${w.id} has ${(w.blocked * 100).toFixed(0)} cm of metal over the crosshair`);
+  flags += bad(w.open < LIMITS.open, `${w.id} sight picture only ${(w.open * 100).toFixed(0)}% clear`);
+  console.log(`  ${w.id.padEnd(9)} ${n(w.rear)}  ${n(w.front)}  ${n(w.spread)}  ${n(w.settle)}  ${n(w.firing)} ${n(w.recover)}  ${n(w.roll)} ${n(w.blocked)} ${n(w.open)}${flags}`);
 }
 
 if (pageErrors.length) {
