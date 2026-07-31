@@ -56,6 +56,12 @@ export const LANE_TEST = {
   ],
   /** How near one of those a fighter counts as "at" it. */
   markRadius: 3.5,
+  /**
+   * Where the watching camera sits. Straight over the pit and tilted a little, so
+   * routes read as routes — the whole question is which way round they go, and that
+   * is invisible from inside the fight.
+   */
+  camera: { x: -2, z: 6, height: 40, lookZ: -1 },
 };
 
 const WALL_H = 3.2;
@@ -125,6 +131,54 @@ export function buildLaneTestMeshes(scene) {
       mesh.material.dispose();
     }
     material.dispose();
+  };
+}
+
+/**
+ * Draw the answer key: the spots being scored, and the lane being held.
+ *
+ * Watching a squad path around an invisible threat tells you very little. Red discs
+ * are the tempting cover inside the beaten zone, green the long way round, and the
+ * red strip is the lane itself — so what the numbers are counting is on screen.
+ */
+export function buildLaneTestMarkers(scene) {
+  const added = [];
+  const disc = (spot, colour) => {
+    const mesh = new THREE.Mesh(
+      new THREE.CircleGeometry(LANE_TEST.markRadius, 24),
+      new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.28, depthWrite: false }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(spot.x, 0.03, spot.z);
+    scene.add(mesh);
+    added.push(mesh);
+  };
+  for (const spot of LANE_TEST.deathTraps) disc(spot, 0xd12b3a);
+  for (const spot of LANE_TEST.safeGround) disc(spot, 0x2fbf4f);
+
+  const dx = LANE_TEST.aim.x - LANE_TEST.post.x;
+  const dz = LANE_TEST.aim.z - LANE_TEST.post.z;
+  const length = Math.hypot(dx, dz);
+  const lane = new THREE.Mesh(
+    new THREE.PlaneGeometry(2, length + 6),
+    new THREE.MeshBasicMaterial({ color: 0xff3020, transparent: true, opacity: 0.16, depthWrite: false }),
+  );
+  lane.rotation.x = -Math.PI / 2;
+  lane.rotation.z = -Math.atan2(dx, dz);
+  lane.position.set(
+    LANE_TEST.post.x + dx / 2 - (dx / length) * 3,
+    0.02,
+    LANE_TEST.post.z + dz / 2 - (dz / length) * 3,
+  );
+  scene.add(lane);
+  added.push(lane);
+
+  return () => {
+    for (const mesh of added) {
+      scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
   };
 }
 
