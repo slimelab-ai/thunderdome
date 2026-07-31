@@ -142,6 +142,9 @@ def smg():
     torus("rear peep", (0, 0.035, 0.086), 0.0075, 0.0022, DARK,
           rotation=(math.radians(90), 0, 0), major_segments=12, minor_segments=5)
     cube("peep stem", (0, 0.035, 0.076), (0.005, 0.008, 0.012), DARK, 0.001, uv_scale=UV)
+    # The post sits 3 cm above the barrel and a long way past the end of the rail, so
+    # it needs something to stand on. Without this base it hangs in mid-air.
+    cube("front base", (0, 0.335, 0.055), (0.030, 0.014, 0.034), DARK, 0.002, uv_scale=UV)
     post(0.335, 0.086, width=0.004, tall=0.015, ears=0.011)
     aim_marks(0.035, 0.335, 0.086)
     finish("smg", moving=(bolt, mag), budget=900)
@@ -213,6 +216,12 @@ def dmr():
          rotation=(math.radians(90), 0, 0), uv_scale=UV)
     tube("ocular", (0, -0.035, 0.105), 0.025, 0.05, DARK, vertices=14,
          rotation=(math.radians(90), 0, 0), uv_scale=UV)
+    # Rims on both openings. An open-ended tube has no end: from the hip the scope
+    # stopped in mid-air with a hole where its lenses should be.
+    torus("ocular rim", (0, -0.060, 0.105), 0.025, 0.0042, METAL,
+          rotation=(math.radians(90), 0, 0), major_segments=14, minor_segments=5)
+    torus("objective rim", (0, 0.255, 0.105), 0.027, 0.0042, METAL,
+          rotation=(math.radians(90), 0, 0), major_segments=14, minor_segments=5)
     aim_marks(-0.035, 0.23, 0.105)
     # Rings, not blocks. Square mounts reaching up to the tube's centre put solid
     # metal across the sight line at z=0.105 — 19 cm of it, dead on the crosshair,

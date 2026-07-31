@@ -329,6 +329,23 @@ is perfectly aligned and completely useless, and neither shows up in a check tha
 asks where the sights are. The bench fires a ray down the middle to see what it meets
 first, and fans out over the couple of degrees a player is actually looking through.
 
+**The painted crosshair goes away as the sights arrive.** Two aiming references
+disagreeing with each other is worse than either alone, and a dot sitting on top of a
+front post is exactly that. It is gone by the time the weapon is 60% up, so the handover
+happens while the sights are still travelling.
+
+**A scope vignettes; irons do not.** Looking down a tube costs you the edge of the view
+by construction, so the clear-picture figure for a scoped weapon describes the tube
+rather than the alignment and gets its own limit. Widening the bore to satisfy the
+iron-sight number made the picture worse, not better — the honest move was to admit the
+two are different things.
+
+**Sights need something to stand on.** The SMG's front post sat 3 cm above the barrel
+and well past the end of its rail, so it floated in mid-air; a scope tube open at both
+ends has no end at all, and from the hip it stopped with a hole where its lenses should
+be. Neither shows up in an alignment check — both are things you can only see by
+looking, from the hip, which is where a weapon spends most of its time.
+
 **Do not write the failure out of the check.** The first version of that ray test
 skipped the sight objects themselves, on the theory that sights belong on the aim line.
 They belong *around* it. Excusing them meant the bench reported a spotless sight picture

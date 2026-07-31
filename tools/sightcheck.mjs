@@ -30,6 +30,7 @@
  *                player's own hands — sights on the axis with a fist parked on them
  *                are perfectly aligned and no use at all
  *   upright      the weapon is not rolled: its up still points up on screen
+ *   xhair        the painted crosshair has faded out by the time the sights arrive
  */
 import puppeteer from 'puppeteer-core';
 
@@ -55,7 +56,12 @@ const LIMITS = {
   recover: 6,    // px it must come back to once the trigger is released
   blocked: 0.01, // m of drawn geometry allowed in front of the front sight on the aim
                  // line — the crosshair has to be visible through the sights
-  open: 0.80,    // fraction of a 2-degree fan around the crosshair that must be clear
+  // Fraction of a 2-degree fan around the crosshair that must be clear. Lower for a
+  // scope: looking down a tube vignettes by construction, and the number there
+  // describes the tube rather than the alignment. Widening the bore to satisfy the
+  // iron-sight figure made the picture worse, not better.
+  open: 0.80,
+  openScoped: 0.70,
   roll: 3.0,     // degrees of roll on screen
 };
 
@@ -220,7 +226,6 @@ const report = await page.evaluate(async (opts) => {
       }
     }
     const open = openRays / fanRays;
-
     // Roll: the weapon's own up, projected. A rolled gun still has its sights on the
     // crosshair, so nothing above would catch it.
     const upWorld = new T.Vector3();
@@ -237,6 +242,10 @@ const report = await page.evaluate(async (opts) => {
       g.step(1 / 60, 1);
       firing = Math.max(firing, dist(toScreen(rear)), dist(toScreen(front)));
     }
+    // The painted crosshair has to be gone by the time the sights arrive, or the
+    // player has two aiming references disagreeing with each other.
+    const xhair = +(document.getElementById('crosshair')?.style.opacity || '1');
+
     p.triggerHeld = false; p.triggerQueued = false;
     // And back. Recoil is allowed to move the picture — how much is the recoil
     // system's business, not alignment's. What alignment guarantees is that it
@@ -249,7 +258,7 @@ const report = await page.evaluate(async (opts) => {
       id,
       rear: dist(sRear), front: dist(sFront),
       spread: Math.hypot(sRear.x - sFront.x, sRear.y - sFront.y),
-      settle, firing, recover, roll, blocked, open,
+      settle, firing, recover, roll, blocked, open, xhair,
       behind: sRear.behind || sFront.behind,
     });
   }
@@ -262,7 +271,7 @@ let failures = 0;
 const bad = (cond, msg) => { if (cond) { failures++; return ` FAIL(${msg})`; } return ''; };
 
 console.log('\nironsight alignment — pixels from the crosshair at 1280x720\n');
-console.log('  weapon     rear   front  spread   swing  firing recover    roll blocked   open');
+console.log('  weapon     rear   front  spread   swing  firing recover    roll blocked   open xhair');
 for (const w of report) {
   if (w.missing) {
     failures++;
@@ -280,8 +289,10 @@ for (const w of report) {
   flags += bad(Math.abs(w.roll) > LIMITS.roll, `${w.id} rolled ${w.roll.toFixed(1)} deg`);
   flags += bad(w.recover > LIMITS.recover, `${w.id} sits ${w.recover.toFixed(1)} px off after firing`);
   flags += bad(w.blocked > LIMITS.blocked, `${w.id} has ${(w.blocked * 100).toFixed(0)} cm of metal over the crosshair`);
-  flags += bad(w.open < LIMITS.open, `${w.id} sight picture only ${(w.open * 100).toFixed(0)}% clear`);
-  console.log(`  ${w.id.padEnd(9)} ${n(w.rear)}  ${n(w.front)}  ${n(w.spread)}  ${n(w.settle)}  ${n(w.firing)} ${n(w.recover)}  ${n(w.roll)} ${n(w.blocked)} ${n(w.open)}${flags}`);
+  const openLimit = w.id === 'dmr' ? LIMITS.openScoped : LIMITS.open;
+  flags += bad(w.open < openLimit, `${w.id} sight picture only ${(w.open * 100).toFixed(0)}% clear`);
+  flags += bad(w.xhair > 0.02, `${w.id} still shows a crosshair at ${w.xhair} while aimed`);
+  console.log(`  ${w.id.padEnd(9)} ${n(w.rear)}  ${n(w.front)}  ${n(w.spread)}  ${n(w.settle)}  ${n(w.firing)} ${n(w.recover)}  ${n(w.roll)} ${n(w.blocked)} ${n(w.open)} ${n(w.xhair)}${flags}`);
 }
 
 if (pageErrors.length) {
