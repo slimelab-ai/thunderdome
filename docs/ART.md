@@ -356,6 +356,20 @@ unfair peek. `npm run fightercheck` measures how far a lean actually carries the
 (29 cm) and combat sizes its peek off that number. Past it, the fighter has to step out,
 and stepping out is visible.
 
+**Stage lighting lights the room, not the fighters.** Two showlight spots hung over
+the middle of the pit swept the *floor* on a Lissajous, 420 intensity through a
+15-degree cone with 58 m of reach and no shadows — a bright pool the size of a truck
+sliding around the arena, through walls, lighting whoever it crossed. It reads as a
+spotlight following the enemy team, because that is what it is. They hang outside the
+pit now and rake the walls and crowd above head height. Anything that moves and is
+bright enough to pick a fighter out of the dark is a targeting aid, whatever it was
+put there for.
+
+**Point a light somewhere sensible before you pay for a shadow map.** The first fix
+for the sweepers was to make them shadow-casting, which would have tripled this
+scene's shadow cost — one caster to three, every frame — to stop beams crossing a play
+space they had no business crossing in the first place.
+
 **Gameplay-visible brightness is a gameplay decision, not a look decision.** Three
 separate things here — a light's range, a sprite's size, an emissive's intensity — each
 chosen for how they looked in isolation, each ended up telling the player where the

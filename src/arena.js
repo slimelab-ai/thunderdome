@@ -637,19 +637,36 @@ export function buildArena(scene) {
     lights.push({ light: p, base: 190 });
   }
 
-  // sweeping showlights: warm and cool, matching the two-temperature rule
+  // Sweeping showlights: warm and cool, matching the two-temperature rule.
+  //
+  // Stage lighting is for the room, not the fighters. As first written these were
+  // 420-intensity spots with a 15-degree cone and 58 m of reach, hung over the middle
+  // of the arena and panning across the *floor* with no shadows — so a bright pool the
+  // size of a truck slid around the pit, through walls, lighting up whoever it
+  // crossed. It reads as a spotlight tracking the enemy team, because that is exactly
+  // what it is doing.
+  //
+  // They now hang outside the pit and rake the walls and the crowd above head height,
+  // sweeping along the perimeter rather than across the ground. That keeps the show —
+  // the beams still move, the room still feels lit for an audience — while the surface
+  // people actually fight on is lit only by the fixtures that are supposed to light
+  // it. No shadow maps needed either, because the cones never cross the play space:
+  // two more shadow-casting lights would have tripled this scene's shadow cost to fix
+  // a problem better solved by pointing them somewhere sensible.
   const sweepers = [];
   for (let i = 0; i < 2; i++) {
-    const sp = new THREE.SpotLight(i === 0 ? 0xffc27a : 0x9fb6d8, 420, 58, 0.26, 0.6, 1.7);
-    sp.position.set(i === 0 ? -10 : 10, 15, 0);
+    const side = i === 0 ? -1 : 1;
+    const sp = new THREE.SpotLight(i === 0 ? 0xffc27a : 0x9fb6d8, 190, 40, 0.34, 0.8, 1.8);
+    sp.position.set(side * (W / 2 + 3), 12, side * (D / 2 + 2));
     scene.add(sp, sp.target);
     sweepers.push(sp);
-    lights.push({ light: sp, base: 420 });
+    lights.push({ light: sp, base: 190 });
   }
   dynamic.push({
     update(t) {
-      sweepers[0].target.position.set(Math.sin(t * 0.45) * 15, 0, Math.cos(t * 0.32) * 10);
-      sweepers[1].target.position.set(Math.cos(t * 0.38) * 15, 0, Math.sin(t * 0.5) * 10);
+      // Along the far walls, at and above the top of the barrier — never the floor.
+      sweepers[0].target.position.set(Math.sin(t * 0.45) * (W / 2 - 1), 4.2 + Math.sin(t * 0.6) * 1.6, D / 2 - 1);
+      sweepers[1].target.position.set(Math.cos(t * 0.38) * (W / 2 - 1), 4.4 + Math.cos(t * 0.7) * 1.6, -(D / 2 - 1));
     },
   });
 
