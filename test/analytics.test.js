@@ -7,10 +7,26 @@ const OUTBOX_KEY = 'thunderdome_analytics_outbox_v1';
 class MemoryStorage {
   constructor(entries = {}) {
     this.values = new Map(Object.entries(entries));
+    this.writes = new Map();
   }
   getItem(key) { return this.values.get(key) ?? null; }
-  setItem(key, value) { this.values.set(key, String(value)); }
+  setItem(key, value) {
+    this.writes.set(key, (this.writes.get(key) ?? 0) + 1);
+    this.values.set(key, String(value));
+  }
+  outboxWrites() { return this.writes.get(OUTBOX_KEY) ?? 0; }
 }
+
+// A macrotask, so every queued microtask — including an in-flight flush's continuation
+// chain — has drained before the assertions run.
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+// Acknowledges whatever the batch actually contained, which also asserts the request
+// body this client hand-assembles is still well-formed JSON.
+const acceptWholeBatch = async (_endpoint, init) => {
+  const { events } = JSON.parse(init.body);
+  return { ok: true, json: async () => ({ accepted: events.length, duplicates: 0 }) };
+};
 
 function makeAnalytics(storage, fetchImpl = async () => ({
   ok: true,
@@ -126,4 +142,64 @@ test('simulation provenance is explicit and inherited by every emitted event', (
 test('simulation provenance rejects an ambiguous unseeded batch', () => {
   const analytics = makeAnalytics(new MemoryStorage());
   assert.throws(() => analytics.setSimulationContext({ batchId: 'batch-10' }), /numeric seed/);
+});
+
+test('a synchronous telemetry burst coalesces into a single outbox write', async () => {
+  const storage = new MemoryStorage();
+  const analytics = makeAnalytics(storage);
+
+  // A headless match emits its whole run inside one synchronous task. Writing the
+  // outbox per event is quadratic; one write per burst is the property that matters.
+  for (let i = 0; i < 500; i++) analytics.emit('combat_frame', { frame: i });
+  assert.equal(storage.outboxWrites(), 0, 'no outbox write should land mid-burst');
+
+  await settle();
+  assert.ok(storage.outboxWrites() <= 2,
+    `500 events should coalesce, took ${storage.outboxWrites()} writes`);
+  assert.equal(JSON.parse(storage.getItem(OUTBOX_KEY)).length, 500);
+});
+
+test('lifecycle events are durable before emit returns, without waiting for a microtask', () => {
+  const storage = new MemoryStorage();
+  const analytics = makeAnalytics(storage);
+
+  analytics.emit('combat_frame', { frame: 1 });
+  analytics.emit('match_enter', {}, { eventId: 'enter-1' });
+
+  assert.equal(analytics.isDurablyQueued('enter-1'), true);
+  // The coalesced frame rides along on the lifecycle write rather than being lost.
+  assert.equal(JSON.parse(storage.getItem(OUTBOX_KEY)).length, 2);
+});
+
+test('the byte ledger tracks the queue across trimming and delivery', async () => {
+  const storage = new MemoryStorage();
+  const analytics = makeAnalytics(storage, acceptWholeBatch);
+
+  for (let i = 0; i < 40; i++) analytics.emit('combat_frame', { blob: 'x'.repeat(200) });
+  await settle();
+
+  const ledger = () => analytics.outboxBytes();
+  assert.equal(ledger(), storage.getItem(OUTBOX_KEY).length,
+    'ledger must equal the bytes actually written');
+
+  await analytics.flush();
+  assert.equal(analytics.queue.length, 0);
+  assert.equal(ledger(), storage.getItem(OUTBOX_KEY).length);
+});
+
+test('an oversized outbox sheds expendable records but never lifecycle events', async () => {
+  const storage = new MemoryStorage();
+  const analytics = makeAnalytics(storage);
+
+  analytics.emit('match_enter', {}, { eventId: 'enter-2' });
+  // Just under the 40 KiB per-event compaction limit, so these stay full size and it
+  // is the outbox cap rather than per-event compaction that does the shedding.
+  for (let i = 0; i < 150; i++) analytics.emit('combat_frame', { blob: 'x'.repeat(30_000) });
+  analytics.emit('match_terminal', { terminal_reason: 'player_win' }, { eventId: 'terminal-5' });
+  await settle();
+
+  assert.ok(analytics.outboxBytes() <= 3_500_000, 'outbox must respect its cap');
+  assert.ok(analytics.queue.length < 152, 'expendable frames should have been shed');
+  assert.equal(analytics.isDurablyQueued('enter-2'), true);
+  assert.equal(analytics.isDurablyQueued('terminal-5'), true);
 });
