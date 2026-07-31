@@ -74,6 +74,50 @@
     };
   }
 
+  /**
+   * Cellular (Worley) noise — the one thing fbm cannot give you: an edge.
+   *
+   * Value noise is smoothstep-interpolated between lattice points, so every feature
+   * it produces is a soft blob and the derivative is continuous everywhere. Stack as
+   * many octaves as you like and it still reads as fog. That is why the arena looked
+   * low-resolution close up while having more texels than pixels: nothing in the
+   * albedo had a hard boundary for the eye to lock onto, and blur is what the brain
+   * calls "not enough resolution".
+   *
+   * Returns, per texel:
+   *   `d`    distance to the nearest feature point, 0 at the centre of a cell
+   *   `edge` gap between the nearest and second-nearest — near 0 exactly on a cell
+   *          boundary, which is what draws a crisp line between two stones
+   *   `id`   a stable random value per cell, for per-stone tint or height
+   *
+   * Tiles exactly: the feature grid wraps, so `cells` need not divide `size`.
+   */
+  function worley(seed, size, cells) {
+    const rand = rng(seed);
+    const n = cells * cells;
+    const jx = new Float32Array(n), jy = new Float32Array(n), jid = new Float32Array(n);
+    for (let i = 0; i < n; i++) { jx[i] = rand(); jy[i] = rand(); jid[i] = rand(); }
+    const s = cells / size;
+    return (x, y) => {
+      const fx = x * s, fy = y * s;
+      const xi = Math.floor(fx), yi = Math.floor(fy);
+      let best = 1e9, second = 1e9, id = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const cx = (((xi + dx) % cells) + cells) % cells;
+          const cy = (((yi + dy) % cells) + cells) % cells;
+          const j = cy * cells + cx;
+          const ox = xi + dx + jx[j] - fx, oy = yi + dy + jy[j] - fy;
+          const d2 = ox * ox + oy * oy;
+          if (d2 < best) { second = best; best = d2; id = jid[j]; }
+          else if (d2 < second) second = d2;
+        }
+      }
+      const d1 = Math.sqrt(best);
+      return { d: d1, edge: Math.sqrt(second) - d1, id };
+    };
+  }
+
   // Stamp a draw callback nine times so anything crossing an edge reappears on the
   // opposite side. The cost is trivial and it removes all seam special-casing.
   function wrapped(ctx, size, draw) {
@@ -224,6 +268,16 @@
     const blotch = fbm(0x99aa, size, 4, 3);
     const fine = fbm(0x5150, size, 64, 2);
 
+    // No large distinctive features here, deliberately.
+    //
+    // Spalled patches were tried and removed. They looked right in isolation and on
+    // the floor they were a field of identical dark polka dots on a one-metre grid:
+    // *anything* individually recognisable inside a 2 m tile becomes a lattice the
+    // moment you can see more than one tile at a time, and the eye finds that lattice
+    // far faster than it finds the feature. Large-scale variation has to come from
+    // something that does not repeat at 2 m — which is what the macro layer in
+    // `withDetail` is for. This set stays deliberately uniform, and earns its interest
+    // from tone range and aggregate contrast instead.
     const height = new Float32Array(size * size);
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
@@ -240,7 +294,10 @@
         const i = y * size + x;
         const h = height[i];
         const b = blotch(x, y);
-        const v = lerp(0.26, 0.37, h) * lerp(0.82, 1.12, b);
+        // Wider than the 0.26-0.37 it used to be. A range that narrow is most of why
+        // the floor read as one flat sheet: there was barely a stop of variation in
+        // it before the lighting even got involved.
+        const v = lerp(0.22, 0.42, h) * lerp(0.78, 1.16, b);
         const p = i * 4;
         img.data[p] = clamp01(v * 1.02) * 255;
         img.data[p + 1] = clamp01(v * 1.0) * 255;
@@ -252,20 +309,38 @@
 
     // aggregate: exposed stones where the surface has worn through
     wrapped(ctx, size, (c) => {
-      for (let i = 0; i < 900; i++) {
+      // Contrast raised from 0.04-0.10 alpha. At that level the stones were present
+      // in the file and invisible on screen, which is the worst of both.
+      for (let i = 0; i < 1400; i++) {
         const x = rand() * size, y = rand() * size, r = 1 + rand() * 2.4;
-        c.fillStyle = `rgba(${150 + rand() * 40 | 0},${148 + rand() * 40 | 0},${146 + rand() * 40 | 0},${0.04 + rand() * 0.06})`;
+        c.fillStyle = `rgba(${150 + rand() * 40 | 0},${148 + rand() * 40 | 0},${146 + rand() * 40 | 0},${0.10 + rand() * 0.14})`;
         c.beginPath(); c.arc(x, y, r, 0, 6.284); c.fill();
       }
     });
 
-    // form-line seams on a grid — reads as poured bays, gives the eye scale
+    // Form-line seams: poured bays, which give the eye a sense of scale.
+    //
+    // Drawn dead straight at exactly half the tile, these were the single loudest
+    // tell that the floor was a repeating 2 m square — a perfect grid every metre in
+    // world space, which no poured slab has. Jittered along their length and dropped
+    // in opacity they still read as bays without announcing the tile.
     const bay = size / 2;
-    ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
     ctx.lineWidth = size / 340;
     for (let i = 0; i < 2; i++) {
-      ctx.beginPath(); ctx.moveTo(i * bay, 0); ctx.lineTo(i * bay, size); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i * bay); ctx.lineTo(size, i * bay); ctx.stroke();
+      for (const vertical of [true, false]) {
+        ctx.beginPath();
+        for (let t = 0; t <= 16; t++) {
+          const along = (t / 16) * size;
+          // Wanders a few texels either side, and returns to exactly the seam position
+          // at both ends so the tile still joins itself.
+          const wobble = Math.sin(t / 16 * Math.PI) * (rand() - 0.5) * (size / 90);
+          const px = i * bay + wobble, py = along;
+          if (t === 0) ctx.moveTo(vertical ? px : py, vertical ? py : px);
+          else ctx.lineTo(vertical ? px : py, vertical ? py : px);
+        }
+        ctx.stroke();
+      }
     }
 
     // spider cracks radiating from a few impact points
@@ -589,20 +664,50 @@
    * a 900-triangle crate still catches light like a beaten object. One set,
    * reused everywhere — the trim-sheet trick applied to normals.
    */
+  /**
+   * The close-range detail layer, blended over the arena sets at a 25 cm tile by
+   * `withDetail` in src/materials.js.
+   *
+   * This is where the aggregate lives now, and it is deliberately *cellular* rather
+   * than fbm. At a 25 cm tile a 512 map is 2048 texels per metre, so an 8 mm stone is
+   * sixteen texels — big enough to draw properly, and the only place in the library
+   * where grit is worth authoring at all. On the 2 m base sets the same stone would
+   * be four texels, which is the Nyquist trap that has bitten this file twice.
+   *
+   * Flat-topped stones separated by a hard groove. The groove is what does the work:
+   * a boundary the eye can lock onto is the difference between a surface that reads
+   * as concrete and one that reads as an out-of-focus photograph of concrete.
+   */
   SETS.detail_grunge = (size = 512) => {
-    const fine = fbm(0xd17a, size, 32, 4);
+    const agg = worley(0x9c31, size, 44);       // aggregate, ~12 texels across
+    const grit = worley(0x4e88, size, 130);     // finer sand between the stones
+    const fine = fbm(0xd17a, size, 32, 3);
     const scratch = fbm(0x0f1e, size, 8, 2);
     const height = new Float32Array(size * size);
+    const rough = new Float32Array(size * size);
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        height[y * size + x] = fine(x, y) * 0.7 + clamp01(scratch(x * 4, y * 0.5) - 0.45) * 0.3;
+        const i = y * size + x;
+        const a = agg(x, y);
+        // 0 exactly on a cell boundary, 1 inside a stone. The multiplier sets how
+        // wide the groove is; higher is tighter and harder.
+        const stone = clamp01(a.edge * 13);
+        const sand = clamp01(grit(x, y).edge * 9);
+        height[i] = lerp(0.10, 0.48 + a.id * 0.40, stone)      // stones stand proud
+          + sand * 0.10                                        // sand grain between
+          + fine(x, y) * 0.12                                  // micro variation
+          + clamp01(scratch(x * 4, y * 0.5) - 0.45) * 0.22;    // drag marks
+        // Stone faces are polished by traffic; the grout between them stays open.
+        rough[i] = lerp(0.92, 0.55, stone * 0.8);
       }
     }
-    const rough = new Float32Array(size * size);
-    for (let i = 0; i < rough.length; i++) rough[i] = lerp(0.35, 0.75, height[i]);
     return {
       albedo: null,
-      normal: heightToNormal(height, size, 5.5, 3),
+      // Blur 1, not 3. The whole point of this set is the hard edge on the grooves,
+      // and a wide low-pass is exactly what erases it. Safe here where it would not
+      // be on a base set: this is a dielectric at roughness 0.55-0.92, the shader
+      // blends it in at 0.55 strength, and the mip chain handles distance.
+      normal: heightToNormal(height, size, 4.0, 1),
       orm: packORM(size, heightToAO(height, size, 3, 4), rough, 0),
     };
   };
@@ -745,10 +850,14 @@
         // the camera at four times the arena's texel rate, so hundreds of them land in
         // frame at once and the whole gun crawls, worst of all down the sights.
         //
-        // 0.24 was glass; 0.36 was still a mirror (confirmed by flattening the map to
-        // 0.75, which removes the fireflies outright). Blued steel worn back by a
-        // carry sling is 0.5-0.6 anyway — a soft sheen, not a highlight.
-        rough[i] = lerp(0.70, 0.58, clamp01((wear(x, y) - 0.66) * 3.0));
+        // The history is worth keeping straight, because the range here is narrow.
+        // 0.24 was glass. 0.36 read as a mirror too — but only because the field was
+        // NaN and the map actually held 0; the multiplier could never rescue it.
+        // 0.58-0.70 fixed that and went too far the other way: a gun that catches no
+        // light at all reads as plastic. Blued steel worn back by a carry sling sits
+        // around 0.5, which is a sheen rather than a highlight, and is far enough from
+        // zero that the fireflies do not come back.
+        rough[i] = lerp(0.62, 0.50, clamp01((wear(x, y) - 0.66) * 3.0));
       }
     }
     return {

@@ -61,6 +61,85 @@ function fromSet(name, overrides = {}, { hasAlbedo = true } = {}) {
   return new THREE.MeshStandardMaterial(params);
 }
 
+/**
+ * Two extra scales of detail, layered onto a standard material in the shader.
+ *
+ * The arena samples one texture set at a 2 m tile, and that single scale is the
+ * source of two complaints at once. Up close there is nothing left to see — a 1024
+ * map over 2 m is 512 texels per metre, so by the time your face is against a wall
+ * the sampler is magnifying and everything goes soft. Far away the 2 m repeat is
+ * plainly legible as a grid.
+ *
+ * Raising the base resolution fixes neither well: it costs four times the bytes,
+ * pushes the magnification problem back by one step rather than solving it, and does
+ * nothing at all about the repeat. Sampling *more scales* of the same texture does
+ * fix both, for one extra texture fetch:
+ *
+ * - **detail** — the shared grunge normal at a tight tile (default 25 cm), blended
+ *   into the base normal. Gives the surface something to resolve at arm's length,
+ *   where the base map has already run out.
+ * - **macro** — the same texture at a very loose tile (default 16 m), modulating
+ *   brightness and roughness. Because 16 does not divide evenly into the eye's sense
+ *   of a 2 m grid, the repeat stops reading as a repeat; the floor gets damp patches
+ *   and dry ones instead of one uniform sheet of aggregate.
+ *
+ * Both are deliberately subtle. This is meant to be the difference between "a texture"
+ * and "a floor", not a visible pattern of its own.
+ */
+function withDetail(material, {
+  detailTile = 8,        // base tiles per detail tile — 2 m base / 8 = 25 cm
+  macroTile = 0.125,     // base tiles per macro tile — 2 m base / 0.125 = 16 m
+  detailStrength = 0.55,
+  macroStrength = 0.16,
+  macroRough = 0.22,
+} = {}) {
+  const detail = tex('detail_grunge_n');
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.tDetail = { value: detail };
+    shader.uniforms.uDetailScale = { value: detailTile };
+    shader.uniforms.uDetailStrength = { value: detailStrength };
+    shader.uniforms.uMacroScale = { value: macroTile };
+    shader.uniforms.uMacroStrength = { value: macroStrength };
+    shader.uniforms.uMacroRough = { value: macroRough };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform sampler2D tDetail;
+        uniform float uDetailScale;
+        uniform float uDetailStrength;
+        uniform float uMacroScale;
+        uniform float uMacroStrength;
+        uniform float uMacroRough;
+        float tdMacro;`)
+      // Macro first: `map_fragment` runs before roughness, so the value is in scope
+      // for both. Sampling the *normal* map's green channel is deliberate — it is
+      // already a broad, smoothly varying field, and it costs no extra texture.
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        tdMacro = texture2D( tDetail, vNormalMapUv * uMacroScale ).g;
+        diffuseColor.rgb *= mix( 1.0 - uMacroStrength, 1.0 + uMacroStrength, tdMacro );`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = clamp( roughnessFactor * mix( 1.0 - uMacroRough, 1.0 + uMacroRough, tdMacro ), 0.04, 1.0 );`)
+      // Blend the detail normal into the base one before it goes to world space.
+      // Perturbing xy and renormalising (rather than averaging the vectors) keeps the
+      // base normal's shape and adds the fine grain on top, which is what a detail
+      // layer is for — averaging would wash the base map out as the detail gets
+      // stronger.
+      .replace('#include <normal_fragment_maps>', `
+        #ifdef USE_NORMALMAP_TANGENTSPACE
+          vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+          mapN.xy *= normalScale;
+          vec3 tdDetN = texture2D( tDetail, vNormalMapUv * uDetailScale ).xyz * 2.0 - 1.0;
+          mapN = normalize( vec3( mapN.xy + tdDetN.xy * uDetailStrength, mapN.z ) );
+          normal = normalize( tbn * mapN );
+        #else
+          #include <normal_fragment_maps>
+        #endif`);
+  };
+  // Distinct from the stock program, and shared by every material patched the same
+  // way, so this does not multiply the shader cache.
+  material.customProgramCacheKey = () => `td_detail:${detailTile}:${macroTile}:${detailStrength}`;
+  return material;
+}
+
 let registry = null;
 
 export function materials() {
@@ -80,16 +159,23 @@ export function materials() {
   });
 
   registry = {
-    TD_concrete: fromSet('concrete_floor', { normalScale: new THREE.Vector2(0.55, 0.55) }),
-    TD_concrete_wall: fromSet('concrete_wall', { normalScale: new THREE.Vector2(0.6, 0.6) }),
+    // The three world-UV arena surfaces, and the only ones that get the detail layer:
+    // they are the large flat areas you stand on and press your face against, and the
+    // only ones tiled at a fixed 2 m. Weapons and fighters are unwrapped per model at
+    // their own densities, where a fixed-tile detail pass would fight the authoring.
+    TD_concrete: withDetail(fromSet('concrete_floor', { normalScale: new THREE.Vector2(0.55, 0.55) })),
+    TD_concrete_wall: withDetail(fromSet('concrete_wall', { normalScale: new THREE.Vector2(0.6, 0.6) })),
     // Multipliers below 1 on top of the maps: a fully polished diamond plate seen at
     // the grazing angles you get across a gantry sparkled badly, because the tread
     // normal is high-frequency and specular does not antialias.
-    TD_steel_plate: fromSet('steel_plate', {
+    TD_steel_plate: withDetail(fromSet('steel_plate', {
       roughness: 1.35,
       metalness: 0.78,
       normalScale: new THREE.Vector2(0.7, 0.7),
-    }),
+      // Lighter touch than the concrete: the tread pattern is already high-frequency
+      // and this is a metal, where extra normal detail turns straight into specular
+      // fizz at grazing angles.
+    }), { detailStrength: 0.3, macroStrength: 0.1, macroRough: 0.14 }),
     TD_steel_painted: fromSet('steel_painted'),
     TD_gunmetal: fromSet('gunmetal'),
     // Fighters have exactly two slots. The body atlas is shared by every fighter in
