@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coordinatedBreachLane, offsetBreachGoal } from '../src/tactics.js';
+import {
+  coordinatedBreachLane, offsetBreachGoal, shouldSprintAtTarget,
+} from '../src/tactics.js';
 
 test('a squad assigns one suppressor and alternating breach lanes', () => {
   const support = { role: 'support', navSeed: 99 };
@@ -23,4 +25,11 @@ test('breach goals fan out perpendicular to the defended sightline', () => {
   assert.deepEqual(offsetBreachGoal(target, attacker, -1), { x: 1, y: 0, z: 10 });
   assert.deepEqual(offsetBreachGoal(target, attacker, 1), { x: -9, y: 0, z: 10 });
   assert.deepEqual(offsetBreachGoal(target, attacker, -2), { x: 4, y: 0, z: 10 });
+});
+
+test('firearm users stop sprinting on visual contact while melee fighters close', () => {
+  assert.equal(shouldSprintAtTarget({ sight: false, distance: 20 }), true);
+  assert.equal(shouldSprintAtTarget({ sight: true, distance: 20 }), false);
+  assert.equal(shouldSprintAtTarget({ sight: true, melee: true, distance: 8 }), true);
+  assert.equal(shouldSprintAtTarget({ sight: false, distance: 20, legDamage: 0.7 }), false);
 });
