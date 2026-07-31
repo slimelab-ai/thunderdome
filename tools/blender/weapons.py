@@ -159,7 +159,11 @@ def shotgun():
     pump = cube("pump", (0, 0.24, 0.012), (0.048, 0.13, 0.050), WOOD, 0.014, uv_scale=UV)
     cube("receiver", (0, 0.03, 0.030), (0.044, 0.20, 0.070), METAL, 0.010, uv_scale=UV)
     cube("ejection port", (0.024, 0.06, 0.042), (0.010, 0.075, 0.030), DARK, 0.003, uv_scale=UV)
-    cube("grip wrist", (0, -0.09, -0.038), (0.040, 0.11, 0.070), WOOD, 0.016,
+    # The wrist stays where the hand closes on it — `GRIP_ANCHOR.shotgun` in
+    # src/weapons.js is this z, and moving one without the other puts the firing hand
+    # 2 cm above the grip with the wrist bent to reach and the knuckles inside the
+    # stock. The drop below belongs *behind* the wrist, which is where a shotgun's is.
+    cube("grip wrist", (0, -0.09, -0.020), (0.040, 0.11, 0.070), WOOD, 0.016,
          rotation=(math.radians(-14), 0, 0), uv_scale=UV)
     # Drop at the comb, which a shotgun has plenty of and this one had none of.
     #
@@ -173,7 +177,10 @@ def shotgun():
     # A bead alone has no rear reference, so aiming one is guesswork. A shallow notch
     # on the receiver gives the pair a line; the bead keeps the silhouette. The aim
     # point is the bead itself, so the line runs through its centre.
-    sphere("bead", (0, 0.63, 0.0655), 0.0055, METAL, segments=10, rings=6)
+    # A bead stands on a ramp. Left floating it is a metal ball hovering 2 mm off the
+    # rib, which is exactly what it looked like.
+    cube("bead ramp", (0, 0.63, 0.0605), (0.009, 0.014, 0.011), DARK, 0.001, uv_scale=UV)
+    sphere("bead", (0, 0.63, 0.0670), 0.0055, METAL, segments=10, rings=6)
     # Aim over the top of the bead, not through the middle of it — the same rule as
     # every post on every other weapon here. A bead centred on the aim point is
     # traditional and covers the thing being shot at, which is what the sight-picture
@@ -181,8 +188,8 @@ def shotgun():
     # The notch top *is* the sight line, as everywhere else. It was 5 mm above the
     # marker, so the blades stood proud of the line they define and ate the edges of
     # the picture — this weapon measured the least open of the five.
-    notch(-0.045, 0.0710, gap=0.010, blade=0.010, tall=0.011)
-    aim_marks(-0.045, 0.63, 0.0710)
+    notch(-0.045, 0.0725, gap=0.010, blade=0.010, tall=0.012)
+    aim_marks(-0.045, 0.63, 0.0725)
     finish("shotgun", moving=(pump,), budget=900)
 
 

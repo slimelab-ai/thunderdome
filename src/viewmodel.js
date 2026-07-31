@@ -273,11 +273,17 @@ export class ViewModel {
     if (!this.ready) return;
     const action = this.actions.get(name);
     if (!action) return;
-    if (this.current && this.current !== action) this.current.stop();
+    const prev = this.current;
     action.reset();
     action.timeScale = seconds ? action.getClip().duration / seconds : 1;
     action.setEffectiveWeight(1);
     action.play();
+    // Blend, do not cut. Stopping the old clip and starting the new one on the same
+    // frame teleports the weapon from one pose to the other — 5 cm at the shotgun's
+    // muzzle when a shell reload begins, which is a visible flick. Two frames of
+    // crossfade is short enough that no action feels soft and long enough that none
+    // of them pop.
+    if (prev && prev !== action) prev.crossFadeTo(action, PLAY_FADE, true);
     this.current = action;
   }
 
@@ -462,5 +468,8 @@ const _to = new THREE.Vector3();
 
 // Distance from the hand bone to the closed fist, from tools/blender/viewmodel.py.
 const HAND_LENGTH = 0.123;
+
+// Seconds of crossfade between viewmodel actions.
+const PLAY_FADE = 0.035;
 // Where along the pump the hand grips, relative to the pump part's own origin.
 const PUMP_GRIP_Z = 0;
