@@ -2757,16 +2757,28 @@ function spawnLaneTestShooter(hp = 1e6) {
   shooter.addTo(world, new THREE.Vector3(LANE_TEST.post.x, 0, LANE_TEST.post.z));
   shooter.yaw = facing;
   shooter.group.rotation.y = facing;
-  // No thinking, no moving, no target acquisition — he is a fixture. The scenario
-  // pulls his trigger; this keeps him standing, facing the lane, and animated.
+  shooter.laneFacing = facing;
+  // Where he is trying to look. The scenario points this at the lane, or at whatever
+  // he has broken off to punish, and he turns onto it at a human rate.
+  shooter.aimDir = new THREE.Vector3(Math.sin(facing), 0, Math.cos(facing));
+
+  // No thinking, no moving, no target acquisition — he is a fixture with one job.
+  // But he does *turn*: his yaw used to be pinned to the lane every frame while the
+  // scenario fired at flankers off to one side, so he stood rigid, facing forward,
+  // spraying tracers out of his shoulder. It reads exactly as a man trying to turn
+  // and failing, because that is what it was.
   shooter.update = function (w, dt) {
     this.pos.set(LANE_TEST.post.x, 0, LANE_TEST.post.z);
     this.group.position.copy(this.pos);
-    this.yaw = facing;
-    this.group.rotation.y = facing;
+    const want = Math.atan2(this.aimDir.x, this.aimDir.z);
+    let dy = want - this.yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    this.yaw += dy * Math.min(1, dt * LANE_TEST.turnRate);
+    this.group.rotation.y = this.yaw;
     this.rig.setStance(0, false, 0, 0);
     this.rig.setAimWeight(1);
-    this.rig.setAim(0, 0);
+    // The upper body leads the feet, as it does for everyone else.
+    this.rig.setAim(0, dy * 0.6);
     this.rig.update(dt);
   };
 
@@ -2811,7 +2823,7 @@ function makeLaneTest(shooter, options = {}) {
     trapFrames: 0, safeFrames: 0, botFrames: 0, laneFrames: 0,
     pushedInLull: 0, shooterHp: shooter.hp,
     track: [], sampleT: 0, holderDownAt: null, swingShots: 0,
-    swingTarget: null, swingUntil: 0,
+    swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
   };
 
   const firingNow = () => {
@@ -2845,6 +2857,48 @@ function makeLaneTest(shooter, options = {}) {
     match.campWarned = false;
     aimLine();
 
+    // Who he is on, decided once a frame rather than once a round.
+    let engaging = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
+    let hitChance = cfg.accuracy;
+    if (engaging) { state.swingTarget = null; state.swingUntil = 0; }
+    else if (cfg.swing) {
+      if (state.swingTarget && (!state.swingTarget.alive || state.elapsed > state.swingUntil)) {
+        state.swingTarget = null;
+      }
+      if (!state.swingTarget) {
+        let best = null, bestD = Infinity;
+        for (const c of world.combatants) {
+          if (!c.alive || c.team !== 'enemy') continue;
+          const d = Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z);
+          if (d >= bestD || d > cfg.swingRange) continue;
+          probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
+          if (!hasLoS(world.colliders, muzzle, probe)) continue;
+          best = c; bestD = d;
+        }
+        if (best) { state.swingTarget = best; state.swingUntil = state.elapsed + cfg.swingHold; }
+      }
+      if (state.swingTarget) { engaging = state.swingTarget; hitChance = cfg.swingAccuracy; }
+    }
+    state.engaging = engaging;
+    state.hitChance = hitChance;
+
+    // Where the rounds are going, and where he is pointing his body. Emitting the
+    // lane's direction while shooting off to one side made the test unfair rather
+    // than merely hard: the fighters being killed by the flank had no way to perceive
+    // the angle killing them, because every round they heard claimed to be going
+    // somewhere else. A gunshot has to report the truth about itself.
+    if (engaging === state.swingTarget && state.swingTarget) {
+      _trapDir.set(engaging.pos.x - muzzle.x, 0, engaging.pos.z - muzzle.z).normalize();
+      state.swingShots++;
+    } else {
+      _trapDir.copy(ray);
+      _trapDir.y = 0;
+      if (_trapDir.lengthSq() > 1e-6) _trapDir.normalize();
+    }
+    shooter.aimDir.copy(_trapDir);
+    state.aligned =
+      Math.sin(shooter.yaw) * _trapDir.x + Math.cos(shooter.yaw) * _trapDir.z > Math.cos(LANE_TEST.aimTolerance);
+
     const shooting = firingNow();
     if (!shooting) state.acc = 0;
     else if (state.reload > 0) { state.reload -= dt; state.acc = 0; }
@@ -2860,51 +2914,22 @@ function makeLaneTest(shooter, options = {}) {
           audio.reload(0);
           break;
         }
+        // He is only ever pointing one way, so he only ever hits what he is pointing
+        // at. The turn costs him time now instead of costing him accuracy, which is
+        // both what it looks like and what it should be — the window a squad gets
+        // when he breaks his hold is the swing itself, not a dice roll.
+        if (!state.aligned) break;
         state.mag--; state.fired++;
-        let caught = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
-        let hitChance = cfg.accuracy;
-        // The lane is his job: anything standing in it snaps him straight back.
-        if (caught) { state.swingTarget = null; state.swingUntil = 0; }
 
-        if (!caught && cfg.swing) {
-          if (state.swingTarget && (!state.swingTarget.alive || state.elapsed > state.swingUntil)) {
-            state.swingTarget = null;
-          }
-          if (!state.swingTarget) {
-            let best = null, bestD = Infinity;
-            for (const c of world.combatants) {
-              if (!c.alive || c.team !== 'enemy') continue;
-              const d = Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z);
-              if (d >= bestD || d > cfg.swingRange) continue;
-              probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
-              if (!hasLoS(world.colliders, muzzle, probe)) continue;
-              best = c; bestD = d;
-            }
-            if (best) { state.swingTarget = best; state.swingUntil = state.elapsed + cfg.swingHold; }
-          }
-          if (state.swingTarget) { caught = state.swingTarget; hitChance = cfg.swingAccuracy; state.swingShots++; }
-        }
-
-        // Where the rounds are actually going. Emitting the lane's direction while
-        // he was shooting off to one side made the test unfair rather than merely
-        // hard: the fighters he was punishing had no way of perceiving the angle that
-        // was killing them, because every round they heard claimed to be going
-        // somewhere else. A gunshot has to report the truth about itself.
-        const firedAt = caught === state.swingTarget && state.swingTarget ? state.swingTarget : null;
-        if (firedAt) {
-          _trapDir.set(firedAt.pos.x - muzzle.x, 0, firedAt.pos.z - muzzle.z).normalize();
-        } else {
-          _trapDir.copy(ray);
-        }
         world.emitNoise?.(shooter, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1, _trapDir);
         end.copy(muzzle).addScaledVector(_trapDir, reach);
         fx.tracer(muzzle, end);
         fx.muzzleFlash(muzzle, _trapDir);
         audio.shot(WEAPONS.rifle.sound, 1);
 
-        if (caught && Math.random() < hitChance) {
-          probe.set(caught.pos.x, caught.pos.y + 1.15, caught.pos.z);
-          caught.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
+        if (state.engaging && Math.random() < state.hitChance) {
+          probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
+          state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
         }
       }
     }
@@ -3016,6 +3041,15 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
       report.track = test.track;
       runs.push(report);
     } finally {
+      // Hand the world back exactly as it was found. Leaving the holder standing and
+      // the player dead poisoned whatever ran next in the same session — headless
+      // bouts afterwards took 31 to 180 simulated seconds against 13 to 24 on a fresh
+      // page, which reads as an AI regression and is nothing of the kind. A harness
+      // that dirties the thing it measures is worse than no harness.
+      for (const c of world.combatants.slice()) if (c.team === 'player') c.removeFrom(world);
+      player.alive = true;
+      player.vmRoot.visible = true;
+      world.playerProxy.alive = true;
       restore?.();
       Math.random = realRandom;
     }

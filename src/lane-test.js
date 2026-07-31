@@ -62,6 +62,17 @@ export const LANE_TEST = {
    * is invisible from inside the fight.
    */
   camera: { x: -2, z: 6, height: 40, lookZ: -1 },
+  /**
+   * How fast the man on the post swings his body, in radians per second, and how
+   * near his line he has to be pointing before he fires.
+   *
+   * Fast, but not instant — a turn that takes time is the whole reason breaking his
+   * hold costs him something, and it is what gives a squad the window it is supposed
+   * to be looking for. Modelling that as an accuracy penalty instead was cheaper and
+   * looked broken: he stood rigid, facing down the lane, firing sideways.
+   */
+  turnRate: 7,
+  aimTolerance: (18 * Math.PI) / 180,
 };
 
 const WALL_H = 3.2;
