@@ -60,6 +60,13 @@
       layers.push({ n: makeNoise(seed + o * 7919, cells), scale: cells / size, amp: 1 / (1 << o) });
     }
     const norm = layers.reduce((s, l) => s + l.amp, 0);
+    // A base cell count that does not divide `size` drops every octave, and the
+    // normalisation below then divides by zero — so the field is silently NaN and the
+    // set bakes to a flat, tiny, perfectly clean-looking file. Which is exactly how it
+    // reads as a fix. Fail loudly instead.
+    if (!layers.length) {
+      throw new Error(`fbm: baseCells ${baseCells} does not divide size ${size}, no octaves built`);
+    }
     return (x, y) => {
       let v = 0;
       for (const l of layers) v += l.n(x * l.scale, y * l.scale) * l.amp;
@@ -116,6 +123,7 @@
   // Height → tangent-space normal via Sobel. Heights arrive as a Float32Array in
   // 0..1; strength is in "height units per texel".
   function heightToNormal(height, size, strength, blur = 2) {
+    checkField(height, 'heightToNormal height');
     height = blurHeight(height, size, blur);
     const out = canvas(size);
     const ctx = out.getContext('2d');
@@ -158,8 +166,31 @@
     return ao;
   }
 
+  /**
+   * A field that is meant to vary per texel must actually contain numbers.
+   *
+   * NaN clamps to 0 on the way into a Uint8ClampedArray, silently and everywhere at
+   * once. Roughness 0 on a metal is a perfect mirror, so the failure does not look
+   * like a broken texture — it looks like the whole surface crawling with coloured
+   * specular fireflies, which is a lighting bug, which is where you then go looking.
+   * Gunmetal shipped that way. Assert instead.
+   */
+  function checkField(field, label) {
+    if (typeof field === 'number') {
+      if (!Number.isFinite(field)) throw new Error(`${label}: not finite (${field})`);
+      return field;
+    }
+    for (let i = 0; i < field.length; i++) {
+      if (!Number.isFinite(field[i])) throw new Error(`${label}: NaN at index ${i}`);
+    }
+    return field;
+  }
+
   // Pack AO/roughness/metalness. `rough` and `metal` may be numbers or Float32Arrays.
   function packORM(size, ao, rough, metal) {
+    checkField(ao, 'packORM ao');
+    checkField(rough, 'packORM roughness');
+    checkField(metal, 'packORM metalness');
     const out = canvas(size);
     const ctx = out.getContext('2d');
     const img = ctx.createImageData(size, size);
@@ -441,11 +472,15 @@
    */
   SETS.steel_painted = (size = 512) => {
     const rand = rng(0x6ba7);
-    const chip = fbm(0x4c4c, size, 16, 4);
+    // Three octaves, not four, and a soft threshold. The fourth octave put the chip
+    // mask's smallest feature at four texels, and since bare steel is the metallic,
+    // glossy state, every one of those islands became a texel-wide mirror. A chip you
+    // can actually see is worth more than a chip you can only sparkle at.
+    const chip = fbm(0x4c4c, size, 16, 3);
     const rustN = fbm(0x8e31, size, 8, 3);
     const fine = fbm(0x2020, size, 64, 2);
     const masks = (x, y) => {
-      const bare = clamp01((chip(x, y) - 0.62) * 5);          // scoured to metal
+      const bare = clamp01((chip(x, y) - 0.60) * 3.2);        // scoured to metal
       const rust = clamp01((rustN(x, y) - 0.5) * 3) * (1 - bare);
       return { bare, rust };
     };
@@ -492,8 +527,11 @@
       for (let x = 0; x < size; x++) {
         const i = y * size + x;
         const { bare, rust } = masks(x, y);
-        rough[i] = lerp(lerp(0.52, 0.93, rust), 0.38, bare);
-        metal[i] = lerp(lerp(0.04, 0.0, rust), 0.9, bare);
+        // Bare steel exposed by a chip is scoured, not polished — 0.38 made every chip
+        // a mirror, and this set dresses weapon receivers where that lands right under
+        // the sights. Rust and intact paint were never the problem; they are dielectric.
+        rough[i] = lerp(lerp(0.56, 0.93, rust), 0.55, bare);
+        metal[i] = lerp(lerp(0.04, 0.0, rust), 0.88, bare);
       }
     }
     const ao = heightToAO(height, size, 3, 5);
@@ -654,8 +692,15 @@
   /** Gunmetal: the one material every weapon shares. */
   SETS.gunmetal = (size = 512) => {
     const rand = rng(0x9e2a);
-    const fine = fbm(0x33aa, size, 64, 3);
-    const wear = fbm(0x1c3d, size, 12, 3);
+    // Base 64 over three octaves put the finest detail at two texels per cycle — the
+    // Nyquist limit, i.e. noise the renderer cannot resolve. On a dielectric that is
+    // merely wasted; on a metal it is a lattice of per-texel mirrors, and a viewmodel
+    // is *magnified*, so mipping never gets a chance to average it away. 32 over two
+    // octaves lands the finest at eight texels: still machined micro-texture, and
+    // shadable. Every cell count here has to divide `size` or fbm silently drops the
+    // octave — pick 40 and it drops all of them and hands back NaN.
+    const fine = fbm(0x33aa, size, 32, 2);
+    const wear = fbm(0x1c3d, size, 8, 3);
     const height = new Float32Array(size * size);
     for (let i = 0; i < height.length; i++) height[i] = 0;
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) height[y * size + x] = fine(x, y) * 0.5;
@@ -668,7 +713,7 @@
         const i = y * size + x;
         // bluing worn back to bright steel on high-wear noise; both are metal, so
         // both stay in metal-reflectance range rather than going near-black
-        const w = clamp01((wear(x, y) - 0.58) * 3.5);
+        const w = clamp01((wear(x, y) - 0.66) * 3.0);
         const v = lerp(0.22, 0.55, w) * lerp(0.92, 1.08, fine(x, y));
         const p = i * 4;
         img.data[p] = clamp01(v * 1.0) * 255;
@@ -689,19 +734,28 @@
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const i = y * size + x;
-        // Not glass. At 0.24 a metal this dense catches a specular pinprick from every
-        // coloured lamp in the room, and a weapon lives 25 cm from the camera — the
-        // whole gun crawled with multicoloured sparkle, worst of all down the sights.
-        rough[i] = lerp(0.54, 0.36, clamp01((wear(x, y) - 0.58) * 3.5));
+        // Not glass, and this is the number the multicoloured sparkle lives in.
+        //
+        // At metalness 0.92 the specular lobe is the *only* thing the surface shows,
+        // and its width is set here. Anywhere the map dips glossy, a texel-wide island
+        // becomes a mirror that catches one coloured lamp and nothing else, which reads
+        // as a bright cyan or amber pinprick — a firefly. The weapon lives 25 cm from
+        // the camera at four times the arena's texel rate, so hundreds of them land in
+        // frame at once and the whole gun crawls, worst of all down the sights.
+        //
+        // 0.24 was glass; 0.36 was still a mirror (confirmed by flattening the map to
+        // 0.75, which removes the fireflies outright). Blued steel worn back by a
+        // carry sling is 0.5-0.6 anyway — a soft sheen, not a highlight.
+        rough[i] = lerp(0.70, 0.58, clamp01((wear(x, y) - 0.66) * 3.0));
       }
     }
     return {
       albedo: alb,
-      // Gentle. A per-texel normal at strength 4.5 is a field of tiny mirrors, and the
-      // weapon texel rate is four times the arena's, so every one of them lands in
-      // frame at once.
-      normal: heightToNormal(height, size, 1.6, 3),
-      orm: packORM(size, 1, rough, 0.92),
+      // Strength went up and the blur went down together with the roughness floor:
+      // a blur of 3 over six-texel noise erased the machining entirely, and once the
+      // surface is no longer a mirror it can carry the detail again.
+      normal: heightToNormal(height, size, 2.4, 1),
+      orm: packORM(size, 1, rough, 0.88),
     };
   };
 
@@ -718,6 +772,11 @@
         // an unshippable 15 MB library — because per-texel noise is incompressible.
         // High-quality lossy WebP costs a little precision in the normal's low bits,
         // which is invisible on grime, and lands two orders of magnitude smaller.
+        // Albedo is a picture; normal and ORM are data, so they get a higher quality.
+        //
+        // Fully lossless was tried and rejected: it did not touch the speckle on the
+        // weapons (that is the environment probe, see below) and it took the fighter's
+        // normal map from 508 kB to 2.4 MB on its own.
         out[channel] = cv.toDataURL('image/webp', channel === 'albedo' ? 0.9 : 0.94);
       }
       return out;

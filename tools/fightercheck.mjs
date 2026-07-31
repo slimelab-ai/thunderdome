@@ -81,6 +81,24 @@ const report = await page.evaluate(async () => {
   rig.group.position.set(0, 0, 0);
   g.scene.add(rig.group);
 
+  // Prove the rig is actually being driven before measuring it.
+  //
+  // This bench drives the rig by hand rather than through the match, so it does not
+  // depend on `phase` the way the others do — but the others learned that the hard
+  // way, twice, and a bench that silently measures a static scene reports a perfect
+  // score or a catalogue of nonsense with equal confidence. Three lines to make that
+  // impossible is a good trade.
+  {
+    const probe = rig.bones.get('foot_l');
+    const before = probe.quaternion.clone();
+    for (let i = 0; i < 20; i++) { rig.setStance(3, false, 0, 1); rig.update(DT); }
+    if (before.angleTo(probe.quaternion) < 1e-4) {
+      throw new Error('the fighter rig is not animating — the harness is measuring nothing');
+    }
+    rig.setStance(0, false, 0, 1);
+    for (let i = 0; i < 30; i++) rig.update(DT);
+  }
+
   const feet = ['foot_l', 'foot_r'].map((n) => rig.bones.get(n));
   const world = new T.Vector3();
   const local = new T.Vector3();

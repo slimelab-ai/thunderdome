@@ -313,14 +313,32 @@ def anim_draw(rig):
 
 
 def anim_melee(rig):
-    """Knife slash: wind up across the body, then a hard diagonal cut."""
+    """Knife thrust: cock back at the hip, drive the point forward, recover.
+
+    A stab, not a slash. The blade runs along `vm_root`'s local +Y, which is forward,
+    so the whole motion is mostly *translation* on that axis — back to load, hard
+    forward to strike — with only enough rotation to sell the shoulder behind it.
+
+    What was here before was a diagonal cut with 40 degrees of yaw and roll on the
+    root, and the runtime then added its own arc on top of it: 86 degrees of pitch,
+    which threw the forearm up through the camera. Two animations of the same thing,
+    fighting, and the visible result was neither.
+    """
     new_action(rig, "melee")
     clear_pose(rig)
     key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0)})
-    key(rig, 6, {**ZERO, "vm_root": (18, -34, -22), "upperarm_r": (10, 0, -12)},
-        loc={"vm_root": (0.10, -0.10, 0.03)})
-    key(rig, 13, {**ZERO, "vm_root": (-14, 40, 30), "upperarm_r": (-14, 0, 16)},
-        loc={"vm_root": (-0.11, 0.06, -0.03)})
+    # Cock: elbow back and slightly inboard, blade turning point-first.
+    key(rig, 5, {**ZERO, "vm_root": (-6, 8, 5), "upperarm_r": (9, 0, -6),
+                 "forearm_r": (-16, 0, 0)},
+        loc={"vm_root": (0.035, -0.10, -0.02)})
+    # Drive. The arm straightens and the point goes out past where the muzzle sits.
+    key(rig, 10, {**ZERO, "vm_root": (5, -5, -3), "upperarm_r": (-7, 0, 3),
+                  "forearm_r": (12, 0, 0)},
+        loc={"vm_root": (-0.015, 0.20, 0.01)})
+    # Hold at extension for a frame or two, which is what reads as a stab landing.
+    key(rig, 13, {**ZERO, "vm_root": (4, -4, -2), "upperarm_r": (-6, 0, 2),
+                  "forearm_r": (10, 0, 0)},
+        loc={"vm_root": (-0.012, 0.185, 0.008)})
     key(rig, 24, ZERO, loc={"vm_root": (0, 0, 0)})
 
 
