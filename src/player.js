@@ -323,11 +323,13 @@ export class Player {
       // player can break off and fire whatever is already in the tube.
       this.shellLoading = true;
       this.reloading = this.weapon.shellReload * mult;
+      this.reloadDur = this.reloading;
       this.arms.loadShell(this.reloading);
       audio.reload(0);
       return;
     }
     this.reloading = this.weapon.reload * mult;
+    this.reloadDur = this.reloading;
     this.arms.reload(this.reloading);
     audio.reload(0);
     setTimeout(() => { if (this.reloading > 0) audio.reload(1); }, this.reloading * 600);
@@ -688,7 +690,19 @@ export class Player {
     vm.position.z += kickVm * 0.07;
     vm.position.y += Math.abs(Math.sin(this.bobT)) * 0.012 * (1 - this.ads);
     vm.position.x += Math.sin(this.bobT) * 0.008 * (1 - this.ads);
-    let rx = kickVm * 0.22 + (this.reloading > 0 ? Math.sin((w.reload - this.reloading) / w.reload * Math.PI) * 0.8 : 0);
+    // The arc runs against *this* reload's duration, not the weapon's full magazine
+    // change. A shotgun feeds one shell at a time in 0.44 s against a `reload` of 2.4,
+    // so measuring the phase against the wrong one left the weapon parked most of the
+    // way through its arc and snapping flat between shells — 24 degrees in a single
+    // frame, which is a quarter of a metre at the muzzle.
+    const reloadDur = this.reloadDur || w.reload;
+    // And the *depth* of the tip scales with it. You do not cant a shotgun forty-six
+    // degrees to push in one shell — and geometrically you cannot, in 0.44 s, without
+    // the muzzle covering 5 cm in a single frame. A full magazine change gets the full
+    // arc; a shell feed gets a nod.
+    const arc = 0.8 * Math.min(1, Math.max(0.28, reloadDur / 1.4));
+    let rx = kickVm * 0.22
+      + (this.reloading > 0 ? Math.sin((reloadDur - this.reloading) / reloadDur * Math.PI) * arc : 0);
     let ry = 0;
     let rz = kickVm * 0.05;
     // knife slash: a fast diagonal arc you can actually SEE

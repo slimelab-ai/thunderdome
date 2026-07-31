@@ -72,8 +72,21 @@ const report = await page.evaluate(async (opts) => {
   // An isolated bench, not a live match. A real bout shoots back, and a dead player's
   // update returns early — which silently froze every measurement after the first
   // weapon and reported the resulting stuck pose as a 30 cm targeting error.
-  g.fight('circuits', 8);
+  // `fight` is a promise — it waits on the asset load before starting the match, and
+  // calling it without awaiting leaves the game in the menu, where `step` is a no-op.
+  // Every measurement then comes back zero and the bench reports a static scene as a
+  // catalogue of faults. The guard below is the part that matters: it makes that a
+  // failure rather than a report.
+  await g.fight('circuits', 8);
   g.step(1 / 60, 20);
+  {
+    let ran = 0;
+    const orig = Object.getPrototypeOf(p).update.bind(p);
+    p.update = (...a) => { ran++; return orig(...a); };
+    g.step(1 / 60, 5);
+    delete p.update;
+    if (!ran) throw new Error('player.update is not running — the harness is measuring nothing');
+  }
   for (const c of [...g.world.combatants]) c.removeFrom(g.world);
   g.world.zones.length = 0;
   p.pos.set(0, 0, 6);
@@ -126,7 +139,9 @@ const report = await page.evaluate(async (opts) => {
     const breechW = new T.Vector3();
     p.currentVM.group.getWorldPosition(breechW);
     s.barrelY = tipW.sub(breechW).normalize().y;
-    s.camPitch = p.recoilPitch;
+    // Recoil is an offset on the aim now, in degrees, up positive — same sign as the
+    // camera pitch it replaced, so the check below reads the same way.
+    s.camPitch = p.recoil ? p.recoil.posY : 0;
     const t = vm._supportTarget && vm._supportTarget();
     if (t) {
       // Measured in world space: a distance is invariant under the camera transform,
@@ -153,7 +168,17 @@ const report = await page.evaluate(async (opts) => {
     p.knifeOut = false;
     p._mountViewmodel();
     p.mag = p.weapon.mag;
-    for (let i = 0; i < 4; i++) g.items.autoPlace(p.character.pack, g.items.makeItem(AMMO[weapon]));
+    // Empty the pack first. Every `run` used to push four more magazines into a
+    // fixed-size grid, so by the last weapon of a full sweep `autoPlace` was silently
+    // returning false, the DMR went into its tests with no ammunition, and the failure
+    // showed up as "the weapon never discharged" — which is true, and says nothing
+    // about the weapon. Running that one alone passed, which is the tell.
+    p.character.pack.items.length = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!g.items.autoPlace(p.character.pack, g.items.makeItem(AMMO[weapon]))) {
+        throw new Error(`${weapon}: could not fit spare ammunition in the pack`);
+      }
+    }
     g.step(1 / 60, 150);                    // let the draw settle
 
     const magBefore = p.mag;

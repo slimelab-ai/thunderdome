@@ -36,7 +36,7 @@ export const WEAPONS = {
     // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
-    recoilVelocity: 7.0, recoilRandom: 1.4, recoilCooldown: 0.45,
+    recoilVelocity: 8.05, recoilRandom: 1.4, recoilCooldown: 0.45,
     // Just above what the decay eats at a fast trigger finger, so sustained
     // deliberate fire does pin somebody after a few seconds and a couple of
     // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
@@ -57,7 +57,7 @@ export const WEAPONS = {
       [-0.4, 0.25], [-0.2, 0.25], [0.08, 0.25], [0.3, 0.2], [0.42, 0.2],
       [0.38, 0.15], [0.2, 0.15], [-0.05, 0.15], [-0.28, 0.15],
     ],
-    recoilVelocity: 4.6, recoilRandom: 1.8, recoilCooldown: 0.5,
+    recoilVelocity: 5.29, recoilRandom: 1.8, recoilCooldown: 0.5,
     suppression: 0.75,
     desc: 'A hose of cheap brass. Wild past 12 meters, filthy up close.',
   },
@@ -73,7 +73,7 @@ export const WEAPONS = {
     // One heavy shove. There is no pattern to learn on a pump gun — you are back on
     // target by the time the next shell is chambered.
     recoilPattern: [[0, 1], [0.12, 1], [-0.12, 1]],
-    recoilVelocity: 15.0, recoilRandom: 2.2, recoilCooldown: 0.6,
+    recoilVelocity: 17.25, recoilRandom: 2.2, recoilCooldown: 0.6,
     suppression: 0.6,
     desc: '9 pellets of crowd-pleasing violence. Deletes torsos inside 10m.',
   },
@@ -92,7 +92,7 @@ export const WEAPONS = {
       [0.54, 0.1], [0.5, 0.1], [0.34, 0.08], [0.1, 0.08], [-0.16, 0.08],
       [-0.36, 0.08], [-0.46, 0.06], [-0.4, 0.06], [-0.22, 0.06],
     ],
-    recoilVelocity: 6.2, recoilRandom: 1.1, recoilCooldown: 0.55,
+    recoilVelocity: 7.13, recoilRandom: 1.1, recoilCooldown: 0.55,
     suppression: 1,
     desc: 'The workhorse of every syndicate in the league. 2–3 rounds does it.',
   },
@@ -103,7 +103,7 @@ export const WEAPONS = {
     aiRange: 28, adsFov: 34, sound: 'dmr',
     // A single hard punch straight up. You lose the sight picture and get it back.
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
-    recoilVelocity: 17.0, recoilRandom: 1.0, recoilCooldown: 0.8,
+    recoilVelocity: 19.55, recoilRandom: 1.0, recoilCooldown: 0.8,
     suppression: 1.15,
     desc: 'One shot, one funeral. Scoped. Slow. Surgical.',
   },
@@ -114,7 +114,7 @@ WEAPONS.knife = {
   id: 'knife', name: 'PIT SHANK', price: 0, tier: -1,
   dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0,
   spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
-  recoilPattern: [], recoilVelocity: 0,
+  recoilPattern: [], recoilVelocity: 0.0,
   aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4,
   desc: 'Always with you. Two good slashes end anyone.',
 };
@@ -257,7 +257,10 @@ export function solveSightAlignment(rear, front, up, relief, scale, outPos, outQ
 export const ADS_RELIEF = {
   pistol: 0.30,
   smg: 0.25,
-  shotgun: 0.26,
+  // Short, because the sight radius is enormous — rear notch to bead is two thirds
+  // of a metre — and every centimetre of relief pushes that whole length further out
+  // in front of the player.
+  shotgun: 0.22,
   rifle: 0.24,
   dmr: 0.22,
 };
