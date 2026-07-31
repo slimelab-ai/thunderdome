@@ -291,6 +291,10 @@ const _v = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
+// Enough that a firefight never has two shooters sharing one.
+const MAX_FLASHES = 8;
+const FLASH_LIFE = 0.045;
+
 const _tracerDir = new THREE.Vector3();
 const _decalPos = new THREE.Vector3();
 const _decalNormal = new THREE.Vector3();
@@ -329,17 +333,38 @@ export class FX {
     }
     this.tCursor = 0;
 
-    // ---- muzzle flash: billboard + light ----
-    this.flashSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: flashTexture(), color: 0xffd9a0, transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-      opacity: 0,
-    }));
-    this.flashSprite.visible = false;
-    scene.add(this.flashSprite);
+    // ---- muzzle flash ----
+    //
+    // A pool, not one sprite. There was a single flash for the whole game and whoever
+    // fired last took it, so an enemy shooting across the pit stole the flash off the
+    // player's own weapon mid-burst.
+    const flashTex = flashTexture();
+    this.flashes = [];
+    for (let i = 0; i < MAX_FLASHES; i++) {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: flashTex, color: 0xffd9a0, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
+      }));
+      sprite.visible = false;
+      scene.add(sprite);
+      this.flashes.push({ sprite, life: 0, maxLife: FLASH_LIFE, peak: 1, near: false });
+    }
+    this.fCursor = 0;
+    // Kept for explosions, which genuinely light a room. Muzzle flashes no longer
+    // drive it: one shared point light hopping to whoever fired last painted a pool
+    // on the floor around every enemy, which read as a lamp following them about and
+    // gave their flanks away through walls they were properly hidden behind.
     this.flashLight = new THREE.PointLight(0xffc060, 0, 9, 2);
     scene.add(this.flashLight);
     this.flashTime = 0;
+    // The player's own weapon keeps a small light, because it cannot give anybody
+    // away and firing feels flat without one. Its own light, not the explosion's, so
+    // a shot cannot cut a grenade's flash short.
+    this.nearLight = new THREE.PointLight(0xffc060, 0, 5, 2);
+    scene.add(this.nearLight);
+    this.nearTime = 0;
+    this._clock = 0;
+    this._lastFlashAt = -1;
 
     // ---- decals ----
     this.decalTextures = {
@@ -474,21 +499,45 @@ export class FX {
     t.life = t.maxLife;
   }
 
-  /** Muzzle flash: billboard flare, grit, and a one-frame light. */
-  muzzleFlash(pos, dir = null) {
-    this.flashSprite.position.copy(pos);
+  /**
+   * Muzzle flash: a billboard flare and some grit.
+   *
+   * `near` marks the player's own weapon, 40 cm from the camera, where the same flash
+   * covers a hundred times the screen it does on someone across the pit.
+   *
+   * Sustained fire is deliberately dimmer than the first round. An automatic at
+   * 700 rpm retriggers this every 86 ms against a 50 ms decay, so every frame of a
+   * burst was drawn at full opacity, additively, through bloom — a solid white block
+   * over the sights for as long as the trigger was held. Real eyes and real cameras
+   * both stop responding linearly under that; here it just has to stop blinding.
+   */
+  muzzleFlash(pos, dir = null, { near = false } = {}) {
+    const gap = this._clock - this._lastFlashAt;
+    if (near) this._lastFlashAt = this._clock;
+    // Full brightness for a first shot, falling to a third under sustained fire.
+    const sustained = near && gap >= 0 && gap < 0.20;
+    const peak = sustained ? 0.30 + 0.35 * (gap / 0.20) : 1;
+
+    const f = this.flashes[this.fCursor = (this.fCursor + 1) % MAX_FLASHES];
+    f.sprite.position.copy(pos);
     // Small. The flash sits ~40 cm from the first-person camera, so a size that looks
     // reasonable in world terms fills a third of the screen and blinds the shot you
-    // are trying to place. The point light does the work of making it feel bright.
-    const s = 0.11 + Math.random() * 0.06;
-    this.flashSprite.scale.set(s, s, s);
-    this.flashSprite.material.rotation = Math.random() * Math.PI;
-    this.flashSprite.material.opacity = 1;
-    this.flashSprite.visible = true;
+    // are trying to place.
+    const s = (near ? 0.10 + Math.random() * 0.05 : 0.13 + Math.random() * 0.07)
+      * (sustained ? 0.78 : 1);
+    f.sprite.scale.set(s, s, s);
+    f.sprite.material.rotation = Math.random() * Math.PI;
+    f.sprite.material.opacity = peak;
+    f.sprite.visible = true;
+    f.life = FLASH_LIFE;
+    f.peak = peak;
+    f.near = near;
 
-    this.flashLight.position.copy(pos);
-    this.flashLight.intensity = 18;
-    this.flashTime = 0.05;
+    if (near) {
+      this.nearLight.position.copy(pos);
+      this.nearLight.intensity = 7 * peak;
+      this.nearTime = FLASH_LIFE;
+    }
 
     for (let i = 0; i < 4; i++) {
       _v.set((Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6);
@@ -584,6 +633,7 @@ export class FX {
   // -------------------------------------------------------------- update
 
   update(dt) {
+    this._clock += dt;
     // Keep particle size in world units: the shader needs the projection scale and
     // the viewport height, which change with the window and the adaptive resolution.
     if (this.camera) {
@@ -601,15 +651,24 @@ export class FX {
       if (t.life <= 0) t.mesh.visible = false;
     }
 
+    for (const f of this.flashes) {
+      if (!f.sprite.visible) continue;
+      f.life -= dt;
+      if (f.life <= 0) { f.sprite.visible = false; f.sprite.material.opacity = 0; continue; }
+      f.sprite.material.opacity = (f.life / f.maxLife) * f.peak;
+    }
+
+    if (this.nearTime > 0) {
+      this.nearTime -= dt;
+      if (this.nearTime <= 0) this.nearLight.intensity = 0;
+      else this.nearLight.intensity *= 0.7;
+    }
+
+    // Explosions only.
     if (this.flashTime > 0) {
       this.flashTime -= dt;
-      this.flashSprite.material.opacity = Math.max(0, this.flashTime / 0.05);
-      if (this.flashTime <= 0) {
-        this.flashLight.intensity = 0;
-        this.flashSprite.visible = false;
-      } else {
-        this.flashLight.intensity *= 0.75;
-      }
+      if (this.flashTime <= 0) this.flashLight.intensity = 0;
+      else this.flashLight.intensity *= 0.75;
     }
 
     this._updateCasings(dt);

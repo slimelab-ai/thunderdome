@@ -809,7 +809,7 @@ export class Player {
       this.pumpT = w.pump;
       this.arms.pump(w.pump);
     }
-    this.world.fx.muzzleFlash(muzzle, baseDir);
+    this.world.fx.muzzleFlash(muzzle, baseDir, { near: true });
     // Eject a case to the shooter's right. Melee weapons and the empty-chamber case
     // have already returned before here, so anything reaching this point cycled.
     if (!w.melee) {
