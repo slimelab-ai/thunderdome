@@ -775,8 +775,8 @@
         // Albedo is a picture; normal and ORM are data, so they get a higher quality.
         //
         // Fully lossless was tried and rejected: it did not touch the speckle on the
-        // weapons (that is the environment probe, see below) and it took the fighter's
-        // normal map from 508 kB to 2.4 MB on its own.
+        // weapons — that was a NaN roughness field, see `checkField` — and it took the
+        // fighter's normal map from 508 kB to 2.4 MB on its own.
         out[channel] = cv.toDataURL('image/webp', channel === 'albedo' ? 0.9 : 0.94);
       }
       return out;
