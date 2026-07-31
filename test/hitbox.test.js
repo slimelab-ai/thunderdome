@@ -135,9 +135,17 @@ test('maxDist is respected, so cover in front of the player still stops a round'
 // arena geometry to happen under a specific bot), so the decision lives in combat.js
 // as a function over colliders and gets a wall built for it here.
 
-/** The smallest thing `hasLoS` will accept: an axis-aligned box that can be hit. */
+/**
+ * An axis-aligned box that can be hit.
+ *
+ * Carries the world AABB that real colliders expose, so these cases exercise the
+ * broadphase `hasLoS` rejects on. The bare `{ raycast }` stub in input.test.js covers
+ * the other side of that contract: bounds are a hint, and a collider may omit them.
+ */
 function wall(minX, minY, minZ, maxX, maxY, maxZ) {
   return {
+    min: { x: minX, y: minY, z: minZ },
+    max: { x: maxX, y: maxY, z: maxZ },
     raycast(from, dir) {
       let t0 = 0, t1 = Infinity;
       for (const [o, d, lo, hi] of [
