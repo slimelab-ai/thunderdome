@@ -8,7 +8,17 @@ import { surface } from './materials.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
+const _muzzle = new THREE.Vector3();
 const _aimTmp = new THREE.Vector3();
+
+/**
+ * How far leaning out actually carries the muzzle sideways, in metres.
+ *
+ * Measured off the rig by `npm run fightercheck`, which prints it. Anything larger
+ * here just makes fighters lean out and find nothing, because the shot comes from the
+ * real barrel either way.
+ */
+const PEEK_REACH = 0.29;
 
 /**
  * Riot-shield carry stance.
@@ -330,6 +340,24 @@ export class Combatant {
   eyePos(out = new THREE.Vector3()) {
     return out.set(this.pos.x, this.pos.y + 1.55 * this.scale * this.crouchK, this.pos.z);
   }
+
+  /**
+   * The barrel tip, in the world, as drawn.
+   *
+   * Not a point derived from where the fighter is standing — the actual node on the
+   * actual weapon, after the animation, the lean and the aim offset have all been
+   * applied. Shots are fired from here and drawn from here, and those being the same
+   * point is the whole guarantee: if a round can reach you, the weapon that fired it
+   * was somewhere you could see.
+   *
+   * Falls back to the eye before the weapon has loaded.
+   */
+  muzzleWorld(out = new THREE.Vector3()) {
+    const m = this.gun && this.gun.userData.muzzle;
+    if (!m) return this.eyePos(out);
+    this.group.updateMatrixWorld(true);
+    return out.setFromMatrixPosition(m.matrixWorld);
+  }
   aimPoint(out = new THREE.Vector3()) {
     return out.set(this.pos.x, this.pos.y + 1.15 * this.scale * this.crouchK, this.pos.z);
   }
@@ -552,11 +580,20 @@ export class Combatant {
         : this.target.aimPoint();
       const sight = hasLoS(world.colliders, eye, aim);
 
-      // corner peek: body stays covered, lean the head/gun out sideways for an angle
+      // Corner peek: body stays covered, lean the weapon out sideways for an angle.
+      //
+      // PEEK_REACH is how far leaning actually carries the muzzle, measured off the
+      // rig — not a number picked to make the AI effective. It used to be 0.6 m
+      // against a lean worth about a quarter of that, so a fighter could shoot from a
+      // point two thirds of a metre outside his own body: an angle that did not exist
+      // from the other end, which is exactly what an unfair peek is.
+      //
+      // The shot itself is fired from the real muzzle regardless of what this decides,
+      // so the worst a wrong guess here can do is make him lean out and find nothing.
       this.peekSide = 0;
       if (!sight && dist < engage * 1.8) {
         for (const side of [this.strafeDir, -this.strafeDir]) {
-          _peekEye.set(eye.x + -fz * 0.6 * side, eye.y, eye.z + fx * 0.6 * side);
+          _peekEye.set(eye.x + -fz * PEEK_REACH * side, eye.y, eye.z + fx * PEEK_REACH * side);
           if (hasLoS(world.colliders, _peekEye, aim)) { this.peekSide = side; break; }
         }
       }
@@ -686,8 +723,15 @@ export class Combatant {
           move.x += gdx / gd; move.z += gdz / gd;
         }
       } else if (this.peekSide && !sight) {
-        // holding a corner peek: plant and shoot around it
+        // Working a corner peek: step out into the angle.
+        //
+        // Planting and shooting around it was only viable while the shot came from a
+        // point 60 cm outside his own body. It comes off the real barrel now, and a
+        // lean carries that 29 cm, so the rest has to be movement — which is movement
+        // the other side can see, which is the entire point.
         this._strafing = true;
+        move.x += -fz * this.peekSide * 0.5;
+        move.z += fx * this.peekSide * 0.5;
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && !w.melee && heightGap < 0.8) {
         this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
@@ -718,17 +762,23 @@ export class Combatant {
       if (!w.melee && ITEM_TYPES[this.weaponId]?.ammo && this._poolFor(this.weaponId) <= 0) {
         this._switchDry(world);
       }
-      const los = dist < engage * 2.2 && (sight || this.peekSide !== 0) && !this.sprintNow;
+      // Where the weapon actually is, and what it can actually see from there.
+      //
+      // A peek only earns a shot once the fighter has leaned far enough that his
+      // weapon is genuinely clear of the corner. Deciding to peek and firing in the
+      // same frame is how a bot shoots you from behind a wall he has not come out
+      // from behind yet.
+      const muzzle = this.muzzleWorld(_muzzle);
+      const muzzleSight = (sight || this.peekSide !== 0)
+        && hasLoS(world.colliders, muzzle, aim);
+      const los = dist < engage * 2.2 && muzzleSight && !this.sprintNow;
 
       // marksman laser telegraph
       if (this.laser) {
         this.laser.visible = los && this.alive;
         if (this.laser.visible) {
-          const le = this.peekSide
-            ? new THREE.Vector3(eye.x + -fz * 0.6 * this.peekSide, eye.y, eye.z + fx * 0.6 * this.peekSide)
-            : eye;
           const pts = this.laser.geometry.attributes.position.array;
-          pts[0] = le.x; pts[1] = le.y; pts[2] = le.z;
+          pts[0] = muzzle.x; pts[1] = muzzle.y; pts[2] = muzzle.z;
           pts[3] = aim.x; pts[4] = aim.y; pts[5] = aim.z;
           this.laser.geometry.attributes.position.needsUpdate = true;
         }
@@ -759,10 +809,10 @@ export class Combatant {
         audio.slash(1.2 / (1 + eye.distanceTo(world.cameraPos) * 0.09));
         this.cooldown = 60 / w.rpm;
       } else if (!w.melee && los && settled && this.reactionLeft <= 0 && this.cooldown <= 0 && Math.abs(dy) < 0.35) {
-        // fire from the peeked eye when leaning around a corner
-        const fireEye = this.peekSide
-          ? eye.clone().set(eye.x + -fz * 0.6 * this.peekSide, eye.y, eye.z + fx * 0.6 * this.peekSide)
-          : eye;
+        // The round leaves the barrel, wherever the barrel happens to be. Leaning
+        // around a corner moves it because the animation moves it, not because the
+        // shot gets a private offset the fighter's body never took.
+        const fireEye = muzzle.clone();
         const dir = aim.clone().sub(fireEye).normalize();
         const distFactor = 0.7 + dist / 30;
         // A shouldered weapon groups roughly twice as tight as a hip-fired one. This
@@ -775,12 +825,12 @@ export class Combatant {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
           const res = fireRay(world, this, fireEye, sdir, w,
             this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
-          world.fx.tracer(fireEye.clone().addScaledVector(sdir, 0.6), res.point);
+          world.fx.tracer(fireEye, res.point);
           if (res.type === 'wall') { world.fx.sparks(res.point, sdir); if (Math.random() < 0.3) audio.ricochet(); }
         }
         const camDist = fireEye.distanceTo(world.cameraPos);
         audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
-        world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7), dir);
+        world.fx.muzzleFlash(fireEye, dir);
         this.rig.trigger('fire');
 
         this.shotsFired = (this.shotsFired || 0) + 1;

@@ -1033,9 +1033,17 @@ def anim_lean(rig):
         # Spine and up only. Keying the hips here bent the legs with the torso and
         # walked the fighter's feet 6 cm sideways when he leaned — the same class of
         # fault as rolling the whole object, just one bone further down.
+        # Big, because a lean has to earn its keep. Combat sizes its corner peek off
+        # how far this actually carries the muzzle, and at half these angles that was
+        # 17 cm — not enough to clear anything, which would leave fighters leaning out
+        # of cover for no reason. The alternative, letting the shot come from further
+        # out than the body reaches, is the unfair peek this replaced.
+        # Spine and above only, still: adding five degrees at the hips to reach further
+        # carried the legs with it and walked the feet 7.6 cm sideways. That is the
+        # trap in section 9 twice over, and the bench caught it both times.
         pose = {
-            "spine": (0, 0, sign * 14), "chest": (0, 0, sign * 16),
-            "neck": (0, 0, sign * 7), "head": (0, 0, sign * 6),
+            "spine": (0, 0, sign * 26), "chest": (0, 0, sign * 28),
+            "neck": (0, 0, sign * 11), "head": (0, 0, sign * 9),
         }
         key(rig, 1, {k: (0, 0, 0) for k in pose})
         key(rig, 8, pose)

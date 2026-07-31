@@ -361,6 +361,34 @@ const report = await page.evaluate(async () => {
       for (let i = 0; i < 90; i++) { rig.setStance(0, false, 0, 1); rig.update(DT); }
       return headPos();
     };
+    // How far leaning actually carries the *muzzle* sideways. Combat sizes its corner
+    // peek off this: a peek offset larger than the body can reach is a shot from an
+    // angle that does not exist at the other end.
+    const gun = g.buildHeldGun('rifle');
+    rig.weaponSocket.add(gun);
+    rig.setWeapon('rifle', gun);
+    const muzzleAt = (k) => {
+      rig.setLean(k);
+      rig.setAimWeight(1);
+      for (let i = 0; i < 90; i++) { rig.setStance(0, false, 0, 1); rig.update(DT); }
+      rig.group.updateMatrixWorld(true);
+      return rig.group.worldToLocal(
+        new T.Vector3().setFromMatrixPosition(gun.userData.muzzle.matrixWorld));
+    };
+    const mR = muzzleAt(1), mL = muzzleAt(-1);
+    aimRange.peekReach = Math.abs(mL.x - mR.x) / 2;
+    // Bore height against the sight line.
+    //
+    // Combat fires from the real muzzle, so where the barrel sits decides what the
+    // fighter can shoot over. A weapon carried at the chest cannot clear cover its
+    // owner can see over, and the fights slowed by half when that was true. A
+    // shouldered weapon's bore belongs just under the eye.
+    aimRange.boreHeight = muzzleAt(0).y;
+    aimRange.eyeHeight = 1.55;   // Combatant.eyePos
+    rig.setAimWeight(0);
+    rig.weaponSocket.remove(gun);
+    rig.setWeapon(null, null);
+
     const outR = settle(1), outL = settle(-1);
     aimRange.leanSpread = Math.abs(outL.x - outR.x);
     // setLean(+1) means lean right, and his right is -X.
@@ -548,6 +576,9 @@ console.log('\naim offset reach');
 const a = report.aimRange;
 console.log(`  pitch sweep  ${(a.pitchSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.pitchSign > 0 ? 'up' : 'DOWN'}${bad(a.pitchSweep < 0.35, `pitch sweep only ${(a.pitchSweep * 57.3).toFixed(1)} deg`)}${bad(a.pitchSign <= 0, 'aim pitch is inverted')}`);
 console.log(`  lean spread  ${(a.leanSpread * 100).toFixed(1).padStart(6)} cm   sign ${a.leanSign > 0 ? 'right' : 'LEFT'}${bad(a.leanSpread < 0.10, `lean spread only ${(a.leanSpread * 100).toFixed(1)} cm`)}${bad(a.leanSign <= 0, 'setLean(+1) leans him left, not right')}`);
+console.log(`  bore height  ${(a.boreHeight * 100).toFixed(1).padStart(6)} cm   vs a ${(a.eyeHeight * 100).toFixed(0)} cm sight line`
+  + bad(a.eyeHeight - a.boreHeight > 0.12, `bore sits ${((a.eyeHeight - a.boreHeight) * 100).toFixed(0)} cm below the eye`));
+console.log(`  peek reach   ${(a.peekReach * 100).toFixed(1).padStart(6)} cm   how far a lean carries the muzzle (PEEK_REACH in combatant.js)`);
 console.log(`  yaw sweep    ${(a.yawSweep * 57.3).toFixed(1).padStart(6)} deg  sign ${a.yawSign > 0 ? 'left' : 'RIGHT'}${bad(a.yawSweep < 0.35, `yaw sweep only ${(a.yawSweep * 57.3).toFixed(1)} deg`)}${bad(a.yawSign <= 0, 'aim yaw is inverted')}`);
 
 console.log('\ntransitions: gameplay state is not continuous, and the rig must not care');

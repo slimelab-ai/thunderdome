@@ -291,6 +291,7 @@ const _v = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
+const _tracerDir = new THREE.Vector3();
 const _decalPos = new THREE.Vector3();
 const _decalNormal = new THREE.Vector3();
 // Scratch for the casing transform, hoisted so the update loop allocates nothing.
@@ -454,11 +455,20 @@ export class FX {
     if (len < 0.5) return;
     const t = this.tracers[this.tCursor = (this.tCursor + 1) % MAX_TRACERS];
     const m = t.mesh;
-    m.position.copy(from).add(to).multiplyScalar(0.5);
+    // Shorter than the flight path, so the round reads as a bolt in motion rather
+    // than a wire connecting the muzzle to the impact — but anchored at the *muzzle*
+    // end, not centred on the path.
+    //
+    // Centring it put a 13 m streak in the middle of a 30 m shot: a bolt hanging in
+    // mid-air with nothing joining it to the weapon, and near enough to whoever was
+    // being shot at that fire from off to one side read as coming from right behind
+    // them. Where a tracer starts is the only cue the receiving end has about where
+    // it came from.
+    const span = Math.min(len, 4 + len * 0.35);
+    _tracerDir.copy(to).sub(from).divideScalar(len);
+    m.position.copy(from).addScaledVector(_tracerDir, span * 0.5);
     m.lookAt(to);
-    // Slightly shorter than the flight path so the round reads as a bolt in motion
-    // rather than a wire connecting the muzzle to the impact.
-    m.scale.set(1, 1, Math.min(len, 5 + len * 0.4));
+    m.scale.set(1, 1, span);
     m.material.opacity = 0.85;
     m.visible = true;
     t.life = t.maxLife;

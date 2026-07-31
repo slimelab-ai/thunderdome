@@ -288,6 +288,28 @@ target instead of nudged.
 
 ## 7. VFX rules
 
+**A shot comes from the barrel, and is drawn from the barrel, and those are the same
+point.** Not a point derived from where the shooter is standing — the actual muzzle
+node on the actual weapon, after the animation, the lean and the aim offset have all
+been applied. Third-person fire used to be cast from the shooter's *eye* and drawn from
+a point 0.6 m down the line from it, which put tracers half a metre off the gun on
+average and 1.65 m off at worst. Sharing one origin also makes a backwards tracer
+impossible: the streak cannot start beyond an impact that is measured from the same
+place.
+
+**A tracer is anchored at the muzzle end, not centred on the flight path.** Centring it
+put a 13 m streak in the middle of a 30 m shot — a bolt hanging in mid-air with nothing
+joining it to the weapon, and near enough to whoever was being shot at that fire from
+off to one side read as coming from directly behind them. Where a tracer starts is the
+only cue the receiving end has about where it came from.
+
+**A fighter cannot shoot from further out than his body reaches.** The corner peek used
+to fire from a point 0.6 m outside the fighter, against a lean worth a quarter of that
+— an angle that did not exist from the other end, which is the precise definition of an
+unfair peek. `npm run fightercheck` measures how far a lean actually carries the muzzle
+(29 cm) and combat sizes its peek off that number. Past it, the fighter has to step out,
+and stepping out is visible.
+
 Effects are pooled and allocate nothing at runtime. A firefight spawns hundreds of
 emitters a second, and a garbage collection in the middle of one is a visible hitch.
 
@@ -362,6 +384,8 @@ at its worst — and asserts:
 | `air` | both feet off the ground in a walk |
 | `grip` | distance from the left fist to the weapon it is holding, per weapon, standing / walking / crouched / firing |
 | `recoil` | that the muzzle actually swings under sustained automatic fire |
+| bore height | the shouldered weapon's bore against the sight line — a weapon carried at the chest cannot clear cover its owner can see over |
+| peek reach | how far a lean carries the muzzle, which is what combat may size its corner peek to |
 | transitions | worst single-frame head movement and blendspace churn through a dead stop, a standing start, an instant reversal, and per-frame heading noise |
 | bob | how far the head rides up and down and side to side over one cycle |
 | locked | the feet must not move *at all* when only aim or lean changes |
@@ -468,6 +492,12 @@ while converging perfectly in isolation. Resume from last frame's solution.
 heading inside `setStance` fixes it for the AI, the capture poses and the test bench at
 once. The alternative — asking every caller to hand over a clean direction — is the
 version where one of them forgets.
+
+**A gameplay offset with no matching visual is a cheat, whatever it was meant to be.**
+The peek offset, the tracer origin and the fire origin were three different points, and
+the one the player could see was none of them. Anything that decides whether a shot
+lands should come off the drawn pose, so that "he shot me from there" and "I could see
+him there" cannot come apart.
 
 **Two hands on one object cannot be posed separately.** Author one of them from the
 object and derive the other. Both fighter arms were hand-keyed toward a rifle that was

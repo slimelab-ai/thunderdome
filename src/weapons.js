@@ -153,6 +153,11 @@ export function buildWeaponModel(id) {
   const muzzle = new THREE.Object3D();
   muzzle.position.fromArray(MUZZLE[id] || MUZZLE.pistol);
   group.add(muzzle);
+  // Also hung off the group, so anything holding the weapon can find the barrel tip
+  // without being handed it separately. Third-person fire used to be drawn from the
+  // shooter's *eye* instead, which put tracers half a metre off the gun on average
+  // and 1.65 m off at worst — visibly nonsense from the receiving end.
+  group.userData.muzzle = muzzle;
   const parts = {};
 
   const install = (source) => {
