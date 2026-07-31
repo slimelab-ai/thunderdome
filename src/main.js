@@ -165,6 +165,10 @@ const world = {
 world.nav = new NavMesh(arena.colliders);
 
 const player = new Player(camera, world);
+// Combat telemetry treats the first-person player like every other shooter.
+// Keep its position live so shot and damage events include the actual firing
+// coordinate instead of a null placeholder.
+world.playerShooter.pos = player.pos;
 const spectatorCamera = new SpectatorCamera(camera, arena.colliders, {
   halfWidth: ARENA.W / 2 - 1,
   halfDepth: ARENA.D / 2 - 1,
