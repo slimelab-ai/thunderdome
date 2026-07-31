@@ -55,6 +55,40 @@ export function laneIsHot(lane, now) {
 }
 
 /**
+ * Putting rounds into a place rather than at a person.
+ *
+ * The other half of the model, and the half that was missing: fighters knew how to
+ * *be* suppressed and never how to suppress. A squad that goes quiet the moment it
+ * loses sight hands the initiative back every time — and against a player it reads
+ * as three men with rifles doing nothing while he reloads.
+ *
+ * The requirement is a belief tight enough that the rounds land somewhere
+ * meaningful, and enough ammunition that spending it on a guess is not the reason
+ * he loses the fight. A pistol does not suppress; a support gunner does it on
+ * thinner evidence than a pointman, because that is what the role is for.
+ */
+export const SUPPRESSING = {
+  /** Seconds since the belief was last refreshed. */
+  maxAge: 6,
+  /** How vague a belief is still worth shooting at, in metres. */
+  maxRadius: 9,
+  /** ...and how much looser the support role will accept. */
+  supportRadiusBonus: 4,
+  /** Never burn the last of the pool on a guess. */
+  minRounds: 25,
+  /** Extra degrees of spread: this is area fire, not aimed fire. */
+  spread: 6.5,
+};
+
+export function worthSuppressing({ radius, age, rounds, role = 'pointman', auto = false }) {
+  if (rounds < SUPPRESSING.minRounds) return false;
+  if (!auto && role !== 'support') return false;
+  if (age > SUPPRESSING.maxAge) return false;
+  const limit = SUPPRESSING.maxRadius + (role === 'support' ? SUPPRESSING.supportRadiusBonus : 0);
+  return radius <= limit;
+}
+
+/**
  * A step out of the beaten zone: the nearest sampled point the lane cannot see.
  *
  * Sideways before backwards, and at the shortest radius that works, because
@@ -63,7 +97,11 @@ export function laneIsHot(lane, now) {
  * broken rather than careful. Returns null when there is nowhere to hide, which the
  * caller must treat as "carry on", not "stand still and die".
  */
-export function coverStep(lane, from, losFn, { radii = [2, 3.5, 5], probeY = 1.15 } = {}) {
+export function coverStep(lane, from, losFn, {
+  radii = [2, 3.5, 5],
+  probeY = 1.15,
+  standable = () => true,
+} = {}) {
   const dx = from.x - lane.x, dz = from.z - lane.z;
   const d = Math.hypot(dx, dz) || 1;
   const ax = dx / d, az = dz / d;      // away from the muzzle
@@ -78,6 +116,9 @@ export function coverStep(lane, from, losFn, { radii = [2, 3.5, 5], probeY = 1.1
   for (const r of radii) {
     for (const dir of dirs) {
       const point = { x: from.x + dir.x * r, y: from.y, z: from.z + dir.z * r };
+      // Standable first: it is the cheap test, and a "cover" point inside a crate is
+      // a fighter walking into a wall until the fire stops.
+      if (!standable(point)) continue;
       if (!losFn(lane, { x: point.x, y: point.y + probeY, z: point.z })) return point;
     }
   }
