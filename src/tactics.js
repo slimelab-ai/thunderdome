@@ -43,12 +43,15 @@ export function offsetBreachGoal(target, attacker, lane, {
 }
 
 /**
- * A route so thoroughly covered that no approach is worth taking.
+ * A route cost at or above which no approach is worth taking.
  *
- * Reached only when the destination *and* most of the way to it are being worked;
- * see `safeBreachLane` for why that distinction is the whole thing.
+ * Sits exactly at the weight of the destination sample, so that "this lane ends in
+ * the beaten zone" is on its own enough to reject the lane, while "this lane crosses
+ * the beaten zone on its way somewhere safe" is not. Set any higher — it was 0.75 —
+ * and a fighter will happily walk to a spot the gun is covering, arrive, and be shot
+ * standing in it, which is a slower version of the thing this file exists to stop.
  */
-export const LANE_ABANDON = 0.75;
+export const LANE_ABANDON = 0.5;
 
 /**
  * The assigned breach lane if its approach is clear, otherwise the cheapest one.

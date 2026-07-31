@@ -37,12 +37,19 @@ const SUPPRESSION_PERIOD = 0.22;
 /**
  * Total seconds a fighter will refuse to advance before going anyway.
  *
- * Holding re-ups itself for as long as the lane stays hot, which against someone
- * who simply never stops firing is forever — a fighter jinking on the spot behind
- * a crate until the match times out. Somebody has to move eventually, and a budget
- * is what makes camping a dominant angle strong rather than absolute.
+ * Holding re-ups itself for as long as the lane stays hot, which against someone who
+ * simply never stops firing is forever — a fighter jinking behind a crate until the
+ * match times out. So there is a budget.
+ *
+ * Twelve seconds rather than the five it started at. Five had a squad breaking cover
+ * into a rifle that was still firing, because a timer said so, and dying one at a
+ * time — the exact behaviour the model exists to prevent, arrived at from the other
+ * direction. The pit already has an answer to a player who roots in one spot: the
+ * crowd gets bored at fourteen seconds and management drops fire on him at
+ * twenty-two. The bots do not need to suicide to break a camp; they need to outlast
+ * it, and this budget is sized to hand the problem to the mechanic that owns it.
  */
-const HOLD_BUDGET = 5;
+const HOLD_BUDGET = 12;
 
 /**
  * Where along a candidate route to check for incoming fire, and what each point is
@@ -804,16 +811,38 @@ export class Combatant {
       this.peekT -= dt;
       this.peekCd -= dt;
       if (this.peekT <= 0) this.peekSide = 0;
+      // A lean already under way is abandoned the moment that side starts being
+      // worked. Commitment is what makes a peek readable; committing to lean into
+      // something that has opened up since is just a slower way of dying.
+      if (this.peekSide && this._peekSwept(world, this.peekSide, fx, fz, now)) {
+        this.peekSide = 0;
+        this.peekT = 0;
+        this.peekCd = Math.max(this.peekCd, 0.6 + Math.random() * 0.5);
+      }
+      let peekRefused = false;
       if (this.peekSide === 0 && this.peekCd <= 0 && !sight && dist < engage * 1.8) {
         for (const side of [this.strafeDir, -this.strafeDir]) {
           _peekEye.set(eye.x + -fz * PEEK_REACH * side, eye.y, eye.z + fx * PEEK_REACH * side);
-          if (hasLoS(world.colliders, _peekEye, aim)) {
-            this.peekSide = side;
-            this.peekT = 0.75 + Math.random() * 0.6;
-            this.peekCd = this.peekT + 0.55 + Math.random() * 0.5;
-            break;
-          }
+          if (!hasLoS(world.colliders, _peekEye, aim)) continue;
+          // An angle that exists is not the same as an angle worth taking. Without
+          // this the whole suppression model stopped at the edge of cover: a fighter
+          // would sit out a hot lane correctly, work the safe corner a few times, and
+          // then lean straight into the one being worked because the geometry said
+          // there was a shot there.
+          if (this._peekSwept(world, side, fx, fz, now)) { peekRefused = true; continue; }
+          this.peekSide = side;
+          this.peekT = 0.75 + Math.random() * 0.6;
+          this.peekCd = this.peekT + 0.55 + Math.random() * 0.5;
+          break;
         }
+      }
+      // Refusing the angle has to mean *staying put*. On its own, blocking the peek
+      // only sent him down the travel branch instead — and walking into the lane is
+      // strictly worse than leaning into it, because a lean is over in a second. The
+      // first cut of this fix measurably got more of them killed for exactly that
+      // reason: 84 rounds to wipe the squad before, 65 after.
+      if (peekRefused && this.peekSide === 0 && this.holdSpent < HOLD_BUDGET) {
+        this.holdT = Math.max(this.holdT, 0.5 + Math.random() * 0.6);
       }
 
       // patch up when hurt and out of contact
@@ -1617,6 +1646,28 @@ export class Combatant {
       _laneFrom.set(from.x, from.y, from.z),
       _laneTo.set(to.x, to.y, to.z),
     );
+  }
+
+  /**
+   * Would leaning out this side put him in something's beaten zone?
+   *
+   * Checked at the lean itself and again a metre out, because a peek is not a lean —
+   * the body steps sideways with it, so the question is whether the ground he ends up
+   * on is being worked, not just the 29 cm the weapon travels.
+   */
+  _peekSwept(world, side, fx, fz, now) {
+    if (!this.suppression.anyHot(now)) return false;
+    const sees = (from, to) => this._laneSees(world, from, to);
+    const chest = this.pos.y + 1.15 * this.scale;
+    for (const reach of [PEEK_REACH, 1.1]) {
+      _routePoint.set(
+        this.pos.x + -fz * reach * side,
+        chest,
+        this.pos.z + fx * reach * side,
+      );
+      if (this.suppression.covering(_routePoint, sees, now)) return true;
+    }
+    return false;
   }
 
   /**
