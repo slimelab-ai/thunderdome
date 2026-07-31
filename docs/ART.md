@@ -655,6 +655,25 @@ Every one of these shipped a visible bug before it was understood. They are reco
 because each cost a full round of "fixed it" / "no you didn't", and every one of them
 will recur the moment someone adds a weapon or a clip.
 
+**A NaN in a texture field bakes to zero, everywhere, silently.** `fbm` drops any
+octave whose cell count does not divide the texture size, and a base count that divides
+none of them leaves it normalising by zero. `gunmetal`'s wear field asked for 12 cells
+in 512 texels, so it was NaN from the day it was written; `lerp` propagated that into
+roughness, and `Uint8ClampedArray` turned it into 0. Roughness 0 on a metal is a perfect
+mirror, so the symptom was not a broken texture — it was the entire weapon crawling with
+coloured specular fireflies, which reads as a *lighting* bug and sends you to the
+environment probe, the bloom threshold and the normal strength in turn. None of them
+moved it, because `material.roughness` is a **multiplier** over the map: 1.6 × 0 is
+still 0. What finally isolated it was nulling `roughnessMap` outright.
+Two lessons, both now enforced in `bake.js`: a field meant to vary must be asserted
+finite (`checkField`), and a helper that can silently produce nothing must throw.
+
+**Measure the thing you are actually looking at.** The speck metric used to fix the
+above counted bright pixels over the lower-centre of the frame — which is mostly
+*arena*. Raycasting the specks showed the brightest ones at 5.3 m, on crates. Any
+attribution done with that number was attribution of the wrong surface, which is why
+four consecutive knobs all "barely changed it".
+
 **Forward is −Z, rearward is +Z.** Barrels point down −Z (every entry in `MUZZLE` is
 negative). A slide, bolt or pump being worked therefore travels **+Z**. This was
 inverted for the whole life of the mechanism — with a comment cheerfully asserting

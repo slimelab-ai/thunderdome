@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versioned } from './asset-version.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { surface, fighterUniform } from './materials.js';
@@ -20,7 +21,7 @@ import { SUPPORT_GRIP } from './weapons.js';
  * it means a fighter's hitboxes follow his animation for free.
  */
 
-const MODEL_URL = '/assets/models/fighter.glb';
+const MODEL_URL = versioned('/assets/models/fighter.glb');
 
 // Clips that layer over locomotion. Converted to additive on load.
 const ADDITIVE = new Set([

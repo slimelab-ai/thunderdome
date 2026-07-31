@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versioned } from './asset-version.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Collider, CylinderCollider } from './collider.js';
 import { surface, worldUV, bindAuthoredMaterials } from './materials.js';
@@ -44,7 +45,7 @@ class PropBatcher {
     for (const [file, placements] of this.queued) {
       let entry = propCache.get(file);
       if (!entry) {
-        entry = propLoader.loadAsync(`/assets/models/${file}.glb`).then((gltf) => {
+        entry = propLoader.loadAsync(versioned(`/assets/models/${file}.glb`)).then((gltf) => {
           bindAuthoredMaterials(gltf.scene);
           return gltf;
         });

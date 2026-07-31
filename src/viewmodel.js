@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versioned } from './asset-version.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { surface, fighterUniform } from './materials.js';
@@ -19,7 +20,7 @@ import { GRIP_ANCHOR, SUPPORT_GRIP } from './weapons.js';
  * entirely, which no additive layer can express without fighting the idle sway.
  */
 
-const MODEL_URL = '/assets/models/fp_arms.glb';
+const MODEL_URL = versioned('/assets/models/fp_arms.glb');
 const ADDITIVE = new Set(['fire']);
 // Clips that move the support arm, and therefore need the grip pins to let go.
 // Clips that move the support arm off the weapon, and therefore need the grip pins to
@@ -131,6 +132,24 @@ const SUPPORT_POSE = {
     forearm_l: [0.55, 0, 0],
     hand_l: [0, 0, 0],
   },
+};
+
+/**
+ * Rest orientation of the held model, in the fist, for weapons the gun convention
+ * does not suit.
+ *
+ * Everything is authored barrel-along-−Z, and for a gun that is exactly right: you
+ * want the muzzle pointing where you are looking. A knife inherits the same rule and
+ * ends up pointing its tip straight down the view axis — and the blade is six
+ * millimetres thick, so end-on it is literally invisible. Measured from the running
+ * game, the model's −Z came out at (0, 0.01, −1) in camera space: dead centre.
+ *
+ * Canting it brings the flat of the blade into view. Tip up and inboard, rolled so
+ * the edge catches the light, which is the pose every FPS knife is held in for the
+ * same reason.
+ */
+const GRIP_ROT = {
+  knife: [1.809, 0.691, -1.659],
 };
 
 let loadPromise = null;
@@ -252,6 +271,8 @@ export class ViewModel {
     } else {
       group.position.set(0, 0, 0);
     }
+    const rot = GRIP_ROT[id];
+    group.rotation.set(rot ? rot[0] : 0, rot ? rot[1] : 0, rot ? rot[2] : 0);
 
     this.pinned.clear();
     const pose = SUPPORT_POSE[id];

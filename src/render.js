@@ -6,6 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { setMaxAnisotropy } from './materials.js';
 
 /**
  * The render pipeline: HDR scene → ambient occlusion → bloom → tone map → AA → grade.
@@ -18,12 +19,15 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 export const QUALITY_TIERS = ['low', 'medium', 'high', 'ultra'];
 
 /**
- * Ambient occlusion lives on `ultra`, not `high`.
+ * Ambient occlusion runs from `high` up.
  *
- * GTAO is by a wide margin the most expensive pass in the chain — it renders depth
- * and normals for the whole scene and then denoises — and it is also the one whose
- * absence is hardest to notice in a room this dark. Making it opt-in is what lets
- * `high` be a sensible default on a desktop that is not a gaming machine.
+ * It used to be `ultra`-only, on the argument that GTAO is the most expensive pass in
+ * the chain and the hardest to miss in a room this dark. The first half is still true.
+ * The second was wrong: AO is what puts a surface *against* another surface, and
+ * without it every crate sits on the floor like a decal and the whole arena reads
+ * flat no matter what the textures do. That is the complaint it produced.
+ *
+ * `medium` and `low` still go without, so there is somewhere to fall to.
  *
  * The pixel-ratio caps are ceilings, not targets: `renderScale` below trims the
  * actual resolution down from there when frames run long.
@@ -31,7 +35,7 @@ export const QUALITY_TIERS = ['low', 'medium', 'high', 'ultra'];
 const TIERS = {
   low:    { ao: false, bloom: true,  smaa: false, grade: true,  maxPixelRatio: 1.0,  shadowMap: 1024, softShadows: false },
   medium: { ao: false, bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.25, shadowMap: 1024, softShadows: true },
-  high:   { ao: false, bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.5,  shadowMap: 2048, softShadows: true },
+  high:   { ao: true,  bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.5,  shadowMap: 2048, softShadows: true },
   ultra:  { ao: true,  bloom: true,  smaa: true,  grade: true,  maxPixelRatio: 1.75, shadowMap: 2048, softShadows: true },
 };
 
@@ -141,6 +145,15 @@ export class RenderPipeline {
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
+
+    // Anisotropic filtering, at whatever the hardware actually offers.
+    //
+    // The material library defaulted to 8 and nothing ever called the setter, so this
+    // ran at half the available quality on every machine that supports 16 — which is
+    // most of them. It costs nothing and it is worth the most exactly where the arena
+    // looks worst: a floor seen at a grazing angle, where an under-filtered sample
+    // smears the aggregate into mush a few metres out.
+    setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
     // Half-float targets: bloom needs values above 1.0 to have anything to pick out,
     // which an 8-bit target clips away before the pass ever sees them.

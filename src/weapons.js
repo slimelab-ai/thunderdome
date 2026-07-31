@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versioned } from './asset-version.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { bindAuthoredMaterials } from './materials.js';
 
@@ -304,7 +305,7 @@ export function preloadWeapons() {
   if (!weaponLoad) {
     const loader = new GLTFLoader();
     weaponLoad = Promise.all(Object.keys(MUZZLE).map((id) => loader
-      .loadAsync(`/assets/models/${id}.glb`)
+      .loadAsync(versioned(`/assets/models/${id}.glb`))
       .then((gltf) => {
         bindAuthoredMaterials(gltf.scene);
         weaponAssets.set(id, gltf.scene);

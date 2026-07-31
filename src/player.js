@@ -705,16 +705,11 @@ export class Player {
       + (this.reloading > 0 ? Math.sin((reloadDur - this.reloading) / reloadDur * Math.PI) * arc : 0);
     let ry = 0;
     let rz = kickVm * 0.05;
-    // knife slash: a fast diagonal arc you can actually SEE
-    if (this.swingT > 0) {
-      this.swingT -= dt;
-      const k = Math.sin((1 - Math.max(0, this.swingT) / 0.32) * Math.PI);
-      rx += -k * 1.5;
-      rz += k * 1.1;
-      ry = -k * 0.7;
-      vm.position.x -= k * 0.18;
-      vm.position.y += k * 0.05;
-    }
+    // The knife's strike is the authored `melee` clip on the arms rig, and nothing
+    // else. This used to add a procedural arc on top of it — 86 degrees of pitch on
+    // the viewmodel root plus 18 cm of sideways travel — so two animations of the
+    // same motion fought each other and the forearm went up through the camera.
+    if (this.swingT > 0) this.swingT -= dt;
     if (rx || ry || rz) vm.quaternion.multiply(_kickQuat.setFromEuler(_kickEuler.set(rx, ry, rz)));
 
     // ---- weapon mechanism ----
