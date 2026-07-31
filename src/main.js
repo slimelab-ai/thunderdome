@@ -2782,6 +2782,17 @@ function makeLaneTest(shooter, options = {}) {
   const cfg = {
     ammo: 600, mag: 30, reload: 1.9, interval: 0.1, accuracy: 0.85,
     laneHalfWidth: 1.0, seconds: 75, holderHp: 1e6,
+    /** A holder who also swings onto anything showing outside his lane. */
+    // He breaks his hold to punish something showing, then goes back to the lane —
+    // that is what holding an angle actually looks like, and it matters to the AI
+    // rather than just to realism: a man who tracks flankers forever has no lane, and
+    // the whole suppression model is built on there being one.
+    //
+    // 0.12 rather than the lane's 0.85 because he has to turn, reacquire a moving man
+    // and lead him. At 0.35 he landed three and a half rounds a second across the
+    // pit, which is not a player, it is an aimbot: every squad died wherever it stood
+    // and the scenario could not tell good positioning from bad.
+    swing: false, swingAccuracy: 0.12, swingRange: 30, swingHold: 1.2,
     /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
     ceaseFireAfter: 0, lullSeconds: 0,
     ...options,
@@ -2791,6 +2802,7 @@ function makeLaneTest(shooter, options = {}) {
   const probe = new THREE.Vector3();
   const rel = new THREE.Vector3();
   const end = new THREE.Vector3();
+  const _trapDir = new THREE.Vector3();
   let reach = 0;
 
   const state = {
@@ -2798,7 +2810,8 @@ function makeLaneTest(shooter, options = {}) {
     fired: 0, reloads: 0, deaths: 0, laneEntries: 0, elapsed: 0, done: false,
     trapFrames: 0, safeFrames: 0, botFrames: 0, laneFrames: 0,
     pushedInLull: 0, shooterHp: shooter.hp,
-    track: [], sampleT: 0, holderDownAt: null,
+    track: [], sampleT: 0, holderDownAt: null, swingShots: 0,
+    swingTarget: null, swingUntil: 0,
   };
 
   const firingNow = () => {
@@ -2848,13 +2861,48 @@ function makeLaneTest(shooter, options = {}) {
           break;
         }
         state.mag--; state.fired++;
-        world.emitNoise?.(shooter, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1, ray);
-        end.copy(muzzle).addScaledVector(ray, reach);
+        let caught = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
+        let hitChance = cfg.accuracy;
+        // The lane is his job: anything standing in it snaps him straight back.
+        if (caught) { state.swingTarget = null; state.swingUntil = 0; }
+
+        if (!caught && cfg.swing) {
+          if (state.swingTarget && (!state.swingTarget.alive || state.elapsed > state.swingUntil)) {
+            state.swingTarget = null;
+          }
+          if (!state.swingTarget) {
+            let best = null, bestD = Infinity;
+            for (const c of world.combatants) {
+              if (!c.alive || c.team !== 'enemy') continue;
+              const d = Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z);
+              if (d >= bestD || d > cfg.swingRange) continue;
+              probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
+              if (!hasLoS(world.colliders, muzzle, probe)) continue;
+              best = c; bestD = d;
+            }
+            if (best) { state.swingTarget = best; state.swingUntil = state.elapsed + cfg.swingHold; }
+          }
+          if (state.swingTarget) { caught = state.swingTarget; hitChance = cfg.swingAccuracy; state.swingShots++; }
+        }
+
+        // Where the rounds are actually going. Emitting the lane's direction while
+        // he was shooting off to one side made the test unfair rather than merely
+        // hard: the fighters he was punishing had no way of perceiving the angle that
+        // was killing them, because every round they heard claimed to be going
+        // somewhere else. A gunshot has to report the truth about itself.
+        const firedAt = caught === state.swingTarget && state.swingTarget ? state.swingTarget : null;
+        if (firedAt) {
+          _trapDir.set(firedAt.pos.x - muzzle.x, 0, firedAt.pos.z - muzzle.z).normalize();
+        } else {
+          _trapDir.copy(ray);
+        }
+        world.emitNoise?.(shooter, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1, _trapDir);
+        end.copy(muzzle).addScaledVector(_trapDir, reach);
         fx.tracer(muzzle, end);
-        fx.muzzleFlash(muzzle, ray);
+        fx.muzzleFlash(muzzle, _trapDir);
         audio.shot(WEAPONS.rifle.sound, 1);
-        const caught = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
-        if (caught && Math.random() < cfg.accuracy) {
+
+        if (caught && Math.random() < hitChance) {
           probe.set(caught.pos.x, caught.pos.y + 1.15, caught.pos.z);
           caught.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
         }
@@ -2916,6 +2964,7 @@ function laneTestReport(state, squad, seed) {
     atSafeGround: share(state.safeFrames),
     pushedTrapsDuringLull: state.pushedInLull,
     holderDownAt: state.holderDownAt,
+    swingShots: state.swingShots,
     damageOnShooter: Math.round(state.cfg.holderHp - state.shooterHp),
     roundsFired: state.fired, reloads: state.reloads,
     seconds: +state.elapsed.toFixed(1),

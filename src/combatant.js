@@ -750,20 +750,26 @@ export class Combatant {
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
       }
-      // Two ways of getting a fighter to use the cover on his own side have now been
-      // tried and both cost more than they saved, so the note is here rather than the
-      // code. Walking him to a spot  picks: deaths 14 to 18 of 30, damage
-      // on the shooter 80,700 down to 68,100 — he stops shooting and is caught in
-      // transit. Biasing his jink toward the unswept side instead, which is the same
-      // instinct at a tenth of the price: deaths 18 to 22, damage 71,000 down to
-      // 55,700. Cheaper and worse.
+      // Getting a fighter to use the cover on his own side: three attempts, three
+      // losses, so the record is here instead of the code.
       //
-      // Both fail the same way. He is already winning the damage race from the open,
-      // so any movement that is not *at* the enemy trades a firing solution for a
-      // better place to stand, and the exposure saved never covers it. The thing to
-      // fix is probably not his footwork at all — it is that the goal he was sent to
-      // had no cover on it. Choosing breach goals that come with an angle and
-      // something to lean on is a different mechanism, and the one worth building.
+      //   walk him to a coverStep spot ......... deaths 14->18/30, damage 80.7k->68.1k
+      //   bias his jink toward the unswept side  deaths 18->22/30, damage 71k->55.7k
+      //   the same, gated so only the rusher and
+      //   shieldman accept being exposed ....... damage 11.5k->8.4k, deaths unchanged
+      //
+      // The third was run against a holder who *swings* onto whatever shows, built
+      // precisely because the first two might only have measured badly for want of a
+      // scenario that punishes exposure. It did punish it — and cover-seeking still
+      // lost. Every version trades a firing solution for a better place to stand, and
+      // the exposure saved has never once covered the loss.
+      //
+      // The finding underneath is larger than the positioning. Against a holder who
+      // turns, the squad loses all thirty of thirty however they stand, at every
+      // accuracy worth calling a player. Their answer to a held angle is to shoot
+      // back from wherever they are, and that answer does not work — which is a
+      // question about suppressing and displacing as a squad, not about where one
+      // man puts his feet.
       // Fighting *from* cover, rather than wherever the walk happened to end, is
       // the obvious next thing and it does not work. A fighter who has flanked wide
       // is out of the beaten zone and so not pinned, and he stands in the open
