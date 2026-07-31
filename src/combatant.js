@@ -463,6 +463,17 @@ export class Combatant {
     // than one per round that lands.
     if (shooter?.pos && shooter.team !== this.team && this.sinceHit > 0.5) {
       world.emitNoise?.(shooter, shooter.pos, 'impact');
+      // ...and he shouts, which is how the rest of the squad finds out that *this
+      // spot* is where you get shot, without each of them having to discover it.
+      const told = world.reportHit?.(this, this.pos) ?? 0;
+      world.onCombatEvent?.('hit_ground', this, {
+        shooter: shooter.isPlayer ? 'YOU' : shooter.name || null,
+        told,
+        at: [this.pos.x, this.pos.y, this.pos.z].map(v => +v.toFixed(2)),
+      });
+      if (dmg > this.maxHp * 0.12) {
+        audio.hurt(1.2 / (1 + this.pos.distanceTo(world.cameraPos) * 0.09));
+      }
     }
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
@@ -1656,8 +1667,7 @@ export class Combatant {
    * on is being worked, not just the 29 cm the weapon travels.
    */
   _peekSwept(world, side, fx, fz, now) {
-    if (!this.suppression.anyHot(now)) return false;
-    const sees = (from, to) => this._laneSees(world, from, to);
+    if (!this.suppression.anyDanger(now)) return false;
     const chest = this.pos.y + 1.15 * this.scale;
     for (const reach of [PEEK_REACH, 1.1]) {
       _routePoint.set(
@@ -1665,9 +1675,22 @@ export class Combatant {
         chest,
         this.pos.z + fx * reach * side,
       );
-      if (this.suppression.covering(_routePoint, sees, now)) return true;
+      if (this._groundIsDangerous(world, _routePoint, now)) return true;
     }
     return false;
+  }
+
+  /**
+   * Is this piece of ground being worked, or has it already got somebody hit?
+   *
+   * The two questions are answered separately on purpose. A lane is an inference
+   * about a gun and needs a sightline to mean anything; a mark is a fact about a spot
+   * and does not care where the fire came from, which is what makes it survive the
+   * shooter relocating.
+   */
+  _groundIsDangerous(world, point, now) {
+    if (this.suppression.markedAt(point, now)) return true;
+    return !!this.suppression.covering(point, (from, to) => this._laneSees(world, from, to), now);
   }
 
   /**
@@ -1682,7 +1705,7 @@ export class Combatant {
    * Bails immediately when nothing is hot, which is most of the time.
    */
   _routeCost(world, goal, now) {
-    if (!this.suppression.anyHot(now)) return 0;
+    if (!this.suppression.anyDanger(now)) return 0;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
     let swept = 0;
@@ -1692,6 +1715,13 @@ export class Combatant {
         chest,
         this.pos.z + (goal.z - this.pos.z) * t,
       );
+      // Deliberately lanes only. Killing ground is *not* consulted for routing:
+      // a hit lands where a man was exposed, which is a stride from the cover he was
+      // quite correctly using, so a mark centred on his feet makes every path out of
+      // his own position expensive and pushes him into the open to escape it. Tried
+      // it across the whole route and then at the destination alone; both measured
+      // worse than leaving routing to the lanes. See `_peekSwept` for where a mark
+      // does earn its keep.
       if (this.suppression.covering(_routePoint, sees, now)) swept += weight;
     }
     return swept / ROUTE_WEIGHT_TOTAL;

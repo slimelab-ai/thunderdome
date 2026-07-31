@@ -9,7 +9,7 @@ import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } fro
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { broadcastNoise, contactRadius } from './perception.js';
-import { laneIsHot } from './suppression.js';
+import { laneIsHot, shareHitGround } from './suppression.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
@@ -186,6 +186,15 @@ world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
   source === world.playerShooter ? world.playerProxy : source,
   pos, kind, world.simTime, weight,
 );
+
+/**
+ * Somebody just got hit standing here, and said so.
+ *
+ * The squad's record of ground that has actually drawn blood, as opposed to ground
+ * a gun is presumed to cover. It needs no theory about where the shot came from,
+ * which is exactly why it keeps working after the shooter has moved.
+ */
+world.reportHit = (victim, pos) => shareHitGround(world, victim, pos, world.simTime);
 
 const player = new Player(camera, world);
 // Combat telemetry treats the first-person player like every other shooter.
@@ -999,6 +1008,12 @@ function handlePlayerDamaged(dmg, part, fromPos, shooter = null, range = null) {
   ui.damageFlash();
   fx.blood(new THREE.Vector3(player.pos.x, player.pos.y + 1.2, player.pos.z));
   audio.crowdRoar(0.25);
+  // The crew learn where the boss got hit the same way they learn it about each
+  // other. Rate-limited to once a burst, matching the bots' own callout.
+  if (match.time - (world._playerHitCall ?? -99) > 0.5) {
+    world._playerHitCall = match.time;
+    world.reportHit?.(world.playerProxy, player.pos);
+  }
 
   if (player.alive) {
     if (part === 'armL' || part === 'armR') announcer.say('playerArmHit', {}, { minGap: 8 });
@@ -2408,6 +2423,8 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
         heat: fighter.pinnedBy ? +fighter.pinnedBy.heat.toFixed(2) : 0,
         holding: fighter.holdT > 0,
         hot_lanes: fighter.suppression.lanes.filter(l => laneIsHot(l, world.simTime)).length,
+        // Ground he knows has drawn blood, whether or not he was the one bleeding.
+        killing_ground: fighter.suppression.marks.filter(m => m.heat >= 3).length,
       },
       // What he thinks he knows, alongside where his target actually is. The pair is
       // the whole validation: after a sightline breaks, `believed` must stop moving

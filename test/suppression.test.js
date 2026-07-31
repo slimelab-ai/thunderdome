@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SuppressionMap, SUPPRESSION, SUPPRESSING, laneIsHot, coverStep, worthSuppressing,
+  SuppressionMap, SUPPRESSION, SUPPRESSING, MARK,
+  laneIsHot, coverStep, worthSuppressing, shareHitGround,
 } from '../src/suppression.js';
 
 // Line of sight stand-in: a wall along x = 0 blocks anything crossing it, except
@@ -113,6 +114,65 @@ test('cover you cannot stand in is not cover', () => {
   // is nowhere to go, not sent to grind into it.
   assert.equal(coverStep(lane, from, wallAtX0, { standable: () => false }), null);
   assert.ok(out, 'and with clear ground he still finds it');
+});
+
+test('ground that got somebody hit is dangerous without any theory about the shooter', () => {
+  const map = new SuppressionMap();
+  const spot = { x: 4, y: 0, z: 4 };
+  map.mark(spot, MARK.heat, 0);
+
+  assert.ok(map.markedAt({ x: 4, y: 1.15, z: 4 }, 0), 'the spot itself');
+  assert.ok(map.markedAt({ x: 4 + MARK.radius - 0.3, y: 1.15, z: 4 }, 0), 'and its immediate surround');
+  assert.equal(map.markedAt({ x: 4 + MARK.radius + 1, y: 1.15, z: 4 }, 0), null, 'but not the next room');
+  // No lanes at all — a mark needs no sightline to mean something.
+  assert.equal(map.lanes.length, 0);
+  assert.equal(map.anyDanger(0), true);
+});
+
+test('a killing ground outlasts the shooting that made it, and hits compound', () => {
+  const once = new SuppressionMap();
+  once.mark({ x: 0, y: 0, z: 0 }, MARK.heat, 0);
+  const at = t => once.markedAt({ x: 0, y: 1.15, z: 0 }, t);
+  assert.ok(at(8), 'still known nine seconds later');
+  assert.equal(at(12), null, 'eventually forgotten');
+
+  // Two men down on the same patch is a different proposition from one.
+  const twice = new SuppressionMap();
+  twice.mark({ x: 0, y: 0, z: 0 }, MARK.heat, 0);
+  twice.mark({ x: 1, y: 0, z: 0 }, MARK.heat, 1);
+  assert.equal(twice.marks.length, 1, 'the same patch, not two');
+  assert.equal(twice.marks[0].hits, 2);
+  assert.ok(twice.markedAt({ x: 0, y: 1.15, z: 0 }, 20), 'and it stays known far longer');
+});
+
+test('marks are dropped once cold, rather than accumulating forever', () => {
+  const map = new SuppressionMap();
+  map.mark({ x: 0, y: 0, z: 0 }, MARK.heat, 0);
+  map.decayTo(MARK.heat / MARK.decay + 1);
+  assert.equal(map.marks.length, 0);
+  assert.equal(map.anyDanger(100), false);
+});
+
+test('a hit is shouted to the squad, weaker second-hand and not at all to the enemy', () => {
+  const make = (team, x) => {
+    const c = { team, alive: true, pos: { x, y: 0, z: 0 }, suppression: new SuppressionMap() };
+    return c;
+  };
+  const victim = make('enemy', 0);
+  const near = make('enemy', 5);
+  const far = make('enemy', MARK.range + 10);
+  const hostile = make('player', 5);
+  const dead = make('enemy', 5); dead.alive = false;
+  const world = { combatants: [victim, near, far, hostile, dead] };
+
+  assert.equal(shareHitGround(world, victim, victim.pos, 0), 2, 'himself and the man in earshot');
+  assert.equal(victim.suppression.marks[0].heat, MARK.heat);
+  assert.equal(near.suppression.marks[0].heat, MARK.fromCallout);
+  assert.ok(near.suppression.marks[0].heat < victim.suppression.marks[0].heat,
+    'hearing about it is worth less than being there');
+  assert.equal(far.suppression.marks.length, 0);
+  assert.equal(hostile.suppression.marks.length, 0, 'the enemy does not learn from your cry');
+  assert.equal(dead.suppression.marks.length, 0);
 });
 
 test('area fire needs a belief worth spending rounds on', () => {
