@@ -1119,6 +1119,7 @@ export class Combatant {
           melee: !!w.melee,
           distance: dist,
           legDamage: this.legDmg,
+          crossingFire: !!this.pinnedBy,
         });
         // Committed lanes are walked the way they were costed; everything else
         // keeps the fighter's own habitual flank preference.
@@ -1697,12 +1698,12 @@ export class Combatant {
    * worked*. The second one accumulates — one round is nothing, twenty into the
    * same doorway is a reason to go round.
    */
-  hearNoise(source, pos, kind, now, weight = 1) {
+  hearNoise(source, pos, kind, now, weight = 1, dir = null) {
     const contact = this.perception.hear(source, pos, kind, this.pos, now);
     // Gated on the contact, which is falsy exactly when the noise was out of
     // earshot — a fighter cannot be pinned by fire he cannot hear.
     if (contact && kind === 'gunshot') {
-      this.suppression.record(pos, SUPPRESSION.shot * weight, now);
+      this.suppression.record(pos, SUPPRESSION.shot * weight, now, { dir });
     }
     return contact;
   }
@@ -1727,7 +1728,7 @@ export class Combatant {
     this.rig.trigger('fire');
     // Firing is a decision to be located. Everyone hostile inside earshot gets a
     // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
-    world.emitNoise?.(this, from, 'gunshot', w.suppression ?? 1);
+    world.emitNoise?.(this, from, 'gunshot', w.suppression ?? 1, dir);
     const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
     if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
     this.shotsFired = (this.shotsFired || 0) + 1;

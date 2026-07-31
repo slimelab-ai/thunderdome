@@ -192,14 +192,14 @@ world.nav = new NavMesh(arena.colliders);
  * up as a result. Anything installed here is restored at the start of every bout.
  */
 function installWorldHooks() {
-  world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
+  world.emitNoise = (source, pos, kind, weight = 1, dir = null) => broadcastNoise(
     world,
     // The player fires as `playerShooter` but is *targeted* as `playerProxy`.
     // Contacts are keyed by entity, so they have to collapse to one identity here or
     // a bot ends up holding a belief about somebody who is never a candidate to
     // shoot at.
     source === world.playerShooter ? world.playerProxy : source,
-    pos, kind, world.simTime, weight,
+    pos, kind, world.simTime, weight, dir,
   );
 
   // Somebody just got hit standing here, and said so. The squad's record of ground
@@ -2593,7 +2593,7 @@ function makeTrap(options = {}) {
           break;
         }
         state.mag--; state.fired++;
-        world.emitNoise?.(world.playerProxy, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1);
+        world.emitNoise?.(world.playerProxy, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1, ray);
         // Seen and heard, not just simulated — without this the scenario ran in
         // total silence and looked like nothing was happening.
         end.copy(muzzle).addScaledVector(ray, reach);
@@ -2841,7 +2841,7 @@ function makeLaneTest(shooter, options = {}) {
           break;
         }
         state.mag--; state.fired++;
-        world.emitNoise?.(shooter, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1);
+        world.emitNoise?.(shooter, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1, ray);
         end.copy(muzzle).addScaledVector(ray, reach);
         fx.tracer(muzzle, end);
         fx.muzzleFlash(muzzle, ray);

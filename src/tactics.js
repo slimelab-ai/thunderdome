@@ -122,9 +122,16 @@ export function safeBreachLane(target, attacker, assigned, routeCost, opts = {})
   return { ...best, covered: best.cost >= LANE_ABANDON };
 }
 
-export function shouldSprintAtTarget({ sight, melee = false, distance = 0, legDamage = 0 }) {
+export function shouldSprintAtTarget({
+  sight, melee = false, distance = 0, legDamage = 0, crossingFire = false,
+}) {
   if (legDamage >= 0.6) return false;
   if (melee) return distance > 3;
+  // Standing in the beaten zone is not the moment to shoulder the weapon. Sight
+  // normally lowers a fighter out of his sprint, which is right everywhere except
+  // here: taking the push during a reload and then stopping to aim halfway across
+  // the lane is how the gap gets wasted. Cross it, then fight.
+  if (crossingFire) return true;
   return !sight;
 }
 

@@ -915,7 +915,7 @@ export class Player {
     // Your shot is the loudest thing you can do. Every hostile in earshot gets a
     // rough fix on this muzzle — which is what makes a suppressed approach, or
     // simply not firing, a real option rather than a stylistic one.
-    this.world.emitNoise?.(this.world.playerProxy, muzzle, 'gunshot', w.suppression ?? 1);
+    this.world.emitNoise?.(this.world.playerProxy, muzzle, 'gunshot', w.suppression ?? 1, baseDir);
 
     audio.shot(w.sound, 1);
     this.arms.fire();

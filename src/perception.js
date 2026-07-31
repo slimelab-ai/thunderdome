@@ -328,7 +328,7 @@ export class ContactMemory {
  * Only hostiles form contacts — a fighter does not need to be told by ear where his
  * own squad is. A noise with no source (an explosion) is a disturbance for everyone.
  */
-export function broadcastNoise(world, source, pos, kind, now, weight = 1) {
+export function broadcastNoise(world, source, pos, kind, now, weight = 1, dir = null) {
   let heard = 0;
   for (const listener of world.combatants) {
     if (!listener.alive || !listener.perception) continue;
@@ -341,7 +341,7 @@ export function broadcastNoise(world, source, pos, kind, now, weight = 1) {
     if (listener === source || listener.team === source.team) continue;
     // `weight` carries how threatening the weapon is, which matters to how pinned a
     // listener feels but not at all to how well he can place the bang.
-    if (listener.hearNoise(source, pos, kind, now, weight)) heard++;
+    if (listener.hearNoise(source, pos, kind, now, weight, dir)) heard++;
   }
   return heard;
 }
