@@ -38,7 +38,18 @@ export function hasLoS(colliders, from, to) {
   const dist = dir.length();
   if (dist < 0.001) return true;
   dir.normalize();
+  // Any box the sightline actually crosses must have its world AABB overlap the
+  // segment's. Most of the arena is nowhere near any one sightline, so rejecting on
+  // six comparisons beats running a full slab test against every collider.
+  //
+  // The AABB is a hint, not a requirement: anything exposing `raycast` is still a
+  // valid collider here, and one without bounds simply skips the broadphase.
+  const x0 = from.x < to.x ? from.x : to.x, x1 = from.x < to.x ? to.x : from.x;
+  const y0 = from.y < to.y ? from.y : to.y, y1 = from.y < to.y ? to.y : from.y;
+  const z0 = from.z < to.z ? from.z : to.z, z1 = from.z < to.z ? to.z : from.z;
   for (const box of colliders) {
+    const min = box.min, max = box.max;
+    if (min && (min.x > x1 || max.x < x0 || min.y > y1 || max.y < y0 || min.z > z1 || max.z < z0)) continue;
     const t = box.raycast(from, dir);
     if (t !== null && t < dist - 0.1) return false;
   }
@@ -82,15 +93,21 @@ export function rayVsCapsule(origin, dir, a, b, radius, maxDist) {
   }
 
   // Caps: a sphere at each end. Checked even when the body hit, because a shot that
-  // clips only the top of the head never touches the cylinder at all.
-  for (const [centre, at] of [[a, 0], [b, 1]]) {
-    _oc.copy(origin).sub(centre);
-    const bb = dir.dot(_oc);
-    const cc = _oc.dot(_oc) - radius * radius;
-    const hh = bb * bb - cc;
-    if (hh < 0) continue;
+  // clips only the top of the head never touches the cylinder at all. Written out
+  // rather than looped over a pair table, which allocated three arrays per ray.
+  _oc.copy(origin).sub(a);
+  let bb = dir.dot(_oc);
+  let hh = bb * bb - (_oc.dot(_oc) - radius * radius);
+  if (hh >= 0) {
     const t = -bb - Math.sqrt(hh);
-    if (t >= 0 && t < best) { best = t; axial = at; }
+    if (t >= 0 && t < best) { best = t; axial = 0; }
+  }
+  _oc.copy(origin).sub(b);
+  bb = dir.dot(_oc);
+  hh = bb * bb - (_oc.dot(_oc) - radius * radius);
+  if (hh >= 0) {
+    const t = -bb - Math.sqrt(hh);
+    if (t >= 0 && t < best) { best = t; axial = 1; }
   }
 
   if (!Number.isFinite(best) || best > maxDist) return null;

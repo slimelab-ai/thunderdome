@@ -80,27 +80,53 @@ export class Collider {
 
   // ray (origin Vector3-like, dir normalized Vector3-like) vs the oriented box.
   // Returns entry distance t ≥ 0, or null on miss. Origin inside → 0.
+  //
+  // The three slabs are written out rather than looped over a table of them. This is
+  // the innermost function of line of sight, wall probing and every AI scan — tens of
+  // millions of calls a minute — and building four throwaway arrays per call to
+  // describe three fixed axes cost more than the arithmetic it was wrapping.
   raycast(o, d) {
     const ox = o.x - this.cx, oz = o.z - this.cz;
     const lox = this._lx(ox, oz), loz = this._lz(ox, oz);
     const ldx = this._lx(d.x, d.z), ldz = this._lz(d.x, d.z);
     let tmin = -Infinity, tmax = Infinity;
-    const slabs = [
-      [lox, ldx, -this.hw, this.hw],
-      [o.y, d.y, this.min.y, this.max.y],
-      [loz, ldz, -this.hd, this.hd],
-    ];
-    for (const [ro, rd, lo, hi] of slabs) {
-      if (Math.abs(rd) < 1e-9) {
-        if (ro < lo || ro > hi) return null;
-        continue;
-      }
-      let t0 = (lo - ro) / rd, t1 = (hi - ro) / rd;
+
+    // Local X slab.
+    if (ldx < 1e-9 && ldx > -1e-9) {
+      if (lox < -this.hw || lox > this.hw) return null;
+    } else {
+      const inv = 1 / ldx;
+      let t0 = (-this.hw - lox) * inv, t1 = (this.hw - lox) * inv;
       if (t0 > t1) { const tmp = t0; t0 = t1; t1 = tmp; }
       if (t0 > tmin) tmin = t0;
       if (t1 < tmax) tmax = t1;
       if (tmin > tmax) return null;
     }
+
+    // World Y slab — height is unaffected by the box's yaw.
+    if (d.y < 1e-9 && d.y > -1e-9) {
+      if (o.y < this.min.y || o.y > this.max.y) return null;
+    } else {
+      const inv = 1 / d.y;
+      let t0 = (this.min.y - o.y) * inv, t1 = (this.max.y - o.y) * inv;
+      if (t0 > t1) { const tmp = t0; t0 = t1; t1 = tmp; }
+      if (t0 > tmin) tmin = t0;
+      if (t1 < tmax) tmax = t1;
+      if (tmin > tmax) return null;
+    }
+
+    // Local Z slab.
+    if (ldz < 1e-9 && ldz > -1e-9) {
+      if (loz < -this.hd || loz > this.hd) return null;
+    } else {
+      const inv = 1 / ldz;
+      let t0 = (-this.hd - loz) * inv, t1 = (this.hd - loz) * inv;
+      if (t0 > t1) { const tmp = t0; t0 = t1; t1 = tmp; }
+      if (t0 > tmin) tmin = t0;
+      if (t1 < tmax) tmax = t1;
+      if (tmin > tmax) return null;
+    }
+
     if (tmax < 0) return null;
     return tmin >= 0 ? tmin : 0;
   }
@@ -168,7 +194,9 @@ export class CylinderCollider {
       if (o.y < this.min.y || o.y > this.max.y) return null;
     } else {
       y0 = (this.min.y - o.y) / d.y; y1 = (this.max.y - o.y) / d.y;
-      if (y0 > y1) [y0, y1] = [y1, y0];
+      // A plain temporary rather than a destructured swap, which allocates an array
+      // on every call in a function the LOS loop hits once per barrel per ray.
+      if (y0 > y1) { const tmp = y0; y0 = y1; y1 = tmp; }
     }
     const ox = o.x - this.cx, oz = o.z - this.cz;
     const a = d.x * d.x + d.z * d.z;
