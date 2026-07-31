@@ -60,13 +60,22 @@ export const SUPPRESSION = {
    */
   halfArc: (40 * Math.PI) / 180,
   /**
-   * Inside this, the arc stops applying.
+   * Where he starts being able to swing onto you, and how much wider that makes the
+   * arc when you are right on top of him.
    *
-   * Close enough and he simply turns. Without this, walking up behind somebody and
-   * standing at his shoulder reads as perfectly safe, which is a hole rather than a
-   * flank.
+   * This used to switch the arc *off* inside seven metres, which meant that at
+   * contact range every direction read as lethal — so a fighter circling him had no
+   * safe side to circle toward, and the pick-your-jink logic that was supposed to
+   * keep him out of the firing line silently had nothing to pick between. He orbited
+   * straight through it, every game.
+   *
+   * The arc widens instead of vanishing: forty degrees at range, a hundred at his
+   * elbow. Standing at his shoulder is still dangerous, standing behind him is still
+   * not, and the narrow strip he is actually firing down remains distinguishable
+   * from the rest of the circle — which is the whole thing the model is for.
    */
   swingRange: 7,
+  swingWiden: (70 * Math.PI) / 180,
   /** Two firing positions this close are one lane. */
   merge: 3.5,
   /** Seconds of cold silence before a lane is forgotten entirely. */
@@ -458,9 +467,11 @@ export class SuppressionMap {
       // Outside the arc he is holding, and far enough that he would have to turn to
       // reach you, this ground is not his. That exclusion is what makes one route
       // meaningfully safer than another.
-      if (lane.facing && d2 > SUPPRESSION.swingRange * SUPPRESSION.swingRange) {
-        const d = Math.sqrt(d2);
-        if ((dx / d) * lane.dx + (dz / d) * lane.dz < Math.cos(SUPPRESSION.halfArc)) continue;
+      if (lane.facing) {
+        const d = Math.sqrt(d2) || 1;
+        const closeness = Math.max(0, 1 - d / SUPPRESSION.swingRange);
+        const halfArc = SUPPRESSION.halfArc + closeness * SUPPRESSION.swingWiden;
+        if ((dx / d) * lane.dx + (dz / d) * lane.dz < Math.cos(halfArc)) continue;
       }
       if (!losFn(lane, point)) continue;
       worst = lane;

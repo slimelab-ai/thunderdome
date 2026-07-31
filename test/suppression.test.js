@@ -96,8 +96,13 @@ test('a lane covers the arc it is held on, not the circle around it', () => {
   // makes one route safer than another.
   assert.equal(map.covering({ x: 0, y: 1.15, z: 20 }, clear, now), null, 'abeam');
   assert.equal(map.covering({ x: -20, y: 1.15, z: 0 }, clear, now), null, 'behind');
-  // ...but not at his elbow, where he would simply turn.
-  assert.ok(map.covering({ x: -3, y: 1.15, z: 2 }, clear, now), 'inside swing range');
+
+  // Close in the arc widens rather than switching off, which is what leaves a
+  // circling fighter somewhere to circle *to*. His shoulder is still his; his back
+  // is still not. Turning the arc off entirely down here made every direction lethal
+  // and quietly disabled the logic that keeps a rusher out of the firing line.
+  assert.ok(map.covering({ x: 0, y: 1.15, z: 1.5 }, clear, now), 'at his shoulder');
+  assert.equal(map.covering({ x: -1.5, y: 1.15, z: 0 }, clear, now), null, 'at his back');
 });
 
 test('a lane with no recorded direction still covers everything it can see', () => {

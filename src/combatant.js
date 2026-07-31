@@ -1108,13 +1108,15 @@ export class Combatant {
         this.archetype !== 'rusher';
       if (breakingCover) {
         this._traveling = true;
-        // Sprint only when the cover is far enough off to be worth the gun coming
-        // down for. Sprinting the whole way instead was tried, on the reasoning that
-        // the last stretch is inside the beaten zone anyway — it cost 8% of the
-        // damage the squad puts out and bought nothing, because a sprinting fighter
-        // cannot shoot and the exposure saved was already small.
-        const coverGap = Math.hypot(this.coverGoal.x - this.pos.x, this.coverGoal.z - this.pos.z);
-        this.sprintNow = coverGap > 3.5 && this.legDmg < 0.6;
+        // Run, the whole way, until he is off the line.
+        //
+        // This used to sprint only when the cover was more than a few metres off, so
+        // he could keep shooting over the last stretch — but the last stretch is
+        // inside the beaten zone by definition. A lowered weapon for a second and a
+        // half is a trade worth making every time, because the fighter who makes it
+        // is alive afterwards and firing for the rest of the match; the one who kept
+        // his sights up across the open is not firing at all.
+        this.sprintNow = this.legDmg < 0.6;
         this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
       } else if (this.peekSide && !sight) {
         // Working a corner outranks holding behind it.
