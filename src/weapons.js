@@ -96,6 +96,111 @@ export const GRIP_ANCHOR = {
  * that was posed by hand missed: the fighter's left hand ended up out in front of him
  * holding nothing while the rifle hung off his right hand alone.
  */
+/**
+ * Solve where the viewmodel has to sit for the player to be looking down the sights.
+ *
+ * Given the two sight positions and the weapon's up, both in the viewmodel root's own
+ * space, this produces the root's position and orientation such that the line through
+ * the sights lies exactly along the camera's axis, with the rear sight `relief` metres
+ * in front of the eye. The sights then project to the centre of the screen, which is
+ * where the crosshair is, which is where the round goes.
+ *
+ * It is a solve rather than a table because a table is wrong the moment anything moves.
+ * The whole of aiming down sights used to be
+ *
+ *     const adsPos = new THREE.Vector3(0, -0.148, -0.3);
+ *
+ * — one offset, every weapon, evidently fitted against the rifle. Every other gun was
+ * misaligned by however far its sights sat from the rifle's, and nothing could tell
+ * you by how much.
+ *
+ * `scale` is the viewmodel root's own scale, which the sight positions are expressed
+ * before and the camera-space result after.
+ */
+/**
+ * How far the weapon reaches back past its own rear sight, in metres.
+ *
+ * A rifle is mostly behind its rear sight: the receiver, the grip, and a stock that
+ * ends at a shoulder. In first person that shoulder is where the camera is, so aiming
+ * to a fixed eye relief buries the butt in the player's face — the rifle's stock ends
+ * 26 cm behind its rear sight, so at 30 cm of relief it sat 4 cm from the eye and
+ * filled a third of the screen with wood.
+ *
+ * Measured off the model rather than declared, so it stays true when a weapon is
+ * reshaped and a new weapon needs nothing said about it.
+ */
+function measureTail(group) {
+  const rear = group.userData.sightRear;
+  const front = group.userData.sightFront;
+  if (!rear || !front) return;
+  group.updateMatrixWorld(true);
+  _f.copy(front.position).sub(rear.position);
+  if (_f.lengthSq() < 1e-12) return;
+  _f.normalize();
+  const box = new THREE.Box3().setFromObject(group);
+  let tail = 0;
+  for (let i = 0; i < 8; i++) {
+    _r.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+    tail = Math.min(tail, _r.sub(rear.position).dot(_f));
+  }
+  group.userData.sightTail = -tail;
+}
+
+export function solveSightAlignment(rear, front, up, relief, scale, outPos, outQuat) {
+  _f.copy(front).sub(rear);
+  if (_f.lengthSq() < 1e-12) return false;
+  _f.normalize();
+  // An orthonormal frame on the sight line: the weapon's own up only has to be
+  // roughly right, since it is squared against the line here. What it decides is the
+  // *roll* — without it the minimal rotation onto the camera axis would leave the
+  // weapon lying over at whatever angle happened to be shortest.
+  _r.crossVectors(_f, up);
+  if (_r.lengthSq() < 1e-8) _r.set(1, 0, 0);
+  _r.normalize();
+  _u.crossVectors(_r, _f);
+  // Columns: right, up, back. Maps the sight frame into viewmodel-root space, so its
+  // inverse — its transpose, being orthonormal — takes the sight line onto -Z.
+  _basis.set(
+    _r.x, _u.x, -_f.x,
+    _r.y, _u.y, -_f.y,
+    _r.z, _u.z, -_f.z,
+  );
+  _basis.transpose();
+  outQuat.setFromRotationMatrix(_m4.setFromMatrix3(_basis));
+  // Put the rear sight on the axis at the eye relief.
+  outPos.copy(rear).multiplyScalar(scale).applyQuaternion(outQuat).negate();
+  outPos.z -= relief;
+  return true;
+}
+
+/**
+ * How far in front of the eye the rear sight sits when aiming, in metres.
+ *
+ * A look choice, not a correctness one — the solve puts the sights on the axis at
+ * whatever distance this says. Bigger numbers hold the weapon further out; the scope
+ * comes in close because a scope you cannot see through is not a scope.
+ */
+export const ADS_RELIEF = {
+  pistol: 0.34,
+  smg: 0.30,
+  shotgun: 0.32,
+  rifle: 0.30,
+  dmr: 0.26,
+};
+
+/** How much air to leave between the back of the weapon and the player's eye. */
+export const ADS_CLEARANCE = 0.17;
+
+/**
+ * Eye relief for a weapon: whichever is greater of the look choice above and the
+ * distance needed to keep the weapon's own tail out of the player's face.
+ */
+export function adsRelief(id, group, scale = 1) {
+  const want = ADS_RELIEF[id] ?? 0.30;
+  const tail = (group && group.userData.sightTail) || 0;
+  return Math.max(want, tail * scale + ADS_CLEARANCE);
+}
+
 export const SUPPORT_GRIP = {
   pistol: [0.012, -0.050, 0.075],  // wrapped around the firing hand at the grip
   smg: [0, 0.028, -0.24],
@@ -170,8 +275,15 @@ export function buildWeaponModel(id) {
         parts[child.name] = child;
         child.userData.restZ = child.position.z;
       }
+      // So do the sights. Aiming is solved against where they actually are rather
+      // than against a per-weapon offset somebody tuned by eye, so they have to
+      // survive the export as findable objects. See tools/blender/weapons.py.
+      if (child.name === 'sight_rear' || child.name === 'sight_front') {
+        group.userData[child.name === 'sight_rear' ? 'sightRear' : 'sightFront'] = child;
+      }
     });
     group.add(model);
+    measureTail(group);
   };
 
   const asset = weaponAssets.get(id);
@@ -216,3 +328,9 @@ export function buildViewmodel(id) {
 export function buildHeldGun(id) {
   return buildWeaponModel(id).group;
 }
+
+const _f = new THREE.Vector3();
+const _r = new THREE.Vector3();
+const _u = new THREE.Vector3();
+const _basis = new THREE.Matrix3();
+const _m4 = new THREE.Matrix4();

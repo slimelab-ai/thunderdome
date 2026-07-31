@@ -1,11 +1,25 @@
 import * as THREE from 'three';
-import { WEAPONS, buildViewmodel, animateWeaponParts } from './weapons.js';
+import {
+  WEAPONS, buildViewmodel, animateWeaponParts, solveSightAlignment, adsRelief,
+} from './weapons.js';
 import { ViewModel } from './viewmodel.js';
 import { fireRay, applySpread, resolveCircle, wallHit, STEP_REACH, STAND_LIMIT } from './combat.js';
 import { ITEM_TYPES, countInPack, useFromPack, ammoInPack, consumeAmmo, makeCharacter } from './items.js';
 import { audio } from './audio.js';
 
 // Scratch vectors for shell ejection, hoisted out of the fire path.
+const _hipPos = new THREE.Vector3();
+const _hipQuat = new THREE.Quaternion();
+const _adsPos = new THREE.Vector3();
+const _adsQuat = new THREE.Quaternion();
+const _kickQuat = new THREE.Quaternion();
+const _kickEuler = new THREE.Euler();
+const _sRear = new THREE.Vector3();
+const _sFront = new THREE.Vector3();
+const _sUp = new THREE.Vector3();
+const _tmpA = new THREE.Vector3();
+const _tmpB = new THREE.Vector3();
+const _tmpQ = new THREE.Quaternion();
 const _casingRight = new THREE.Vector3();
 const _casingAt = new THREE.Vector3();
 
@@ -609,27 +623,51 @@ export class Player {
     this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw + this.recoilYaw, Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * 0.3);
 
     // ---- viewmodel pose ----
+    //
+    // Two poses blended by `ads`: the hip carry, which is a fixed offset because
+    // nothing about it has to line up with anything, and the aimed pose, which is
+    // *solved* so the weapon's own sights land on the camera's axis. See
+    // `solveSightAlignment`. What used to be here was one hardcoded offset shared by
+    // every weapon, so only whichever gun it had been eyeballed against was aimed.
     const vm = this.vmRoot;
-    const adsPos = new THREE.Vector3(0, -0.148, -0.3);
-    const hipPos = new THREE.Vector3(0.22, -0.22, -0.42);
-    vm.position.lerpVectors(hipPos, adsPos, this.ads);
-    vm.position.z += this.kick * 0.07;
+    const hipPos = _hipPos.set(0.22, -0.22, -0.42);
+    _hipQuat.identity();
+    let aimed = false;
+    if (this.ads > 0.001) aimed = this._solveAds(_adsPos, _adsQuat);
+
+    if (aimed) {
+      vm.position.lerpVectors(hipPos, _adsPos, this.ads);
+      vm.quaternion.copy(_hipQuat).slerp(_adsQuat, this.ads);
+    } else {
+      vm.position.copy(hipPos);
+      vm.quaternion.copy(_hipQuat);
+    }
+
+    // Everything below is felt rather than aimed, so it composes on top — in the
+    // weapon's own axes, because a gun kicks about itself.
+    //
+    // Damped while aiming. The whole point of the sights being on the axis is that
+    // you can watch a target through them; at full hip-fire kick the picture washes
+    // off the screen and back every shot, which is a lot of motion to sell a recoil
+    // the crosshair already communicates.
+    const kickVm = this.kick * (1 - this.ads * 0.62);
+    vm.position.z += kickVm * 0.07;
     vm.position.y += Math.abs(Math.sin(this.bobT)) * 0.012 * (1 - this.ads);
     vm.position.x += Math.sin(this.bobT) * 0.008 * (1 - this.ads);
-    vm.rotation.x = this.kick * 0.22 + (this.reloading > 0 ? Math.sin((w.reload - this.reloading) / w.reload * Math.PI) * 0.8 : 0);
-    vm.rotation.z = this.kick * 0.05;
+    let rx = kickVm * 0.22 + (this.reloading > 0 ? Math.sin((w.reload - this.reloading) / w.reload * Math.PI) * 0.8 : 0);
+    let ry = 0;
+    let rz = kickVm * 0.05;
     // knife slash: a fast diagonal arc you can actually SEE
     if (this.swingT > 0) {
       this.swingT -= dt;
       const k = Math.sin((1 - Math.max(0, this.swingT) / 0.32) * Math.PI);
-      vm.rotation.x += -k * 1.5;
-      vm.rotation.z += k * 1.1;
-      vm.rotation.y = -k * 0.7;
+      rx += -k * 1.5;
+      rz += k * 1.1;
+      ry = -k * 0.7;
       vm.position.x -= k * 0.18;
       vm.position.y += k * 0.05;
-    } else if (w.melee) {
-      vm.rotation.y = 0;
     }
+    if (rx || ry || rz) vm.quaternion.multiply(_kickQuat.setFromEuler(_kickEuler.set(rx, ry, rz)));
 
     // ---- weapon mechanism ----
     // Slide/bolt/pump cycle off the same kick impulse the viewmodel uses, and the
@@ -675,6 +713,40 @@ export class Player {
       this.pos.y + this._eyeSmooth - leanDrop,
       this.pos.z + leanZ,
     );
+  }
+
+  /**
+   * Where the viewmodel has to sit for the sights to be on the camera's axis.
+   *
+   * The sight positions are read off the weapon *as currently posed* — the arms are
+   * holding it, and they breathe — and converted into the viewmodel root's own space,
+   * which divides out whatever the root's transform happens to be this frame. The
+   * solve then produces the transform that puts them where they belong. Doing it every
+   * frame rather than once is what keeps the sight picture steady while the arms move
+   * underneath it, which is exactly what shouldering a weapon does in life.
+   *
+   * Returns false before the weapon has loaded, or for anything with no sights (the
+   * knife), and the caller falls back to the hip pose.
+   */
+  _solveAds(outPos, outQuat) {
+    const held = this.currentVM && this.currentVM.group;
+    const rear = held && held.userData.sightRear;
+    const front = held && held.userData.sightFront;
+    if (!rear || !front) return false;
+
+    const vm = this.vmRoot;
+    vm.updateMatrixWorld(true);
+    // Both points through the same matrix, so the root's own transform cancels.
+    vm.worldToLocal(rear.getWorldPosition(_sRear));
+    vm.worldToLocal(front.getWorldPosition(_sFront));
+    // The weapon's up, as a direction in the same space. It sets the roll: without it
+    // the shortest rotation onto the camera axis leaves the gun lying over.
+    held.matrixWorld.extractBasis(_tmpA, _sUp, _tmpB);
+    vm.getWorldQuaternion(_tmpQ).invert();
+    _sUp.applyQuaternion(_tmpQ).normalize();
+
+    const relief = adsRelief(this.weapon.id, held, vm.scale.x);
+    return solveSightAlignment(_sRear, _sFront, _sUp, relief, vm.scale.x, outPos, outQuat);
   }
 
   // Ledge in front of us we can clamber onto: top 0.35–1.5 above feet, within reach, facing it.
