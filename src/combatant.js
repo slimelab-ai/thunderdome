@@ -6,13 +6,25 @@ import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
 import {
-  coordinatedBreachLane, offsetBreachGoal, shouldSprintAtTarget,
+  coordinatedBreachLane, offsetBreachGoal, shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
 } from './tactics.js';
+import {
+  ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
+} from './perception.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
 const _muzzle = new THREE.Vector3();
 const _aimTmp = new THREE.Vector3();
+const _scanAim = new THREE.Vector3();
+const _scanEye = new THREE.Vector3();
+const _targetBelief = new THREE.Vector3();
+
+/** How often a fighter sweeps every hostile for line of sight, in seconds. */
+const SCAN_PERIOD = 0.18;
+
+/** Sprinting boots are loud. One footfall report per this many seconds. */
+const SPRINT_NOISE_PERIOD = 0.45;
 
 /**
  * How far leaning out actually carries the muzzle sideways, in metres.
@@ -129,6 +141,18 @@ export class Combatant {
 
     // AI state
     this.target = null;
+    /**
+     * Everything this fighter believes about where the enemy is. Nothing in the AI
+     * below reads a hostile transform for navigation — it reads this.
+     */
+    this.perception = new ContactMemory({ owner: this });
+    /** The belief currently being acted on, or null when he has genuinely lost you. */
+    this.contact = null;
+    this.senseT = Math.random() * SCAN_PERIOD;
+    this.sprintNoiseT = 0;
+    /** Where to sweep when the picture is empty. */
+    this.huntGoal = new THREE.Vector3();
+    this.huntT = 0;
     this.thinkTimer = Math.random() * 0.3;
     this.strafeDir = Math.random() < 0.5 ? 1 : -1;
     this.strafeTimer = 1 + Math.random() * 1.5;
@@ -329,6 +353,9 @@ export class Combatant {
 
   addTo(world, pos) {
     this.pos.copy(pos);
+    // Where he came in. Not knowledge of the enemy — knowledge of the pit, which is
+    // what a fighter with no contact at all sweeps toward.
+    this.spawnPos = pos.clone();
     this.group.position.copy(pos);
     world.scene.add(this.group);
     world.combatants.push(this);
@@ -372,6 +399,12 @@ export class Combatant {
   applyDamage(world, part, dmg, shooter, point, dir = null) {
     if (!this.alive) return;
     if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point, dir); audio.ricochet(); }
+    // Crack and thump: being hit gives up roughly where it came from, and only
+    // roughly. Gated on `sinceHit` so a burst — or a shotgun — is one noise rather
+    // than one per round that lands.
+    if (shooter?.pos && shooter.team !== this.team && this.sinceHit > 0.5) {
+      world.emitNoise?.(shooter, shooter.pos, 'impact');
+    }
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
     this.mendT = 0;
@@ -526,17 +559,47 @@ export class Combatant {
       this.stanceTimer = this.stanceCrouch ? 0.9 + Math.random() * 1.1 : 1.1 + Math.random() * 1.9;
     }
 
+    // ---- perceive ----
+    // Sweep every hostile for an actual sightline, then age the picture. Everything
+    // downstream navigates on what comes out of here, not on the live transforms.
+    const now = world.simTime ?? (this._clock = (this._clock ?? 0) + dt);
+    this.senseT -= dt;
+    if (this.senseT <= 0) {
+      this.senseT = SCAN_PERIOD * (0.85 + Math.random() * 0.3);
+      this._scan(world, now);
+    }
+    for (const gone of this.perception.tick(now)) {
+      world.onCombatEvent?.('contact_lost', this, {
+        target: gone.entity?.isPlayer ? 'YOU' : gone.entity?.name || null,
+        kind: gone.kind,
+        age: +(now - gone.t).toFixed(2),
+        probes: gone.probes,
+      });
+    }
+    // Sprinting boots give a fighter away. He pays the same price the player does.
+    this.sprintNoiseT -= dt;
+    if (this.sprintNow && this.sprintNoiseT <= 0) {
+      this.sprintNoiseT = SPRINT_NOISE_PERIOD;
+      world.emitNoise?.(this, this.pos, 'sprint');
+    }
+
     // ---- acquire target ----
     if (this.thinkTimer <= 0 || (this.target && !this._targetAlive())) {
       this.thinkTimer = 0.35 + Math.random() * 0.25;
       const previousTarget = this.target;
-      this.target = this._acquire(world);
+      this.contact = this.perception.best(now, { from: this.pos, current: this.target });
+      this.target = this.contact?.entity || null;
       if (this.target !== previousTarget) {
         world.onCombatEvent?.('target_change', this, {
           from: previousTarget?.isPlayer ? 'YOU' : previousTarget?.name || null,
           to: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+          via: this.contact?.kind || null,
         });
       }
+    } else if (this.target) {
+      // Keep the record pointer live: `tick` may have replaced or dropped it.
+      this.contact = this.perception.get(this.target);
+      if (!this.contact) this.target = null;
     }
 
     const speedMult = 1 - this.legDmg * 0.45;
@@ -570,7 +633,41 @@ export class Combatant {
     this.sprintNow = false;
 
     if (this.target && !fleeing && this.healingT <= 0 && this.mendT <= 0) {
-      const tp = this._targetPos();
+      // geometric sightline to target — with no sight, range means nothing: keep hunting
+      const eye = this.eyePos();
+      const aim = this.target.isPlayer
+        ? playerAimPoint(world.colliders, eye, world.playerProxy, _aimTmp).clone()
+        : this.target.aimPoint();
+      // Re-checked every frame for the fighter he is actually engaging, because the
+      // moment sight breaks is the moment the belief freezes, and a scan-cadence
+      // answer would leave him tracking a live transform for a fifth of a second.
+      const sight = hasLoS(world.colliders, eye, aim) &&
+        withinVision(this.pos, this.yaw, this.target.pos);
+      if (sight) {
+        // How wide the search had grown at the moment he re-found them. Captured
+        // before the sighting collapses it to zero, because it is the number that
+        // says whether he walked onto a stale belief or never really lost contact.
+        this._reacquireRadius = !this.contact ? null
+          : this.contact.visible ? 0
+            : contactRadius(this.contact, now);
+        this.contact = this.perception.see(this.target, this.target.pos, now);
+        // Call it in. The squad converges on where *he* saw them, a beat later.
+        this.perception.share(this.target, now, world.combatants.filter(
+          c => c.alive && c !== this && c.team === this.team));
+      } else if (this.contact?.visible) {
+        this.perception.markUnseen(this.target, now);
+        world.onCombatEvent?.('contact_broken', this, {
+          target: this.target.isPlayer ? 'YOU' : this.target.name || null,
+          last_known: [this.contact.x, this.contact.y, this.contact.z].map(v => +v.toFixed(2)),
+        });
+      }
+
+      // Where he *believes* the target is — the whole point of the exercise. While he
+      // can see them this is the truth; the instant he cannot, it is a memory that
+      // stops moving, and every route below is planned against it.
+      const belief = this.contact || { x: this.pos.x, y: this.pos.y, z: this.pos.z, error: 0, t: now };
+      const uncertainty = this.contact ? contactRadius(this.contact, now) : 0;
+      const tp = this._searchGoal(belief, uncertainty, sight, now, world, _targetBelief);
       const dx = tp.x - this.pos.x, dz = tp.z - this.pos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
       const fx = dx / (dist || 1), fz = dz / (dist || 1);
@@ -580,13 +677,6 @@ export class Combatant {
         this.strafeDir *= -1;
         this.strafeTimer = 1.1 + Math.random() * 1.6;
       }
-
-      // geometric sightline to target — with no sight, range means nothing: keep hunting
-      const eye = this.eyePos();
-      const aim = this.target.isPlayer
-        ? playerAimPoint(world.colliders, eye, world.playerProxy, _aimTmp).clone()
-        : this.target.aimPoint();
-      const sight = hasLoS(world.colliders, eye, aim);
 
       // Corner peek: body stays covered, lean the weapon out sideways for an angle.
       //
@@ -617,9 +707,16 @@ export class Combatant {
         this.healingT = 1.8;
         this.healingKind = 'splint';
       }
-      // frag the target's hiding spot when we can't get an angle —
-      // but never with a friendly (or, for crew, the boss) inside the blast radius
-      if (this.healingT <= 0 && this.nades > 0 && this.nadeCd <= 0 && !sight &&
+      // Frag the target's hiding spot when we can't get an angle — but only a spot he
+      // has actual reason to believe in.
+      //
+      // This is where the old model was at its worst: a grenade thrown at the live
+      // transform of somebody the thrower had never seen, arcing round a corner onto
+      // a player who had done everything right. Now it costs a recent sighting or a
+      // tight enough sound fix, and it lands on the *belief* — so a frag chases where
+      // you were, and repositioning beats it.
+      const fraggable = worthGrenading(this.contact, now);
+      if (this.healingT <= 0 && this.nades > 0 && this.nadeCd <= 0 && !sight && fraggable &&
         dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
         let friendlyInBlast = false;
         for (const c of world.combatants) {
@@ -647,8 +744,7 @@ export class Combatant {
       }
 
       // close-range fighters storm high ground; long-range fighters hold and shoot up
-      const targetY = this.target.pos.y;
-      const heightGap = targetY - this.pos.y;
+      const heightGap = tp.y - this.pos.y;
       const pushHigh = heightGap > 0.8 && w.aiRange <= 15 && this.role !== 'support';
       this._onVerticalRoute = false;
 
@@ -711,7 +807,7 @@ export class Combatant {
           // bodyguard: never stray far from the boss while out of contact
           gx = world.playerProxy.pos.x; gz = world.playerProxy.pos.z; gy = world.playerProxy.pos.y;
         } else {
-          gx = tp.x; gz = tp.z; gy = this.target.pos.y;
+          gx = tp.x; gz = tp.z; gy = tp.y;
         }
         // A firearm user lowers out of sprint on visual contact, even while
         // continuing toward a committed breach goal. Distance alone used to
@@ -722,34 +818,7 @@ export class Combatant {
           distance: dist,
           legDamage: this.legDmg,
         });
-        // travel through the 3D navmesh.
-        // walkableLine is expensive — evaluate it on the repath cadence, not per frame
-        this.repathT = (this.repathT ?? 0) - dt;
-        if (this.repathT <= 0) {
-          this.repathT = 0.45 + Math.random() * 0.35;
-          this._straightOK = world.nav ? world.nav.walkableLine(this.pos.x, this.pos.z, this.pos.y, gx, gz, gy) : true;
-          if (this._straightOK) {
-            this.path = null;
-          } else {
-            this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, this.flankSide);
-            this.pathIdx = 0;
-          }
-        }
-        if (this._straightOK || !this.path || !this.path.length) {
-          const gd = Math.hypot(gx - this.pos.x, gz - this.pos.z) || 1;
-          move.x += (gx - this.pos.x) / gd; move.z += (gz - this.pos.z) / gd;
-        } else {
-          const reached = (wp) => {
-            const dx = wp.x - this.pos.x, dz = wp.z - this.pos.z;
-            return dx * dx + dz * dz < 0.9 * 0.9 && Math.abs(wp.y - this.pos.y) < 1.2;
-          };
-          while (this.pathIdx < this.path.length - 1 && reached(this.path[this.pathIdx])) this.pathIdx++;
-          const goal = this.path[Math.min(this.pathIdx, this.path.length - 1)];
-          this._onVerticalRoute = Math.abs((goal.y ?? this.pos.y) - this.pos.y) > 0.25;
-          const gdx = goal.x - this.pos.x, gdz = goal.z - this.pos.z;
-          const gd = Math.hypot(gdx, gdz) || 1;
-          move.x += gdx / gd; move.z += gdz / gd;
-        }
+        this._steerToward(world, dt, gx, gy, gz, move);
       } else if (this.peekSide && !sight) {
         // Working a corner peek: step out into the angle.
         //
@@ -799,7 +868,12 @@ export class Combatant {
       const muzzle = this.muzzleWorld(_muzzle);
       const muzzleSight = (sight || this.peekSide !== 0)
         && hasLoS(world.colliders, muzzle, aim);
-      const visibleTarget = dist < engage * 2.2 && muzzleSight;
+      // Everything above navigates on the belief; everything from here down is about
+      // a target the weapon can genuinely see, so it measures the real gap. Using the
+      // remembered distance to time a shot would let a stale memory tighten or widen
+      // a group that is actually being aimed at a body in plain view.
+      const fireDist = muzzleSight ? this.pos.distanceTo(this.target.pos) : dist;
+      const visibleTarget = fireDist < engage * 2.2 && muzzleSight;
       const los = visibleTarget && !this.sprintNow;
 
       // marksman laser telegraph
@@ -816,12 +890,15 @@ export class Combatant {
       // point-blank surprises get answered fast; long-range spotting takes longer
       if (visibleTarget && !this.hadLoS) {
         this.reactionLeft = this.skill.reaction * (0.7 + Math.random() * 0.6) *
-          Math.min(1.2, Math.max(0.35, dist / 12));
+          Math.min(1.2, Math.max(0.35, fireDist / 12));
         world.onCombatEvent?.('sight_acquired', this, {
           target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
-          range: +dist.toFixed(2),
+          range: +fireDist.toFixed(2),
           sprinting: this.sprintNow,
           role: this.role,
+          // How wrong he was a moment ago — the number that says whether he walked
+          // onto you or merely re-found what he never really lost.
+          searched_from: this._reacquireRadius == null ? null : +this._reacquireRadius.toFixed(2),
         });
       }
       // Recognition begins while the weapon is coming up; firing still requires
@@ -832,16 +909,16 @@ export class Combatant {
       // Shoulder the weapon when there is something to shoot at a range worth aiming
       // at. Inside knife range nobody bothers, and a sprinting fighter has the weapon
       // down by definition.
-      this.wantsAds = los && !this.sprintNow && !w.melee && dist > 2.2;
+      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2;
       // Up in about a third of a second, down slower — a fighter who has just been
       // shot at keeps his weapon up for a moment.
       const adsRate = this.wantsAds ? 3.4 : 2.0;
       this.adsK += ((this.wantsAds ? 1 : 0) - this.adsK) * Math.min(1, dt * adsRate);
       // Settled enough to shoot. Close in he fires from the hip; at distance he has to
       // actually get the weapon up first, which is the visible tell that he is aiming.
-      const settled = this.adsK > Math.min(0.62, 0.12 + dist * 0.045);
+      const settled = this.adsK > Math.min(0.62, 0.12 + fireDist * 0.045);
 
-      if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && dist < w.meleeRange) {
+      if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && fireDist < w.meleeRange) {
         // slash
         const mdmg = w.dmg * this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
         if (this.target.isPlayer) world.onPlayerDamaged(mdmg, Math.random() < 0.2 ? 'armL' : 'torso', this.pos);
@@ -854,7 +931,7 @@ export class Combatant {
         // shot gets a private offset the fighter's body never took.
         const fireEye = muzzle.clone();
         const dir = aim.clone().sub(fireEye).normalize();
-        const distFactor = 0.7 + dist / 30;
+        const distFactor = 0.7 + fireDist / 30;
         // A shouldered weapon groups roughly twice as tight as a hip-fired one. This
         // is the mechanical half of the ADS state: without it, taking the time to aim
         // would be pure cost and the AI would be strictly worse for doing it.
@@ -873,9 +950,13 @@ export class Combatant {
         world.fx.muzzleFlash(fireEye, dir);
         this.rig.trigger('fire');
 
+        // Firing is a decision to be located. Everyone hostile inside earshot gets a
+        // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
+        world.emitNoise?.(this, muzzle, 'gunshot');
+
         this.shotsFired = (this.shotsFired || 0) + 1;
         world.onCombatEvent?.('shot', this, {
-          target: this.target?.name || null, weapon: this.weaponId, range: dist,
+          target: this.target?.name || null, weapon: this.weaponId, range: fireDist,
           line_of_sight: los, role: this.role,
         });
         const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
@@ -889,9 +970,14 @@ export class Combatant {
         }
       }
       // Nothing in view: let the weapon down.
-    } else if (!this.target) {
-      // idle scan
-      this.yaw += Math.sin(performance.now() * 0.0005 + this.animPhase) * dt * 0.5;
+    } else if (!this.target && !fleeing && this.healingT <= 0 && this.mendT <= 0) {
+      // Nobody on the board at all: no sighting, no sound, nothing called in.
+      //
+      // The old AI could never reach this state — it always had the nearest enemy
+      // transform to walk at — so "idle" meant standing still and swaying. A fighter
+      // who has genuinely lost everyone has to go and *find* someone, or the removal
+      // of omniscience just turns into a stalemate where both squads mill about.
+      this._huntFor(world, dt, now, move);
     }
 
     // ---- clear the boss's line of fire ---- (crew only, and only when he's SHOOTING)
@@ -1058,9 +1144,14 @@ export class Combatant {
     if (!this.target || this.sprintNow) this.adsK = Math.max(0, this.adsK - dt * 2.0);
     this.rig.setAimWeight(this.adsK);
     if (this.target) {
-      const tp = this.target.isPlayer
-        ? _aimTmp.set(this.target.pos.x, this.target.pos.y + 1.25, this.target.pos.z)
-        : this.target.aimPoint(_aimTmp);
+      // He points the weapon where he *thinks* they are. Aiming the rig at the live
+      // transform was the most visible tell of the old model: a fighter tracking you
+      // through solid concrete, muzzle following you along the far side of a wall.
+      const tp = this.contact && !this.contact.visible
+        ? _aimTmp.set(this.contact.x, (this.contact.y || 0) + 1.25, this.contact.z)
+        : this.target.isPlayer
+          ? _aimTmp.set(this.target.pos.x, this.target.pos.y + 1.25, this.target.pos.z)
+          : this.target.aimPoint(_aimTmp);
       const flat = Math.hypot(tp.x - this.pos.x, tp.z - this.pos.z);
       // Yaw is what the hips have not caught up to yet. Feeding it to the aim offset
       // means he tracks a target beside him by twisting, then turns his feet — rather
@@ -1080,6 +1171,141 @@ export class Combatant {
     this.rig.update(dt);
   }
 
+  /**
+   * Route to a world point through the navmesh, accumulating into `move`.
+   *
+   * Lifted out of the engagement branch verbatim so a fighter with no contact can
+   * use the same pathing to go looking. `walkableLine` is expensive, so the straight
+   * -line test runs on the repath cadence rather than every frame.
+   */
+  _steerToward(world, dt, gx, gy, gz, move) {
+    this.repathT = (this.repathT ?? 0) - dt;
+    if (this.repathT <= 0) {
+      this.repathT = 0.45 + Math.random() * 0.35;
+      this._straightOK = world.nav ? world.nav.walkableLine(this.pos.x, this.pos.z, this.pos.y, gx, gz, gy) : true;
+      if (this._straightOK) {
+        this.path = null;
+      } else {
+        this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, this.flankSide);
+        this.pathIdx = 0;
+      }
+    }
+    if (this._straightOK || !this.path || !this.path.length) {
+      const gd = Math.hypot(gx - this.pos.x, gz - this.pos.z) || 1;
+      move.x += (gx - this.pos.x) / gd; move.z += (gz - this.pos.z) / gd;
+      return;
+    }
+    const reached = (wp) => {
+      const dx = wp.x - this.pos.x, dz = wp.z - this.pos.z;
+      return dx * dx + dz * dz < 0.9 * 0.9 && Math.abs(wp.y - this.pos.y) < 1.2;
+    };
+    while (this.pathIdx < this.path.length - 1 && reached(this.path[this.pathIdx])) this.pathIdx++;
+    const goal = this.path[Math.min(this.pathIdx, this.path.length - 1)];
+    this._onVerticalRoute = Math.abs((goal.y ?? this.pos.y) - this.pos.y) > 0.25;
+    const gdx = goal.x - this.pos.x, gdz = goal.z - this.pos.z;
+    const gd = Math.hypot(gdx, gdz) || 1;
+    move.x += gdx / gd; move.z += gdz / gd;
+  }
+
+  /**
+   * Where to walk, given a belief.
+   *
+   * While the target is in sight this is simply where they are. Once sight breaks it
+   * is the last-known position — and once he has *reached* the last-known position
+   * and found an empty corner, it becomes a finite sweep of the ground around it:
+   * push through, check the cover either side, then back toward his own approach.
+   *
+   * When that sweep runs out, the contact is dropped. That is the part that keeps
+   * this honest — a searcher who never gives up is an omniscient searcher wearing a
+   * costume.
+   */
+  _searchGoal(belief, uncertainty, sight, now, world, out) {
+    const contact = this.contact;
+    if (sight || !contact || contact.visible) return out.set(belief.x, belief.y, belief.z);
+
+    const name = () => (contact.entity?.isPlayer ? 'YOU' : contact.entity?.name || null);
+    const arrived = (goal, reach) => {
+      const dx = goal.x - this.pos.x, dz = goal.z - this.pos.z;
+      return dx * dx + dz * dz < reach * reach;
+    };
+    // Close enough counts as arrived: the belief has an error radius, so insisting on
+    // standing exactly on a remembered point is precision the fighter does not have.
+    const reach = Math.max(2, Math.min(uncertainty, 6) * 0.6);
+
+    if (!contact.probeGoal) {
+      if (!arrived(contact, reach)) return out.set(contact.x, contact.y, contact.z);
+      contact.probeFrom = { x: this.pos.x, y: this.pos.y, z: this.pos.z };
+    } else if (arrived(contact.probeGoal, 1.8)) {
+      contact.probes++;
+      if (contact.probes >= SEARCH_PROBES) {
+        // Swept every angle and found nothing. He has lost you, properly.
+        this.perception.forget(contact.entity);
+        world.onCombatEvent?.('search_exhausted', this, {
+          target: name(),
+          last_known: [contact.x, contact.y, contact.z].map(v => +v.toFixed(2)),
+          age: +(now - contact.t).toFixed(2),
+        });
+        return out.set(contact.probeGoal.x, contact.probeGoal.y, contact.probeGoal.z);
+      }
+    } else {
+      return out.set(contact.probeGoal.x, contact.probeGoal.y, contact.probeGoal.z);
+    }
+
+    contact.probeGoal = clampToArena(
+      searchProbe(contact, contact.probeFrom || this.pos, uncertainty, contact.probes));
+    world.onCombatEvent?.('search_probe', this, {
+      target: name(),
+      probe: contact.probes,
+      radius: +uncertainty.toFixed(2),
+      goal: [contact.probeGoal.x, contact.probeGoal.y, contact.probeGoal.z].map(v => +v.toFixed(2)),
+    });
+    return out.set(contact.probeGoal.x, contact.probeGoal.y, contact.probeGoal.z);
+  }
+
+  /**
+   * Sweep the pit with nothing to go on.
+   *
+   * Priority is the last unexplained bang, then the far side of the arena from where
+   * he came in — which is knowledge of the *venue*, not of the enemy. He walks it
+   * with the weapon up rather than sprinting, because he is clearing ground, not
+   * chasing a contact.
+   */
+  _huntFor(world, dt, now, move) {
+    const disturbance = this.perception.disturbance;
+    if (disturbance && disturbance.t > (this._huntFrom ?? -Infinity)) {
+      this._huntFrom = disturbance.t;
+      this.huntGoal.set(disturbance.x, disturbance.y, disturbance.z);
+      this.huntT = 9;
+      world.onCombatEvent?.('search_disturbance', this, {
+        goal: [disturbance.x, disturbance.y, disturbance.z].map(v => +v.toFixed(2)),
+      });
+    }
+    this.huntT -= dt;
+    const dx = this.huntGoal.x - this.pos.x, dz = this.huntGoal.z - this.pos.z;
+    if (this.huntT <= 0 || dx * dx + dz * dz < 2.5 * 2.5) {
+      // Away from his own corner, with enough spread that a squad fans out instead of
+      // filing to the same spot.
+      const anchorX = -(this.spawnPos?.x ?? this.pos.x);
+      const anchorZ = -(this.spawnPos?.z ?? this.pos.z);
+      this.huntGoal.set(
+        Math.max(-19, Math.min(19, anchorX * 0.7 + (Math.random() - 0.5) * 18)),
+        0,
+        Math.max(-13, Math.min(13, anchorZ * 0.7 + (Math.random() - 0.5) * 14)),
+      );
+      this.huntT = 7 + Math.random() * 5;
+    }
+    this._traveling = true;
+    this._steerToward(world, dt, this.huntGoal.x, this.huntGoal.y, this.huntGoal.z, move);
+    const yaw = Math.atan2(this.huntGoal.x - this.pos.x, this.huntGoal.z - this.pos.z);
+    let dy = yaw - this.yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    // Slower than the lock-on turn: he is looking around, not tracking anyone.
+    this.yaw += dy * Math.min(1, dt * 2.6);
+    // ...and the head keeps sweeping either side of his line of travel, which is what
+    // gives the field of view something to find.
+    this.yaw += Math.sin(now * 0.9 + this.animPhase) * dt * 0.7;
+  }
+
   // would moving 0.9m in (dx,dz) walk us off a >0.8m ledge?
   _ledgeAhead(world, dx, dz) {
     const d = Math.hypot(dx, dz) || 1;
@@ -1093,24 +1319,38 @@ export class Combatant {
     return t && t.alive;
   }
 
-  _acquire(world) {
-    let best = null, bestD = Infinity;
-    const consider = (c) => {
-      if (!c.alive) return;
-      const d = this.pos.distanceToSquared(c.pos) * (c.isPlayer ? 0.7 : 1); // slight bias to hunt the player
-      if (d < bestD) { bestD = d; best = c; }
+  /**
+   * Sweep every hostile for a sightline and write what he finds into memory.
+   *
+   * This replaces `_acquire`, which walked the live roster and returned whoever was
+   * nearest — through walls, from behind, at any range. Target selection now happens
+   * in `ContactMemory.best`, over beliefs, and this is the only thing in the AI that
+   * is allowed to look at a hostile transform at all.
+   *
+   * The fighter he is already engaging gets re-checked every frame in the main loop;
+   * this is the wider sweep that finds *new* people, on a slower cadence.
+   */
+  _scan(world, now) {
+    const eye = this.eyePos(_scanEye);
+    const look = (hostile) => {
+      if (!hostile.alive) return;
+      if (!withinVision(this.pos, this.yaw, hostile.pos)) {
+        this.perception.markUnseen(hostile, now);
+        return;
+      }
+      const aim = hostile.isPlayer
+        ? playerAimPoint(world.colliders, eye, world.playerProxy, _scanAim)
+        : hostile.aimPoint(_scanAim);
+      if (hasLoS(world.colliders, eye, aim)) this.perception.see(hostile, hostile.pos, now);
+      else this.perception.markUnseen(hostile, now);
     };
-    if (this.team === 'enemy') {
-      consider(world.playerProxy);
-      for (const c of world.combatants) if (c.team === 'player') consider(c);
-    } else {
-      for (const c of world.combatants) if (c.team === 'enemy') consider(c);
-    }
-    return best;
+    if (this.team === 'enemy') look(world.playerProxy);
+    for (const c of world.combatants) if (c.team !== this.team) look(c);
   }
 
-  _targetPos() {
-    return this.target.pos;
+  /** A noise reached him. Only ever called through `world.emitNoise`. */
+  hearNoise(source, pos, kind, now) {
+    return this.perception.hear(source, pos, kind, this.pos, now);
   }
 
   removeFrom(world) {

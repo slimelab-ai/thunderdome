@@ -79,6 +79,7 @@ export class Player {
     this.padMoveX = 0;        // analog move intent from gamepad / touch stick
     this.padMoveZ = 0;
     this.sprintHeld = false;  // sprint intent from controller L3 / touch stick slam
+    this.sprintNoiseT = 0;    // how long until the next footfall the enemy can hear
 
     // viewmodel rig
     this.vmRoot = new THREE.Group();
@@ -377,6 +378,15 @@ export class Player {
     if (wantSprint && iz < 0) this.crouchToggled = false;
     this.crouching = locked && !!this.crouchToggled;
     this.sprinting = locked && wantSprint && iz < 0 && !this.crouching && this.ads < 0.3;
+
+    // Boots carry about fifteen metres. Sprinting past a corner now hands whoever is
+    // behind it an approximate fix on you, which is the cost that makes walking —
+    // and crouching, and going the long way round — worth something.
+    this.sprintNoiseT -= dt;
+    if (this.sprinting && this.onGround && this.sprintNoiseT <= 0) {
+      this.sprintNoiseT = 0.45;
+      this.world.emitNoise?.(this.world.playerProxy, this.pos, 'sprint');
+    }
 
     // clamp to unit intent; partial stick deflection walks at partial speed
     const len = Math.hypot(ix, iz);
@@ -786,6 +796,11 @@ export class Player {
       pellets: w.pellets,
       hits,
     });
+
+    // Your shot is the loudest thing you can do. Every hostile in earshot gets a
+    // rough fix on this muzzle — which is what makes a suppressed approach, or
+    // simply not firing, a real option rather than a stylistic one.
+    this.world.emitNoise?.(this.world.playerProxy, muzzle, 'gunshot');
 
     audio.shot(w.sound, 1);
     this.arms.fire();
