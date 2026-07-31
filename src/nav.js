@@ -17,38 +17,53 @@ const PAD = 0.45;       // agent radius clearance
 
 const NEI = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
+/**
+ * Binary min-heap over (node id, f) pairs.
+ *
+ * Ids and priorities sit in two parallel arrays rather than one array of `{id, f}`
+ * records, and the sift loops swap through a temporary rather than destructuring.
+ * Both allocated — an object per push, an array per swap — inside the loops A* spends
+ * all its time in. `clear` lets one heap serve every search instead of one per path.
+ *
+ * The comparisons are unchanged, so the pop order, and therefore which of several
+ * equal-cost routes a search returns, is exactly what it was.
+ */
 class MinHeap {
-  constructor() { this.a = []; }
-  push(item) {
-    const a = this.a;
-    a.push(item);
-    let i = a.length - 1;
+  constructor() { this.ids = []; this.fs = []; this.n = 0; }
+  clear() { this.n = 0; }
+  push(id, f) {
+    const ids = this.ids, fs = this.fs;
+    let i = this.n++;
+    ids[i] = id; fs[i] = f;
     while (i > 0) {
       const p = (i - 1) >> 1;
-      if (a[p].f <= a[i].f) break;
-      [a[p], a[i]] = [a[i], a[p]];
+      if (fs[p] <= fs[i]) break;
+      const ti = ids[p]; ids[p] = ids[i]; ids[i] = ti;
+      const tf = fs[p]; fs[p] = fs[i]; fs[i] = tf;
       i = p;
     }
   }
   pop() {
-    const a = this.a;
-    const top = a[0], last = a.pop();
-    if (a.length) {
-      a[0] = last;
+    const ids = this.ids, fs = this.fs;
+    const top = ids[0];
+    const last = --this.n;
+    if (last > 0) {
+      ids[0] = ids[last]; fs[0] = fs[last];
       let i = 0;
       for (;;) {
         const l = i * 2 + 1, r = l + 1;
         let m = i;
-        if (l < a.length && a[l].f < a[m].f) m = l;
-        if (r < a.length && a[r].f < a[m].f) m = r;
+        if (l < last && fs[l] < fs[m]) m = l;
+        if (r < last && fs[r] < fs[m]) m = r;
         if (m === i) break;
-        [a[m], a[i]] = [a[i], a[m]];
+        const ti = ids[m]; ids[m] = ids[i]; ids[i] = ti;
+        const tf = fs[m]; fs[m] = fs[i]; fs[i] = tf;
         i = m;
       }
     }
     return top;
   }
-  get size() { return this.a.length; }
+  get size() { return this.n; }
 }
 
 export class NavMesh {
@@ -190,27 +205,47 @@ export class NavMesh {
     }
 
     const N = this.nodes.length;
-    const gScore = new Float64Array(N).fill(Infinity);
-    const came = new Int32Array(N).fill(-1);
-    const closed = new Uint8Array(N);
+    // Search state is reused between calls and validated by a generation stamp: a node
+    // whose stamp is not this search's has no score yet, which is what filling with
+    // Infinity used to say. Three fresh typed arrays and their clears — about 20 KB a
+    // call over this graph — cost more than the search itself on the short paths bots
+    // ask for several times a second.
+    if (!this._gScore || this._gScore.length < N) {
+      this._gScore = new Float64Array(N);
+      this._came = new Int32Array(N);
+      this._stamp = new Int32Array(N);
+      this._closed = new Int32Array(N);
+      this._heap = new MinHeap();
+      this._generation = 0;
+    }
+    const gScore = this._gScore, came = this._came;
+    const stamp = this._stamp, closed = this._closed;
+    // Stamps are compared for equality, so they only have to outlast one search. Reset
+    // before the counter could reach a value already sitting in the arrays.
+    if (this._generation >= 0x7ffffffe) {
+      stamp.fill(0); closed.fill(0); this._generation = 0;
+    }
+    const gen = ++this._generation;
+    const open = this._heap;
+    open.clear();
+
     const gn = this.nodes[goal];
     const heur = (id) => {
       const n = this.nodes[id];
       return Math.hypot(n.x - gn.x, n.z - gn.z) + Math.abs(n.y - gn.y) * 1.5;
     };
-    gScore[start] = 0;
-    const open = new MinHeap();
-    open.push({ id: start, f: heur(start) });
+    gScore[start] = 0; came[start] = -1; stamp[start] = gen;
+    open.push(start, heur(start));
     let found = false;
 
     while (open.size) {
-      const { id } = open.pop();
-      if (closed[id]) continue;
+      const id = open.pop();
+      if (closed[id] === gen) continue;
       if (id === goal) { found = true; break; }
-      closed[id] = 1;
+      closed[id] = gen;
       const n = this.nodes[id];
       for (const e of n.edges) {
-        if (closed[e.to]) continue;
+        if (closed[e.to] === gen) continue;
         let g = gScore[id] + e.cost;
         if (seed) {
           let hsh = (e.to * 2654435761 + seed) >>> 0;
@@ -221,10 +256,11 @@ export class NavMesh {
           const nx = this.nodes[e.to].x - gn.x;
           if (nx * side < -1.5) g += 0.55;
         }
-        if (g < gScore[e.to]) {
+        if (stamp[e.to] !== gen || g < gScore[e.to]) {
           gScore[e.to] = g;
           came[e.to] = id;
-          open.push({ id: e.to, f: g + heur(e.to) });
+          stamp[e.to] = gen;
+          open.push(e.to, g + heur(e.to));
         }
       }
     }
