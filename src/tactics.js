@@ -1,5 +1,14 @@
 const BREACH_LANES = [0, -1, 1, -2, 2];
 
+/**
+ * Lanes to try, in order of how far out of the way they take you.
+ *
+ * Wider than the assignment table, because rerouting around a covered approach has
+ * to have somewhere to go — if the only alternatives are the two the squad is
+ * already using, "flank it" degrades into "queue up behind him".
+ */
+const BREACH_LANE_ORDER = [0, -1, 1, -2, 2, -3, 3];
+
 export function coordinatedBreachLane(squad, fighter) {
   const ordered = [...squad].sort((a, b) => {
     const supportA = a.role === 'support' ? 0 : 1;
@@ -31,6 +40,28 @@ export function offsetBreachGoal(target, attacker, lane, {
     y: target.y || 0,
     z: Math.max(-zLimit, Math.min(zLimit, target.z + fx * width)),
   };
+}
+
+/**
+ * The assigned breach lane if its approach is clear, otherwise the nearest one that is.
+ *
+ * `routeCovered(goal, lane)` is the caller's business — it answers whether getting
+ * to that goal means crossing ground somebody is presently working. The squad's lane
+ * assignment still comes first, so a crossfire stays a crossfire whenever the fire
+ * allows it; rerouting is what happens when it does not.
+ *
+ * When every lane is covered it returns the assigned one with `covered: true`. That
+ * is not a failure — it is the signal to *stop advancing*. Picking the least-bad
+ * approach there would be exactly the behaviour this exists to remove: somebody
+ * always walks into the doorway, it just takes longer to decide which somebody.
+ */
+export function safeBreachLane(target, attacker, assigned, routeCovered, opts = {}) {
+  const order = [assigned, ...BREACH_LANE_ORDER.filter(lane => lane !== assigned)];
+  for (const lane of order) {
+    const goal = offsetBreachGoal(target, attacker, lane, opts);
+    if (!routeCovered(goal, lane)) return { lane, goal, covered: false };
+  }
+  return { lane: assigned, goal: offsetBreachGoal(target, attacker, assigned, opts), covered: true };
 }
 
 export function shouldSprintAtTarget({ sight, melee = false, distance = 0, legDamage = 0 }) {
