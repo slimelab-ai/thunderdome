@@ -38,3 +38,48 @@ export function shouldSprintAtTarget({ sight, melee = false, distance = 0, legDa
   if (melee) return distance > 3;
   return !sight;
 }
+
+/**
+ * Where to look next, having arrived at a last-known position and found nobody.
+ *
+ * Ordered the way a fighter clearing a room actually works it: push through the
+ * point first, in case they kept going; then the cover either side of it, which is
+ * where somebody who stopped would be; then back toward the approach, in case they
+ * slipped past. Offsets are relative to the direction the searcher came *from*, so
+ * the pattern is oriented to the fight rather than to the world axes.
+ *
+ * Crucially finite. A bot that probes forever is a bot that never loses you, which
+ * is the omniscience this whole system exists to remove — when the list runs out,
+ * the contact goes with it.
+ */
+const SEARCH_PATTERN = [
+  { forward: 1.0, lateral: 0 },
+  { forward: 0.15, lateral: -1 },
+  { forward: 0.15, lateral: 1 },
+  { forward: -0.7, lateral: -0.7 },
+  { forward: -0.7, lateral: 0.7 },
+];
+
+export const SEARCH_PROBES = SEARCH_PATTERN.length;
+
+export function searchProbe(lastKnown, searcher, radius, index, {
+  minRadius = 2.5,
+  maxRadius = 9,
+  xLimit = 20,
+  zLimit = 14.5,
+} = {}) {
+  const step = SEARCH_PATTERN[Math.max(0, Math.min(index, SEARCH_PATTERN.length - 1))];
+  const dx = lastKnown.x - searcher.x;
+  const dz = lastKnown.z - searcher.z;
+  const distance = Math.hypot(dx, dz) || 1;
+  const fx = dx / distance;
+  const fz = dz / distance;
+  const r = Math.max(minRadius, Math.min(radius, maxRadius));
+  const x = lastKnown.x + fx * step.forward * r + -fz * step.lateral * r;
+  const z = lastKnown.z + fz * step.forward * r + fx * step.lateral * r;
+  return {
+    x: Math.max(-xLimit, Math.min(xLimit, x)),
+    y: lastKnown.y || 0,
+    z: Math.max(-zLimit, Math.min(zLimit, z)),
+  };
+}

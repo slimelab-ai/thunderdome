@@ -8,6 +8,7 @@ import { UI, nextCrewName } from './ui.js';
 import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } from './weapons.js';
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
+import { broadcastNoise, contactRadius } from './perception.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
@@ -149,6 +150,10 @@ const world = {
   hitMeshes: [],
   zones: [],
   fx,
+  // The clock the AI's perception runs on. Advanced once per simulated frame rather
+  // than read from `performance.now`, so a headless batch and a live match age
+  // contacts identically — the telemetry is only worth anything if they do.
+  simTime: 0,
   cameraPos: camera.position,
   enemyDmgScale: 0.85,
   playerProxy: { isPlayer: true, team: 'player', alive: true, pos: new THREE.Vector3(), heightScale: 1, name: 'YOU' },
@@ -163,6 +168,23 @@ const world = {
 };
 
 world.nav = new NavMesh(arena.colliders);
+
+/**
+ * Something made a noise, and the people who could hear it now know a little.
+ *
+ * The single entry point for every sound that carries information: gunshots,
+ * sprinting boots, rounds landing, grenades. Bots turn it into an approximate
+ * contact — never an exact one — and the player is the source of most of it, which
+ * is what makes moving quietly a real decision rather than a cosmetic one.
+ */
+world.emitNoise = (source, pos, kind) => broadcastNoise(
+  world,
+  // The player fires as `playerShooter` but is *targeted* as `playerProxy`. Contacts
+  // are keyed by entity, so they have to collapse to one identity here or a bot ends
+  // up holding a belief about somebody who is never a candidate to shoot at.
+  source === world.playerShooter ? world.playerProxy : source,
+  pos, kind, world.simTime,
+);
 
 const player = new Player(camera, world);
 // Combat telemetry treats the first-person player like every other shooter.
@@ -997,12 +1019,18 @@ world.throwGrenade = (origin, vel, thrower) => {
   mesh.position.copy(origin);
   scene.add(mesh);
   world.grenades.push({ pos: origin.clone(), vel: vel.clone(), fuse: 2.8, mesh, thrower });
+  // The spoon, the grunt, the arc: throwing gives away roughly where you threw from.
+  if (thrower) world.emitNoise?.(thrower, origin, 'grenade');
   audio.reload(0);
   announcer.say('nade', {}, { minGap: 14 });
 };
 
 function explode(pos, thrower) {
   const R = 7, MAX = 165, MIN = 25;
+  // A blast tells you where a *grenade* went off, and nothing about who threw it —
+  // so it lands as an unowned disturbance: somewhere to go and look when a fighter
+  // has no live contact, not a fix on the thrower.
+  world.emitNoise?.(null, pos, 'explosion');
   audio.explosion(1.2 / (1 + pos.distanceTo(camera.position) * 0.05));
   fx.explosion(pos);
   audio.crowdRoar(0.8);
@@ -2316,10 +2344,27 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
       position: [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2)),
       ammo: { ...fighter.ammoPools }, medkit: fighter.healKits, grenade: fighter.nades,
       pushing: fighter.pushT > 0, stalled_seconds: +fighter.stallT.toFixed(2),
+      // What he thinks he knows, alongside where his target actually is. The pair is
+      // the whole validation: after a sightline breaks, `believed` must stop moving
+      // while `position` keeps going, and the route must converge on the former.
+      contact: fighter.contact ? {
+        kind: fighter.contact.kind,
+        visible: !!fighter.contact.visible,
+        believed: [fighter.contact.x, fighter.contact.y, fighter.contact.z].map(v => +v.toFixed(2)),
+        error: +contactRadius(fighter.contact, world.simTime).toFixed(2),
+        age: +(world.simTime - fighter.contact.t).toFixed(2),
+        probes: fighter.contact.probes,
+        // How far the belief actually is from the truth, in metres. Zero while seen.
+        miss: fighter.contact.entity?.pos ? +Math.hypot(
+          fighter.contact.x - fighter.contact.entity.pos.x,
+          fighter.contact.z - fighter.contact.entity.pos.z,
+        ).toFixed(2) : null,
+      } : null,
     })),
   });
   for (let step = 0; step < maxSteps && !headlessSimulation.done; step++) {
     headlessSimulation.elapsed += dt;
+    world.simTime += dt;
     for (const fighter of world.combatants) fighter.update(world, dt);
     updateGrenades(dt);
     if (headlessSimulation.elapsed >= headlessSimulation.nextFrame) {
@@ -2354,6 +2399,7 @@ function updateSpectatorCamera(dt) {
 
 function stepMatch(dt) {
   match.time += dt;
+  world.simTime += dt;
   player.update(dt, locked || touchMode || input.gamepadActive, !!match.spectating);
 
   // crew reads this to stay out of the player's line of fire
