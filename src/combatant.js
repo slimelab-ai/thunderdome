@@ -718,7 +718,12 @@ export class Combatant {
       this.holdSpent = Math.max(0, this.holdSpent - dt * 0.5);
     }
     this.suppressT -= dt;
-    if (this.suppressT <= 0 && this.archetype !== 'rusher') {
+    // Rushers used to skip this entirely, which made them blind rather than brave.
+    // A rusher should take the short way and accept the crossing — he still does,
+    // because the lane chooser and the break-for-cover branch both exempt him — but
+    // knowing where the beaten zone is lets him sprint across it instead of jogging
+    // into it and stopping. Charging is the archetype; not noticing is a bug.
+    if (this.suppressT <= 0) {
       this.suppressT = SUPPRESSION_PERIOD * (0.85 + Math.random() * 0.3);
       const before = this.pinnedBy;
       const sees = (from, to) => this._laneSees(world, from, to);
@@ -742,6 +747,16 @@ export class Combatant {
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
       }
+      // Fighting *from* cover, rather than wherever the walk happened to end, is
+      // the obvious next thing and it does not work. A fighter who has flanked wide
+      // is out of the beaten zone and so not pinned, and he stands in the open
+      // trading with a man behind a wall — the cover on his side goes unused, which
+      // looks wrong and is wrong. But moving him onto it costs more than it saves:
+      // using the target position as the thing to hide from and  to find
+      // the spot, deaths went 14 to 18 of 30 and damage put on the shooter fell from
+      // 80,700 to 68,100. He spends the fight relocating instead of shooting, and is
+      // exposed while he does it. Whatever fixes this has to keep his weapon on the
+      // target while he moves, which is a different mechanism to this one.
       // A committed lane is re-examined while he walks it.
       //
       // The route was costed once, at the moment of commitment, and then honoured for
