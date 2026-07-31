@@ -5,6 +5,7 @@ import { ITEM_TYPES } from './items.js';
 import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
+import { coordinatedBreachLane, offsetBreachGoal } from './tactics.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
@@ -169,6 +170,10 @@ export class Combatant {
     this.stallAnchor = { x: 0, z: 0 };
     this.stallT = 0;
     this.pushT = 0;
+    this.breachT = 0;
+    this.breachTarget = null;
+    this.breachGoal = new THREE.Vector3();
+    this.breachLane = 0;
     this.cooldown = 0.5 + Math.random();
     this.burstLeft = this._burstSize();
     this.reactionLeft = 0;
@@ -510,6 +515,7 @@ export class Combatant {
       }
     }
     if (this.pushT > 0) this.pushT -= dt;
+    if (this.breachT > 0) this.breachT -= dt;
 
     // stance cycling while engaged: pop up, drop down — heads at varied heights
     this.stanceTimer -= dt;
@@ -659,9 +665,32 @@ export class Combatant {
         if (adx * adx + adz * adz < 2.2 * 2.2) this.mendT = 1.6;
       }
 
-      // support doesn't blind-push with the group — it holds angles until the stall-surge says otherwise
-      const blindPush = (!sight && !this.peekSide) && this.role !== 'support';
-      const needTravel = dist > engage || blindPush || pushHigh || this.pushT > 0 || assist;
+      const blindPush = !sight && !this.peekSide;
+      if (blindPush && dist > 5 &&
+          (this.breachT <= 0 || this.breachTarget !== this.target)) {
+        const squad = world.combatants.filter(candidate =>
+          candidate.alive && candidate.team === this.team);
+        this.breachLane = coordinatedBreachLane(squad, this);
+        this.breachTarget = this.target;
+        this.breachT = 6;
+        if (this.breachLane !== 0) {
+          const goal = offsetBreachGoal(tp, this.pos, this.breachLane);
+          this.breachGoal.set(goal.x, goal.y, goal.z);
+          world.onCombatEvent?.('breach_commit', this, {
+            lane: this.breachLane,
+            target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+            goal: [goal.x, goal.y, goal.z].map(value => +value.toFixed(2)),
+          });
+        }
+      }
+      const breachDistance = this.pos.distanceToSquared(this.breachGoal);
+      const breaching = this.breachLane !== 0 && this.breachTarget === this.target &&
+        this.breachT > 0 && breachDistance > 2.2 * 2.2;
+      if (!breaching && this.breachT > 0 && breachDistance <= 2.2 * 2.2) this.breachT = 0;
+
+      // One fighter establishes the direct sightline. Side lanes remain committed
+      // through momentary contact so the squad creates an actual crossfire.
+      const needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
       if ((needTravel || opening) && this.cautionT > 0 && !assist) {
         // a squadmate just died up ahead — hold and jink instead of feeding the corner
         this._strafing = true;
@@ -673,19 +702,8 @@ export class Combatant {
           gx = this.openingGoal.x; gz = this.openingGoal.z; gy = this.openingGoal.y || 0;
         } else if (assist) {
           gx = this.mendTarget.pos.x; gz = this.mendTarget.pos.z; gy = this.mendTarget.pos.y;
-        } else if (this.role === 'flanker' && !sight && dist > 9) {
-          // swing wide toward my side instead of piling down the middle
-          gx = Math.max(-20, Math.min(20, tp.x + this.flankSide * 8.5));
-          gz = tp.z + Math.sign(this.pos.z - tp.z) * 3;
-          gy = this.target.pos.y;
-        } else if (blindPush && dist > 5) {
-          // Do not feed a hidden defender's exact corner one body at a time.
-          // Each fighter commits to one side of a breach point perpendicular to
-          // the target line, forcing crossfire angles around hard cover.
-          const breachWidth = this.role === 'pointman' ? 3.2 : 4.8;
-          gx = Math.max(-20, Math.min(20, tp.x + -fz * this.flankSide * breachWidth));
-          gz = Math.max(-14.5, Math.min(14.5, tp.z + fx * this.flankSide * breachWidth));
-          gy = this.target.pos.y;
+        } else if (breaching) {
+          gx = this.breachGoal.x; gz = this.breachGoal.z; gy = this.breachGoal.y;
         } else if (this.role === 'shadow' && this.team === 'player' && !sight &&
                    Math.hypot(world.playerProxy.pos.x - this.pos.x, world.playerProxy.pos.z - this.pos.z) > 8) {
           // bodyguard: never stray far from the boss while out of contact
