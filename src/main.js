@@ -9,6 +9,7 @@ import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } fro
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { broadcastNoise, contactRadius } from './perception.js';
+import { laneIsHot } from './suppression.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
@@ -2344,6 +2345,13 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
       position: [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2)),
       ammo: { ...fighter.ammoPools }, medkit: fighter.healKits, grenade: fighter.nades,
       pushing: fighter.pushT > 0, stalled_seconds: +fighter.stallT.toFixed(2),
+      // Which ground he currently thinks is lethal, and whether he is standing on it.
+      suppression: {
+        pinned: !!fighter.pinnedBy,
+        heat: fighter.pinnedBy ? +fighter.pinnedBy.heat.toFixed(2) : 0,
+        holding: fighter.holdT > 0,
+        hot_lanes: fighter.suppression.lanes.filter(l => laneIsHot(l, world.simTime)).length,
+      },
       // What he thinks he knows, alongside where his target actually is. The pair is
       // the whole validation: after a sightline breaks, `believed` must stop moving
       // while `position` keeps going, and the route must converge on the former.

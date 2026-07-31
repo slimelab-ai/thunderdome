@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  coordinatedBreachLane, offsetBreachGoal, shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
+  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, shouldSprintAtTarget,
+  searchProbe, SEARCH_PROBES,
 } from '../src/tactics.js';
 
 test('a squad assigns one suppressor and alternating breach lanes', () => {
@@ -25,6 +26,31 @@ test('breach goals fan out perpendicular to the defended sightline', () => {
   assert.deepEqual(offsetBreachGoal(target, attacker, -1), { x: 1, y: 0, z: 10 });
   assert.deepEqual(offsetBreachGoal(target, attacker, 1), { x: -9, y: 0, z: 10 });
   assert.deepEqual(offsetBreachGoal(target, attacker, -2), { x: 4, y: 0, z: 10 });
+});
+
+test('a covered approach is rerouted, and the assigned lane is kept when it is clear', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+
+  const nothingCovered = safeBreachLane(target, attacker, -1, () => false);
+  assert.equal(nothingCovered.lane, -1, 'the squad assignment stands while it can');
+  assert.equal(nothingCovered.covered, false);
+
+  // The whole middle of the pit is being worked; only the wide lanes are clear.
+  const middleSwept = goal => Math.abs(goal.x) < 7;
+  const rerouted = safeBreachLane(target, attacker, -1, middleSwept);
+  assert.equal(rerouted.covered, false);
+  assert.ok(Math.abs(rerouted.goal.x) >= 7, 'it goes around rather than through');
+  assert.notEqual(rerouted.lane, -1);
+});
+
+test('when every approach is covered the answer is stop, not least-bad', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const pinned = safeBreachLane(target, attacker, 1, () => true);
+  assert.equal(pinned.covered, true);
+  assert.equal(pinned.lane, 1, 'it reports the assigned lane so the caller can hold on it');
+  assert.deepEqual(pinned.goal, offsetBreachGoal(target, attacker, 1));
 });
 
 test('a search sweeps through the last-known point, then the cover either side', () => {

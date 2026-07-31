@@ -6,11 +6,13 @@ import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
 import {
-  coordinatedBreachLane, offsetBreachGoal, shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
+  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, shouldSprintAtTarget,
+  searchProbe, SEARCH_PROBES,
 } from './tactics.js';
 import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
 } from './perception.js';
+import { SuppressionMap, SUPPRESSION, coverStep } from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
@@ -19,9 +21,15 @@ const _aimTmp = new THREE.Vector3();
 const _scanAim = new THREE.Vector3();
 const _scanEye = new THREE.Vector3();
 const _targetBelief = new THREE.Vector3();
+const _laneFrom = new THREE.Vector3();
+const _laneTo = new THREE.Vector3();
+const _routePoint = new THREE.Vector3();
 
 /** How often a fighter sweeps every hostile for line of sight, in seconds. */
 const SCAN_PERIOD = 0.18;
+
+/** How often he re-checks whether the ground he is on is being covered. */
+const SUPPRESSION_PERIOD = 0.22;
 
 /** Sprinting boots are loud. One footfall report per this many seconds. */
 const SPRINT_NOISE_PERIOD = 0.45;
@@ -148,6 +156,14 @@ export class Combatant {
     this.perception = new ContactMemory({ owner: this });
     /** The belief currently being acted on, or null when he has genuinely lost you. */
     this.contact = null;
+    /** Which angles are being worked, and how hard. */
+    this.suppression = new SuppressionMap();
+    /** The lane presently covering the ground he is standing on, if any. */
+    this.pinnedBy = null;
+    this.coverGoal = null;
+    this.suppressT = Math.random() * SUPPRESSION_PERIOD;
+    /** Seconds left of refusing to advance because every way in is covered. */
+    this.holdT = 0;
     this.senseT = Math.random() * SCAN_PERIOD;
     this.sprintNoiseT = 0;
     /** Where to sweep when the picture is empty. */
@@ -452,10 +468,15 @@ export class Combatant {
     // remove hitboxes
     world.hitMeshes = world.hitMeshes.filter(m => m.userData.combatant !== this);
     audio.hurt();
-    // squadmates who watch this go down get cautious: no more single-file feeding
-    // into whatever corner just killed their buddy
+    // Squadmates who watch this go down get cautious, and — the part that actually
+    // stops the single-file feed — they remember *the angle that did it*. Caution is
+    // a couple of seconds of jinking; a deadly lane is a piece of ground the squad
+    // will route around for the next nine, however quiet it goes.
+    const now = world.simTime ?? 0;
     for (const c of world.combatants) {
-      if (c !== this && c.alive && c.team === this.team && c.archetype !== 'rusher' && c.pos.distanceTo(this.pos) < 9) {
+      if (c === this || !c.alive || c.team !== this.team) continue;
+      if (killer?.pos) c.suppression?.record(killer.pos, SUPPRESSION.kill, now, { deadly: true });
+      if (c.archetype !== 'rusher' && c.pos.distanceTo(this.pos) < 9) {
         c.cautionT = Math.max(c.cautionT, 0.9 + Math.random() * 1.1);
       }
     }
@@ -581,6 +602,45 @@ export class Combatant {
     if (this.sprintNow && this.sprintNoiseT <= 0) {
       this.sprintNoiseT = SPRINT_NOISE_PERIOD;
       world.emitNoise?.(this, this.pos, 'sprint');
+    }
+
+    // ---- suppression ----
+    // Am I standing in something's beaten zone, and if so where is out of it?
+    // Rushers were told and do not care, which is the whole archetype.
+    this.suppression.decayTo(now);
+    if (this.holdT > 0) this.holdT -= dt;
+    this.suppressT -= dt;
+    if (this.suppressT <= 0 && this.archetype !== 'rusher') {
+      this.suppressT = SUPPRESSION_PERIOD * (0.85 + Math.random() * 0.3);
+      const before = this.pinnedBy;
+      const sees = (from, to) => this._laneSees(world, from, to);
+      this.pinnedBy = this.suppression.anyHot(now)
+        ? this.suppression.covering(this.aimPoint(_routePoint), sees, now)
+        : null;
+      // Searching for cover costs fifteen sightlines; confirming the piece he is
+      // already running to costs one. Only re-solve when the lane changes or the
+      // spot he picked has stopped being cover.
+      if (!this.pinnedBy) {
+        this.coverGoal = null;
+      } else if (!this.coverGoal || this.pinnedBy !== before ||
+                 sees(this.pinnedBy, _routePoint.set(this.coverGoal.x, this.coverGoal.y + 1.15, this.coverGoal.z))) {
+        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees);
+      }
+      if (before && !this.pinnedBy) {
+        // He just made it out of the lane. Settle here for a beat rather than
+        // stepping straight back into it — without this he oscillates on the edge of
+        // cover, which looks worse than never having taken cover at all.
+        this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
+      }
+      if (this.pinnedBy && !before) {
+        world.onCombatEvent?.('suppressed', this, {
+          lane: [this.pinnedBy.x, this.pinnedBy.y, this.pinnedBy.z].map(v => +v.toFixed(2)),
+          heat: +this.pinnedBy.heat.toFixed(2),
+          kills: this.pinnedBy.kills,
+          range: +Math.hypot(this.pinnedBy.x - this.pos.x, this.pinnedBy.z - this.pos.z).toFixed(2),
+          cover_found: !!this.coverGoal,
+        });
+      }
     }
 
     // ---- acquire target ----
@@ -768,16 +828,40 @@ export class Combatant {
           (this.breachT <= 0 || this.breachTarget !== this.target)) {
         const squad = world.combatants.filter(candidate =>
           candidate.alive && candidate.team === this.team);
-        this.breachLane = coordinatedBreachLane(squad, this);
+        const assigned = coordinatedBreachLane(squad, this);
+        // The squad's assignment still comes first — a crossfire is only a crossfire
+        // if the lanes stay spread. It gets overruled only by ground that is being
+        // actively covered, which is the one thing worth breaking formation over.
+        const choice = this.archetype === 'rusher'
+          ? { lane: assigned, goal: offsetBreachGoal(tp, this.pos, assigned), covered: false }
+          : safeBreachLane(tp, this.pos, assigned, goal => this._routeSwept(world, goal, now));
+        this.breachLane = choice.lane;
         this.breachTarget = this.target;
+        this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
         this.breachT = 6;
+        if (choice.covered) {
+          // Every way in is being worked. Hold — the gun has to stop eventually, and
+          // walking in one at a time until it does is how a squad gets fed to a
+          // doorway. Re-decide the moment the hold runs out, not in six seconds.
+          this.holdT = 1.6 + Math.random() * 1.4;
+          this.breachT = this.holdT;
+          world.onCombatEvent?.('pinned_down', this, {
+            target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+            hold: +this.holdT.toFixed(2),
+            heat: this.pinnedBy ? +this.pinnedBy.heat.toFixed(2) : null,
+          });
+        } else if (choice.lane !== assigned) {
+          world.onCombatEvent?.('lane_rerouted', this, {
+            from: assigned, to: choice.lane,
+            target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+            goal: [choice.goal.x, choice.goal.y, choice.goal.z].map(v => +v.toFixed(2)),
+          });
+        }
         if (this.breachLane !== 0) {
-          const goal = offsetBreachGoal(tp, this.pos, this.breachLane);
-          this.breachGoal.set(goal.x, goal.y, goal.z);
           world.onCombatEvent?.('breach_commit', this, {
             lane: this.breachLane,
             target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
-            goal: [goal.x, goal.y, goal.z].map(value => +value.toFixed(2)),
+            goal: [choice.goal.x, choice.goal.y, choice.goal.z].map(value => +value.toFixed(2)),
           });
         }
       }
@@ -789,8 +873,26 @@ export class Combatant {
       // One fighter establishes the direct sightline. Side lanes remain committed
       // through momentary contact so the squad creates an actual crossfire.
       const needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
-      if ((needTravel || opening) && this.cautionT > 0 && !assist) {
-        // a squadmate just died up ahead — hold and jink instead of feeding the corner
+      // Standing in a lane somebody is working: getting out of it outranks
+      // everything below, including the breach he is committed to.
+      //
+      // Deliberately *not* conditioned on having lost sight of the shooter. That was
+      // the first attempt and it barely moved the numbers, because against a genuinely
+      // commanding angle a fighter can see the gun perfectly well — he is standing in
+      // the open being shot by it. Trading from open ground against a held rifle is
+      // the losing half of the exchange every time; the answer is to take cover and
+      // fight from there, which the peek machinery below already knows how to do.
+      //
+      // Nowhere to go reads as carry on, never as stand still and die.
+      const breakingCover = !!this.pinnedBy && !!this.coverGoal && !assist &&
+        this.archetype !== 'rusher';
+      if (breakingCover) {
+        this._traveling = true;
+        this.sprintNow = this.legDmg < 0.6;
+        this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
+      } else if ((needTravel || opening) && (this.cautionT > 0 || this.holdT > 0) && !assist) {
+        // A squadmate just died up ahead, or every approach is covered: hold the
+        // angle and jink rather than feeding the corner one man at a time.
         this._strafing = true;
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
       } else if (needTravel || opening) {
@@ -1271,6 +1373,14 @@ export class Combatant {
    * chasing a contact.
    */
   _huntFor(world, dt, now, move) {
+    // Being shot at by somebody you cannot even find is the clearest case there is:
+    // get off the X first, look for him second.
+    if (this.pinnedBy && this.coverGoal) {
+      this._traveling = true;
+      this.sprintNow = this.legDmg < 0.6;
+      this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
+      return;
+    }
     const disturbance = this.perception.disturbance;
     if (disturbance && disturbance.t > (this._huntFrom ?? -Infinity)) {
       this._huntFrom = disturbance.t;
@@ -1348,9 +1458,51 @@ export class Combatant {
     for (const c of world.combatants) if (c.team !== this.team) look(c);
   }
 
-  /** A noise reached him. Only ever called through `world.emitNoise`. */
+  /**
+   * A noise reached him. Only ever called through `world.emitNoise`.
+   *
+   * A gunshot does two separate jobs, and conflating them was the bug: it is a
+   * rough fix on *where he is*, and it is evidence that *that angle is being
+   * worked*. The second one accumulates — one round is nothing, twenty into the
+   * same doorway is a reason to go round.
+   */
   hearNoise(source, pos, kind, now) {
-    return this.perception.hear(source, pos, kind, this.pos, now);
+    const contact = this.perception.hear(source, pos, kind, this.pos, now);
+    // Gated on the contact, which is falsy exactly when the noise was out of
+    // earshot — a fighter cannot be pinned by fire he cannot hear.
+    if (contact && kind === 'gunshot') this.suppression.record(pos, SUPPRESSION.shot, now);
+    return contact;
+  }
+
+  /** Line of sight between two loose `{x, y, z}` points, without allocating. */
+  _laneSees(world, from, to) {
+    return hasLoS(
+      world.colliders,
+      _laneFrom.set(from.x, from.y, from.z),
+      _laneTo.set(to.x, to.y, to.z),
+    );
+  }
+
+  /**
+   * Does getting to `goal` mean crossing ground somebody is presently covering?
+   *
+   * Sampled along the route rather than at the endpoint, because the endpoint is
+   * rarely the problem — the doorway two thirds of the way there is. Bails
+   * immediately when nothing is hot, which is most of the time.
+   */
+  _routeSwept(world, goal, now) {
+    if (!this.suppression.anyHot(now)) return false;
+    const sees = (from, to) => this._laneSees(world, from, to);
+    const chest = this.pos.y + 1.15 * this.scale;
+    for (const t of [0.45, 0.75, 1]) {
+      _routePoint.set(
+        this.pos.x + (goal.x - this.pos.x) * t,
+        chest,
+        this.pos.z + (goal.z - this.pos.z) * t,
+      );
+      if (this.suppression.covering(_routePoint, sees, now)) return true;
+    }
+    return false;
   }
 
   removeFrom(world) {

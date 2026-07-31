@@ -1,0 +1,106 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  SuppressionMap, SUPPRESSION, laneIsHot, coverStep,
+} from '../src/suppression.js';
+
+// Line of sight stand-in: a wall along x = 0 blocks anything crossing it, except
+// through a doorway between z = -1 and z = 1.
+const wallAtX0 = (a, b) => {
+  if ((a.x < 0) === (b.x < 0)) return true;
+  const t = (0 - a.x) / (b.x - a.x);
+  const z = a.z + (b.z - a.z) * t;
+  return Math.abs(z) <= 1;
+};
+const clear = () => true;
+
+test('one round is nothing; sustained fire into a doorway is a hot lane', () => {
+  const map = new SuppressionMap();
+  const muzzle = { x: 10, y: 1.2, z: 0 };
+
+  map.record(muzzle, SUPPRESSION.shot, 0);
+  assert.equal(map.anyHot(0), false, 'a single shot does not pin anyone');
+
+  // A burst, then another, the way an automatic is actually fired.
+  for (let i = 0; i < 8; i++) map.record(muzzle, SUPPRESSION.shot, i * 0.12);
+  assert.equal(map.anyHot(1), true);
+  assert.equal(map.lanes.length, 1, 'a shooter working one angle is one lane');
+});
+
+test('heat is capped, and a lane cools within a few seconds of going quiet', () => {
+  const map = new SuppressionMap();
+  const muzzle = { x: 10, y: 1.2, z: 0 };
+  for (let i = 0; i < 40; i++) map.record(muzzle, SUPPRESSION.shot, i * 0.05);
+  const lane = map.lanes[0];
+  assert.equal(lane.heat, SUPPRESSION.max, 'sustained fire saturates rather than banking');
+
+  const quiet = lane.lastAt;
+  map.decayTo(quiet + 2);
+  assert.equal(laneIsHot(lane, quiet + 2), true, 'still hot two seconds after the last round');
+  map.decayTo(quiet + 5);
+  assert.equal(laneIsHot(lane, quiet + 5), false, '...and cold by five, which is the window to push');
+});
+
+test('a lane that killed somebody stays deadly however quiet it goes', () => {
+  const map = new SuppressionMap();
+  const muzzle = { x: 10, y: 1.2, z: 0 };
+  map.record(muzzle, SUPPRESSION.kill, 0, { deadly: true });
+  const lane = map.lanes[0];
+  assert.equal(lane.kills, 1);
+
+  map.decayTo(6);
+  assert.equal(lane.heat, 0, 'the heat itself has long gone');
+  assert.equal(laneIsHot(lane, 6), true, 'but the angle is still the one that killed him');
+  assert.equal(laneIsHot(lane, SUPPRESSION.deadly + 1), false);
+});
+
+test('nearby firing positions merge, distant ones do not', () => {
+  const map = new SuppressionMap();
+  map.record({ x: 10, y: 1, z: 0 }, 1, 0);
+  map.record({ x: 10 + SUPPRESSION.merge - 0.5, y: 1, z: 0 }, 1, 0.1);
+  assert.equal(map.lanes.length, 1, 'a shooter shifting on his angle is one gun');
+
+  map.record({ x: -10, y: 1, z: 0 }, 1, 0.2);
+  assert.equal(map.lanes.length, 2, 'a second gun somewhere else is a second lane');
+});
+
+test('a lane only covers ground it can see, inside its range', () => {
+  const map = new SuppressionMap();
+  const muzzle = { x: 5, y: 1.2, z: 0 };
+  for (let i = 0; i < 8; i++) map.record(muzzle, SUPPRESSION.shot, i * 0.1);
+  const now = 1;
+
+  // Through the doorway at z ~ 0: covered. Behind the wall: not.
+  assert.ok(map.covering({ x: -3, y: 1.15, z: 0 }, wallAtX0, now), 'the doorway is swept');
+  assert.equal(map.covering({ x: -3, y: 1.15, z: 6 }, wallAtX0, now), null, 'behind the wall is not');
+
+  // Same clear sightline, but beyond the lane's reach.
+  const far = { x: 5 - SUPPRESSION.range - 5, y: 1.15, z: 0 };
+  assert.equal(map.covering(far, clear, now), null);
+});
+
+test('the hottest covering lane wins, and a cold one never covers anything', () => {
+  const map = new SuppressionMap();
+  for (let i = 0; i < 4; i++) map.record({ x: 5, y: 1, z: 0 }, SUPPRESSION.shot, i * 0.1);
+  for (let i = 0; i < 10; i++) map.record({ x: -5, y: 1, z: 0 }, SUPPRESSION.shot, i * 0.1);
+  const hottest = map.covering({ x: 0, y: 1.15, z: 0 }, clear, 1);
+  assert.equal(hottest.x, -5);
+
+  const cold = new SuppressionMap();
+  cold.record({ x: 5, y: 1, z: 0 }, SUPPRESSION.shot, 0);
+  assert.equal(cold.covering({ x: 0, y: 1.15, z: 0 }, clear, 0), null);
+});
+
+test('breaking cover steps out of the lane rather than retreating down it', () => {
+  const lane = { x: 5, y: 1.2, z: 0, heat: 10 };
+  // Standing in the doorway; sideways along the wall gets out of the sightline.
+  const step = coverStep(lane, { x: -3, y: 0, z: 0 }, wallAtX0);
+  assert.ok(step, 'there is somewhere to go');
+  assert.ok(Math.abs(step.z) > 1, 'out of the doorway, not straight back down it');
+  assert.equal(wallAtX0(lane, { x: step.x, y: step.y + 1.15, z: step.z }), false);
+});
+
+test('nowhere to hide returns null, so the caller carries on instead of freezing', () => {
+  const lane = { x: 5, y: 1.2, z: 0, heat: 10 };
+  assert.equal(coverStep(lane, { x: -3, y: 0, z: 0 }, clear), null);
+});
