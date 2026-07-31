@@ -356,6 +356,23 @@ unfair peek. `npm run fightercheck` measures how far a lean actually carries the
 (29 cm) and combat sizes its peek off that number. Past it, the fighter has to step out,
 and stepping out is visible.
 
+**A shared effect instance is a bug the moment two things can trigger it.** There was
+one muzzle flash sprite and one muzzle-flash point light for the whole game, and
+whoever fired last took both — so an enemy shooting across the pit stole the flash off
+the player's own weapon mid-burst. Flashes are pooled now, one per shooter.
+
+**A light that follows a shooter is tactical information.** That single point light,
+9 m across and lit for a third of every second of sustained fire, painted a pool on the
+floor around whoever was shooting and moved with them — a lamp announcing every flank,
+through walls they were otherwise properly hidden behind. Muzzle flashes no longer drive
+a world light at all. The player's own weapon keeps a small private one, because it
+cannot give anybody away and firing feels flat without it.
+
+**Sustained fire is dimmer than the first round.** An automatic at 700 rpm retriggers
+its flash every 86 ms against a 45 ms decay, so every frame of a burst was drawn at
+full opacity, additively, through bloom — a solid block over the sights for as long as
+the trigger was held. A repeat inside 200 ms now peaks between a third and a half.
+
 Effects are pooled and allocate nothing at runtime. A firefight spawns hundreds of
 emitters a second, and a garbage collection in the middle of one is a visible hitch.
 
@@ -539,6 +556,13 @@ while converging perfectly in isolation. Resume from last frame's solution.
 heading inside `setStance` fixes it for the AI, the capture poses and the test bench at
 once. The alternative — asking every caller to hand over a clean direction — is the
 version where one of them forgets.
+
+**`__game.step()` runs the match, not the frame.** The FX clock and every decay live
+in the render loop, so a headless probe that only steps the match sees nothing expire:
+the flash pool saturates, every brightness reads full, and the numbers look like a bug
+in the thing being measured. Drive `fx.update(dt)` too. This is the fifth harness fault
+in this document that produced confident wrong output — check the harness first when a
+measurement is surprising.
 
 **Two places computing "where the player is" will disagree, and the disagreement will
 be small enough to look like a bug in something else.** The camera and the hit model
