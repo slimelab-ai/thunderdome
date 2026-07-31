@@ -49,9 +49,92 @@ export const SUPPRESSION = {
   forget: 14,
 };
 
+/**
+ * Ground that has actually got somebody shot.
+ *
+ * Lanes are inference — a gun is over there, so it can see this. A mark is evidence:
+ * a man stood here and took rounds. That is worth having separately, because it
+ * needs no theory about where the fire came from and survives the shooter moving.
+ * Everything else in this file reasons forward from a muzzle; this reasons backward
+ * from a wound.
+ *
+ * It spreads by shouting. A fighter who is hit cries out, and squadmates near enough
+ * to hear log the spot too — second-hand, so a little weaker, but the squad learns a
+ * killing ground from one man walking into it rather than each of them in turn.
+ *
+ * Worth knowing before tuning this: against a shooter who holds one angle and keeps
+ * firing, a mark says nothing a lane was not already saying — you get hit on ground
+ * the gun can see, so both call it dangerous and turning marks off changes the
+ * outcome not at all. Measured across paired runs it sits inside the noise either
+ * way. Where it has something of its own to contribute is the cases a lane cannot
+ * cover: the shooter relocates and his old lane goes stale, he stops firing but
+ * still covers the ground, or a fighter who never heard the shots learns from the
+ * shout. It is consulted only by `_peekSwept` for that reason — routing on it was
+ * tried twice and measured worse, because a mark lands a stride from the cover the
+ * victim was using and reads as a reason to abandon it.
+ */
+export const MARK = {
+  /** What one hit says about the ground you were standing on. */
+  heat: 6,
+  /** ...and what the shout is worth to somebody who only heard it. */
+  fromCallout: 4,
+  /**
+   * Bled off far slower than a lane's. A lane goes cold when the shooting stops,
+   * because it was only ever a guess about a gun; ground that killed someone stays
+   * worth avoiding well after the noise has died down. One hit keeps a spot hot for
+   * about nine seconds, two for the better part of half a minute.
+   */
+  decay: 0.35,
+  hot: 3,
+  max: 12,
+  /**
+   * How far the danger extends from the spot itself, in metres.
+   *
+   * Deliberately tight. A hit lands where a man was exposed, which is a stride from
+   * the cover he was using — spread it wide and you condemn the cover along with the
+   * angle, which is the opposite of the lesson.
+   */
+  radius: 2.2,
+  /** Two hits this close together are the same killing ground. */
+  merge: 2.5,
+  /** How far the cry carries to squadmates. */
+  range: 22,
+  /**
+   * How heavily known killing ground counts against a route, relative to ground a
+   * gun is merely presumed to cover.
+   *
+   * Above 1 on purpose: a bite is a stronger deterrent than a bang. At 1.6 a marked
+   * destination alone scores 0.8 against an abandon line of 0.5, so it is rejected
+   * outright where a merely-covered destination lands exactly on the line.
+   */
+  weight: 1.6,
+  /** ...and ground that has taken more than one man is simply not crossed. */
+  repeatWeight: 2.5,
+};
+
 /** Is this lane worth routing around right now? */
 export function laneIsHot(lane, now) {
   return lane.heat >= SUPPRESSION.hot || now < lane.deadlyUntil;
+}
+
+/**
+ * Tell a squad that this spot just got one of them hit.
+ *
+ * The victim logs it at full weight — he was there. Everyone in earshot logs it at
+ * less, because a shout locates a man about as well as a shout ever does. Returns
+ * how many fighters took it on board.
+ */
+export function shareHitGround(world, victim, pos, now) {
+  let told = 0;
+  for (const mate of world.combatants) {
+    if (!mate.alive || !mate.suppression) continue;
+    if (mate.team !== victim.team) continue;
+    const own = mate === victim;
+    if (!own && Math.hypot(mate.pos.x - pos.x, mate.pos.z - pos.z) > MARK.range) continue;
+    mate.suppression.mark(pos, own ? MARK.heat : MARK.fromCallout, now);
+    told++;
+  }
+  return told;
 }
 
 /**
@@ -129,6 +212,8 @@ export function coverStep(lane, from, losFn, {
 export class SuppressionMap {
   constructor() {
     this.lanes = [];
+    /** Ground somebody has actually been hit on. */
+    this.marks = [];
     this.at = 0;
   }
 
@@ -144,7 +229,78 @@ export class SuppressionMap {
         this.lanes.splice(i, 1);
       }
     }
+    for (let i = this.marks.length - 1; i >= 0; i--) {
+      const mark = this.marks[i];
+      mark.heat = Math.max(0, mark.heat - dt * MARK.decay);
+      if (mark.heat <= 0) this.marks.splice(i, 1);
+    }
     return this.lanes;
+  }
+
+  /** Somebody was hit standing here. */
+  mark(pos, heat, now) {
+    this.decayTo(now);
+    let found = null;
+    let nearest = MARK.merge * MARK.merge;
+    for (const candidate of this.marks) {
+      const dx = candidate.x - pos.x, dz = candidate.z - pos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < nearest) { nearest = d2; found = candidate; }
+    }
+    if (!found) {
+      found = { x: pos.x, y: pos.y || 0, z: pos.z, heat: 0, hits: 0, firstAt: now, lastAt: now };
+      this.marks.push(found);
+    }
+    found.heat = Math.min(MARK.max, found.heat + heat);
+    found.hits++;
+    found.lastAt = now;
+    return found;
+  }
+
+  /**
+   * The hottest piece of known killing ground this point sits in, or null.
+   *
+   * `standingIn` is the asker's own position, and any mark containing it is ignored.
+   * A hit lands where a man was exposed, which is a stride from the cover he was
+   * quite correctly using — so the mark he made by being shot sits on top of him,
+   * and counting it tells him the ground he is on is bad wherever he tries to go.
+   */
+  markedAt(point, now, standingIn = null) {
+    this.decayTo(now);
+    let worst = null;
+    for (const mark of this.marks) {
+      if (mark.heat < MARK.hot) continue;
+      if (worst && mark.heat <= worst.heat) continue;
+      const dx = point.x - mark.x, dz = point.z - mark.z;
+      if (dx * dx + dz * dz > MARK.radius * MARK.radius) continue;
+      if (standingIn) {
+        const sx = standingIn.x - mark.x, sz = standingIn.z - mark.z;
+        if (sx * sx + sz * sz <= MARK.radius * MARK.radius) continue;
+      }
+      worst = mark;
+    }
+    return worst;
+  }
+
+  /**
+   * What this ground is worth against a route, as a multiple of a covered sample.
+   *
+   * A bite outweighs a bang: somewhere a man was actually hit is worse than
+   * somewhere a gun is merely presumed to reach, and somewhere two men were hit is
+   * a place the squad simply does not go — heavy enough on its own to put a
+   * destination past the abandon line.
+   */
+  markWeightAt(point, now, standingIn = null) {
+    const mark = this.markedAt(point, now, standingIn);
+    if (!mark) return 0;
+    return mark.hits > 1 ? MARK.repeatWeight : MARK.weight;
+  }
+
+  /** Anything at all worth routing around — a worked angle or a killing ground. */
+  anyDanger(now) {
+    if (this.anyHot(now)) return true;
+    for (const mark of this.marks) if (mark.heat >= MARK.hot) return true;
+    return false;
   }
 
   /**

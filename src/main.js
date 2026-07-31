@@ -9,7 +9,7 @@ import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } fro
 import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { broadcastNoise, contactRadius } from './perception.js';
-import { laneIsHot } from './suppression.js';
+import { laneIsHot, shareHitGround } from './suppression.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
@@ -178,14 +178,33 @@ world.nav = new NavMesh(arena.colliders);
  * contact — never an exact one — and the player is the source of most of it, which
  * is what makes moving quietly a real decision rather than a cosmetic one.
  */
-world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
-  world,
-  // The player fires as `playerShooter` but is *targeted* as `playerProxy`. Contacts
-  // are keyed by entity, so they have to collapse to one identity here or a bot ends
-  // up holding a belief about somebody who is never a candidate to shoot at.
-  source === world.playerShooter ? world.playerProxy : source,
-  pos, kind, world.simTime, weight,
-);
+/**
+ * (Re)install the world hooks that outlive any one match.
+ *
+ * `startMatch` already rebuilds the per-match callbacks; these two used to be
+ * assigned once at module load and never again, which made them the only hooks a
+ * test harness could stub *permanently*. An A/B that replaced `reportHit` for one
+ * arm silently kept the replacement for every run afterwards, so the second arm
+ * measured the first arm's behaviour and the comparison came out as noise dressed
+ * up as a result. Anything installed here is restored at the start of every bout.
+ */
+function installWorldHooks() {
+  world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
+    world,
+    // The player fires as `playerShooter` but is *targeted* as `playerProxy`.
+    // Contacts are keyed by entity, so they have to collapse to one identity here or
+    // a bot ends up holding a belief about somebody who is never a candidate to
+    // shoot at.
+    source === world.playerShooter ? world.playerProxy : source,
+    pos, kind, world.simTime, weight,
+  );
+
+  // Somebody just got hit standing here, and said so. The squad's record of ground
+  // that has actually drawn blood, as opposed to ground a gun is presumed to cover.
+  world.reportHit = (victim, pos) => shareHitGround(world, victim, pos, world.simTime);
+}
+
+installWorldHooks();
 
 const player = new Player(camera, world);
 // Combat telemetry treats the first-person player like every other shooter.
@@ -655,6 +674,7 @@ function startMatch() {
     return;
   }
   clearCombatants();
+  installWorldHooks();
   match = makeMatch();
   spectatorCamera.reset();
   const liquidation = career.mode === 'liquidation';
@@ -999,6 +1019,12 @@ function handlePlayerDamaged(dmg, part, fromPos, shooter = null, range = null) {
   ui.damageFlash();
   fx.blood(new THREE.Vector3(player.pos.x, player.pos.y + 1.2, player.pos.z));
   audio.crowdRoar(0.25);
+  // The crew learn where the boss got hit the same way they learn it about each
+  // other. Rate-limited to once a burst, matching the bots' own callout.
+  if (match.time - (world._playerHitCall ?? -99) > 0.5) {
+    world._playerHitCall = match.time;
+    world.reportHit?.(world.playerProxy, player.pos);
+  }
 
   if (player.alive) {
     if (part === 'armL' || part === 'armR') announcer.say('playerArmHit', {}, { minGap: 8 });
@@ -2408,6 +2434,8 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
         heat: fighter.pinnedBy ? +fighter.pinnedBy.heat.toFixed(2) : 0,
         holding: fighter.holdT > 0,
         hot_lanes: fighter.suppression.lanes.filter(l => laneIsHot(l, world.simTime)).length,
+        // Ground he knows has drawn blood, whether or not he was the one bleeding.
+        killing_ground: fighter.suppression.marks.filter(m => m.heat >= 3).length,
       },
       // What he thinks he knows, alongside where his target actually is. The pair is
       // the whole validation: after a sightline breaks, `believed` must stop moving
@@ -2549,11 +2577,24 @@ window.__game = {
     camera.position.set(pos[0], pos[1], pos[2]);
     camera.lookAt(look[0], look[1], look[2]);
   },
+  /**
+   * Start a bout straight from the debug handle.
+   *
+   * Waits on `assetsReady` — which includes `arena.propsReady` — and returns a
+   * promise, because the props carry colliders. Called without waiting, the first
+   * bout after a page load runs in a pit whose crates have not arrived yet, so every
+   * sightline in it differs from every later bout. That made run #1 of a measurement
+   * session quietly incomparable with run #2, which is a fine way to read a result
+   * off nothing at all.
+   */
   fight(mode = 'circuits', rank = 15) {
-    career = newCareer(mode);
-    career.rank = rank;
-    market = createMarket(mode);
-    startMatch();
+    return assetsReady.then(() => {
+      career = newCareer(mode);
+      career.rank = rank;
+      market = createMarket(mode);
+      startMatch();
+      return match;
+    });
   },
 };
 

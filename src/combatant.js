@@ -59,6 +59,36 @@ const HOLD_BUDGET = 12;
 const ROUTE_SAMPLES = [[0.35, 0.5], [0.6, 1], [0.85, 1.5], [1, 3]];
 const ROUTE_WEIGHT_TOTAL = ROUTE_SAMPLES.reduce((sum, [, weight]) => sum + weight, 0);
 
+/** Scratch for the walked polyline a route cost is measured along. */
+const _routeLegs = [];
+const _routeGoal = new THREE.Vector3();
+
+/**
+ * The point `t` of the way along a polyline, by distance walked on the floor.
+ *
+ * Fractions have to be of *path* length, not of the straight line — the whole point
+ * of costing the real route is that a flank is longer than the gap it covers.
+ */
+function pointAlongPath(points, t, out) {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+  }
+  const last = points[points.length - 1];
+  if (total < 1e-4) return out.set(last.x, last.y, last.z);
+  let want = total * t;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const seg = Math.hypot(b.x - a.x, b.z - a.z);
+    if (want <= seg || i === points.length - 1) {
+      const f = seg > 1e-6 ? Math.min(1, want / seg) : 1;
+      return out.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
+    }
+    want -= seg;
+  }
+  return out.set(last.x, last.y, last.z);
+}
+
 /** Sprinting boots are loud. One footfall report per this many seconds. */
 const SPRINT_NOISE_PERIOD = 0.45;
 
@@ -463,6 +493,17 @@ export class Combatant {
     // than one per round that lands.
     if (shooter?.pos && shooter.team !== this.team && this.sinceHit > 0.5) {
       world.emitNoise?.(shooter, shooter.pos, 'impact');
+      // ...and he shouts, which is how the rest of the squad finds out that *this
+      // spot* is where you get shot, without each of them having to discover it.
+      const told = world.reportHit?.(this, this.pos) ?? 0;
+      world.onCombatEvent?.('hit_ground', this, {
+        shooter: shooter.isPlayer ? 'YOU' : shooter.name || null,
+        told,
+        at: [this.pos.x, this.pos.y, this.pos.z].map(v => +v.toFixed(2)),
+      });
+      if (dmg > this.maxHp * 0.12) {
+        audio.hurt(1.2 / (1 + this.pos.distanceTo(world.cameraPos) * 0.09));
+      }
     }
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
@@ -1656,8 +1697,7 @@ export class Combatant {
    * on is being worked, not just the 29 cm the weapon travels.
    */
   _peekSwept(world, side, fx, fz, now) {
-    if (!this.suppression.anyHot(now)) return false;
-    const sees = (from, to) => this._laneSees(world, from, to);
+    if (!this.suppression.anyDanger(now)) return false;
     const chest = this.pos.y + 1.15 * this.scale;
     for (const reach of [PEEK_REACH, 1.1]) {
       _routePoint.set(
@@ -1665,9 +1705,22 @@ export class Combatant {
         chest,
         this.pos.z + fx * reach * side,
       );
-      if (this.suppression.covering(_routePoint, sees, now)) return true;
+      if (this._groundIsDangerous(world, _routePoint, now)) return true;
     }
     return false;
+  }
+
+  /**
+   * Is this piece of ground being worked, or has it already got somebody hit?
+   *
+   * The two questions are answered separately on purpose. A lane is an inference
+   * about a gun and needs a sightline to mean anything; a mark is a fact about a spot
+   * and does not care where the fire came from, which is what makes it survive the
+   * shooter relocating.
+   */
+  _groundIsDangerous(world, point, now) {
+    if (this.suppression.markedAt(point, now)) return true;
+    return !!this.suppression.covering(point, (from, to) => this._laneSees(world, from, to), now);
   }
 
   /**
@@ -1682,19 +1735,49 @@ export class Combatant {
    * Bails immediately when nothing is hot, which is most of the time.
    */
   _routeCost(world, goal, now) {
-    if (!this.suppression.anyHot(now)) return 0;
+    if (!this.suppression.anyDanger(now)) return 0;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
+    const legs = this._routeLegs(world, goal);
     let swept = 0;
     for (const [t, weight] of ROUTE_SAMPLES) {
-      _routePoint.set(
-        this.pos.x + (goal.x - this.pos.x) * t,
-        chest,
-        this.pos.z + (goal.z - this.pos.z) * t,
-      );
-      if (this.suppression.covering(_routePoint, sees, now)) swept += weight;
+      pointAlongPath(legs, t, _routePoint);
+      _routePoint.y = chest;
+      if (this.suppression.covering(_routePoint, sees, now)) { swept += weight; continue; }
+      // Ground that has already taken somebody counts heavier than ground merely
+      // presumed covered — a bite is worth more than a bang. Marks he is standing
+      // inside are skipped: a hit lands a stride from the cover the victim was quite
+      // correctly using, so counting it makes every route out of his own position
+      // expensive and pushes him into the open to escape a blob at his feet.
+      swept += weight * this.suppression.markWeightAt(_routePoint, now, this.pos);
     }
-    return swept / ROUTE_WEIGHT_TOTAL;
+    return Math.min(1, swept / ROUTE_WEIGHT_TOTAL);
+  }
+
+  /**
+   * The polyline this fighter would actually walk to reach `goal`.
+   *
+   * Costing a straight line was the routing bug. Movement goes through the navmesh,
+   * so around a held corner the straight line to a flank goal clips the wall the
+   * flank exists to use — it samples ground the shooter cannot see, scores clean, and
+   * the fighter then walks a real path straight through the beaten zone. Cost and
+   * movement now ask the navmesh the same question in the same way, so a lane is
+   * scored on the route it actually commits him to.
+   */
+  _routeLegs(world, goal) {
+    _routeLegs.length = 0;
+    _routeLegs.push(this.pos);
+    const gy = goal.y ?? this.pos.y;
+    const straight = world.nav
+      ? world.nav.walkableLine(this.pos.x, this.pos.z, this.pos.y, goal.x, goal.z, gy)
+      : true;
+    if (!straight) {
+      const path = world.nav.findPath(this.pos, { x: goal.x, y: gy, z: goal.z },
+        this.navSeed, this.flankSide);
+      if (path && path.length) _routeLegs.push(...path);
+    }
+    _routeLegs.push(_routeGoal.set(goal.x, gy, goal.z));
+    return _routeLegs;
   }
 
   removeFrom(world) {

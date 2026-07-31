@@ -113,9 +113,12 @@ class AudioEngine {
     this._noise(0.15, { filterType: 'bandpass', freq: 3200 + Math.random() * 2500, q: 8, gain: 0.16, decay: 0.09 });
   }
 
-  hurt() {
-    this._tone(300 + Math.random() * 80, 0.18, { type: 'sawtooth', gain: 0.18, freqEnd: 90 });
-    this._noise(0.2, { freq: 700, freqEnd: 150, gain: 0.3, decay: 0.13 });
+  // `vol` so a fighter crying out across the pit is quieter than one at your elbow;
+  // the death rattle still calls this with no argument and is unchanged.
+  hurt(vol = 1) {
+    const v = Math.max(0, Math.min(1.5, vol));
+    this._tone(300 + Math.random() * 80, 0.18, { type: 'sawtooth', gain: 0.18 * v, freqEnd: 90 });
+    this._noise(0.2, { freq: 700, freqEnd: 150, gain: 0.3 * v, decay: 0.13 });
   }
 
   footstep() { this._noise(0.07, { freq: 300 + Math.random() * 150, gain: 0.07, decay: 0.045 }); }
