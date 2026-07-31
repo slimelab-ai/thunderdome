@@ -286,7 +286,42 @@ the shoulder also swings the hand forward past the muzzle. `tools/poses/hands.js
 reports both hand positions in camera space so the pose can be solved against a
 target instead of nudged.
 
-### 6.3 Hit volumes
+### 6.3 Aiming down sights
+
+**Alignment is solved against the sights that are modelled, not authored per weapon.**
+Every gun exports `sight_rear` and `sight_front` unjoined, and the runtime computes the
+viewmodel transform that puts the line between them on the camera's axis with the rear
+sight at the eye relief. Adding a weapon needs nothing but a pair of sights; moving a
+weapon's sights needs nothing at all.
+
+The whole of ADS used to be one offset —
+
+    const adsPos = new THREE.Vector3(0, -0.148, -0.3);
+
+— shared by every weapon and evidently fitted against the rifle. Every other gun was
+off by however far its sights sat from the rifle's, and nothing in the project could
+say by how much. `npm run sightcheck` says: it aims each weapon and measures where the
+sights land **in pixels from the crosshair**, which is the only definition of aligned
+that matters.
+
+**Eye relief is derived, not chosen.** A rifle is mostly *behind* its rear sight — a
+receiver, a grip, and a stock that ends at a shoulder that in first person is where the
+camera is. The rifle's stock reaches 26 cm past its rear sight, so a 30 cm relief put
+the butt 4 cm from the player's eye with a third of the screen full of wood. The relief
+is the greater of the look choice and what the weapon's own tail needs.
+
+**A sight on the axis is necessary and not sufficient.** A hand parked on the sight line
+is perfectly aligned and completely useless, and so is a stock on the end of the
+player's nose — neither shows up in a check that only asks where the sights are. The
+bench fires a ray down the middle to see what it meets first, and measures how close the
+weapon comes to the camera at all.
+
+**Recoil is damped in the viewmodel while aiming, not removed.** At full hip-fire kick
+the sight picture washes off the screen and back on every shot. How much a weapon should
+kick is the recoil system's business; what aiming has to guarantee is that the picture
+*returns* — which the bench checks by releasing the trigger and looking again.
+
+### 6.4 Hit volumes
 
 Fighters are hit through invisible boxes parented to bones; the player is hit through a
 capsule and a head sphere. Neither has a visible representation, so both can be wrong
@@ -483,6 +518,12 @@ at its worst — and asserts:
 | `recoil` | that the muzzle actually swings under sustained automatic fire |
 | bore height | the shouldered weapon's bore against the sight line — a weapon carried at the chest cannot clear cover its owner can see over |
 | peek reach | how far a lean carries the muzzle, which is what combat may size its corner peek to |
+
+`tools/sightcheck.mjs` (`npm run sightcheck`) aims every weapon in the sandbox and
+measures the sight picture in screen pixels: distance from the crosshair, how far apart
+the two sights sit, whether the raise swings wide, where it settles after a burst,
+whether the weapon is rolled, and whether the player's own hands or stock are in the
+way. `--pose ads` captures the matching picture to look at.
 | coverage | fraction of the drawn fighter the bone hitboxes actually cover, how much sticks out past him, and whether skull hits come back as head hits |
 | transitions | worst single-frame head movement and blendspace churn through a dead stop, a standing start, an instant reversal, and per-frame heading noise |
 | bob | how far the head rides up and down and side to side over one cycle |
@@ -603,6 +644,12 @@ be small enough to look like a bug in something else.** The camera and the hit m
 each derived a head position independently and landed 5 cm apart; the symptom was bots
 declining to shoot, which looks like an AI problem and is a geometry problem. One of
 them has to own the answer and the other has to read it.
+
+**`__game.step()` does nothing unless a match is running.** A bench that arms the
+player and starts stepping without starting one runs no frames at all, and then reports
+the viewmodel's *constructor* position as a 300-pixel alignment error with complete
+confidence. Start a match or the sandbox first, and assert that the thing being driven
+actually ran — this harness now fails loudly rather than measuring a static scene.
 
 **A resolver that samples cannot see anything smaller than its step.** The player's hit
 model marched in 0.35 m steps past a 0.22 m head. Every part of the system around it was

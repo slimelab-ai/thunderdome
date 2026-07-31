@@ -15,6 +15,18 @@ move when the weapon is worked — `slide`, `mag`, `bolt`, `pump` — stay separ
 objects so the runtime can animate them (see `animateWeaponParts` in src/weapons.js).
 A gun whose slide cycles when it fires reads as a mechanism instead of a prop, and
 it is the cheapest possible way to make firing legible in first person.
+
+**Sights stay separate too, and every weapon has a matched pair.** `sight_rear` and
+`sight_front` are exported unjoined so the runtime can read the line between them and
+put it on the camera's axis when the player aims. That is the whole of the ironsight
+system: aiming is not a hand-tuned offset per weapon, it is a solve against the sights
+that are actually modelled, so a weapon whose sights move is still aimed correctly and
+a new weapon needs nothing but a pair of sights.
+
+The two must be at the same height above the bore, or close to it — the line between
+them *is* the aiming line, and the barrel is placed relative to it, not the other way
+round. A scope is the same idea with the ocular and the objective standing in for the
+rear and front.
 """
 
 import sys
@@ -35,10 +47,20 @@ UV = 4.0
 
 
 def finish(name, moving=(), budget=900):
-    """Join everything except the named moving parts, then export."""
+    """Join everything except the moving parts and the sights, then export.
+
+    Sights are held out of the join because the runtime has to find them: the aiming
+    transform is solved from where they actually are, so they cannot be baked into an
+    anonymous mesh. Failing to export a matched pair is a build error rather than a
+    weapon that quietly cannot be aimed.
+    """
     import bpy
-    movers = {m.name for m in moving}
-    statics = [o for o in bpy.data.objects if o.type == "MESH" and o.name not in movers]
+    keep = {m.name for m in moving} | {"sight_rear", "sight_front"}
+    have = {o.name for o in bpy.data.objects if o.type == "MESH"}
+    missing = {"sight_rear", "sight_front"} - have
+    if missing and name != "knife":
+        raise RuntimeError(f"{name}: no {', '.join(sorted(missing))} — it cannot be aimed")
+    statics = [o for o in bpy.data.objects if o.type == "MESH" and o.name not in keep]
     if statics:
         join("body", statics)
     export(name, budget=budget)
@@ -53,8 +75,8 @@ def pistol():
     cube("trigger guard", (0, 0.012, -0.028), (0.020, 0.055, 0.012), DARK, 0.004, uv_scale=UV)
     tube("barrel", (0, 0.145, 0.035), 0.009, 0.05, METAL, vertices=8,
          rotation=(math.radians(90), 0, 0), uv_scale=UV)
-    cube("rear sight", (0, -0.028, 0.064), (0.026, 0.012, 0.010), DARK, 0.002, uv_scale=UV)
-    cube("front sight", (0, 0.145, 0.064), (0.006, 0.010, 0.012), DARK, 0.002, uv_scale=UV)
+    cube("sight_rear", (0, -0.028, 0.064), (0.026, 0.012, 0.010), DARK, 0.002, uv_scale=UV)
+    cube("sight_front", (0, 0.145, 0.064), (0.006, 0.010, 0.012), DARK, 0.002, uv_scale=UV)
     mag = cube("mag", (0, -0.012, -0.09), (0.026, 0.040, 0.10), DARK, 0.006, uv_scale=UV)
     finish("pistol", moving=(slide, mag), budget=700)
 
@@ -74,6 +96,10 @@ def smg():
     cube("stock strut", (0, -0.13, 0.03), (0.020, 0.16, 0.020), DARK, 0.005, uv_scale=UV)
     cube("stock plate", (0, -0.21, 0.015), (0.055, 0.020, 0.075), DARK, 0.008, uv_scale=UV)
     cube("top rail", (0, 0.10, 0.066), (0.020, 0.16, 0.010), DARK, 0.002, uv_scale=UV)
+    # Flip-up irons on the rail. The SMG had a rail and nothing on it, so there was no
+    # line to aim along at all.
+    cube("sight_rear", (0, 0.035, 0.080), (0.024, 0.010, 0.018), DARK, 0.002, uv_scale=UV)
+    cube("sight_front", (0, 0.335, 0.080), (0.007, 0.010, 0.018), DARK, 0.002, uv_scale=UV)
     finish("smg", moving=(bolt, mag), budget=900)
 
 
@@ -91,7 +117,10 @@ def shotgun():
     cube("stock", (0, -0.22, -0.010), (0.048, 0.18, 0.090), WOOD, 0.018,
          rotation=(math.radians(-6), 0, 0), uv_scale=UV)
     cube("butt plate", (0, -0.305, -0.020), (0.050, 0.016, 0.100), GRIP, 0.006, uv_scale=UV)
-    cube("bead sight", (0, 0.63, 0.062), (0.006, 0.010, 0.012), DARK, 0.002, uv_scale=UV)
+    # A bead alone has no rear reference, so aiming one is guesswork. The notch on the
+    # receiver gives the pair a line; the bead keeps its silhouette.
+    cube("sight_front", (0, 0.63, 0.062), (0.007, 0.010, 0.014), DARK, 0.002, uv_scale=UV)
+    cube("sight_rear", (0, -0.045, 0.066), (0.024, 0.012, 0.010), DARK, 0.002, uv_scale=UV)
     finish("shotgun", moving=(pump,), budget=900)
 
 
@@ -113,8 +142,8 @@ def rifle():
          rotation=(math.radians(-14), 0, 0), uv_scale=UV)
     cube("stock", (0, -0.22, 0.010), (0.042, 0.20, 0.085), WOOD, 0.016,
          rotation=(math.radians(-5), 0, 0), uv_scale=UV)
-    cube("rear sight", (0, -0.06, 0.076), (0.022, 0.020, 0.016), DARK, 0.003, uv_scale=UV)
-    cube("front sight", (0, 0.40, 0.082), (0.008, 0.012, 0.022), DARK, 0.002, uv_scale=UV)
+    cube("sight_rear", (0, -0.06, 0.076), (0.022, 0.020, 0.016), DARK, 0.003, uv_scale=UV)
+    cube("sight_front", (0, 0.40, 0.082), (0.008, 0.012, 0.022), DARK, 0.002, uv_scale=UV)
     finish("rifle", moving=(bolt, mag), budget=1000)
 
 
@@ -129,7 +158,11 @@ def dmr():
     # scope: the DMR's whole silhouette cue
     cyl("scope body", (0, 0.10, 0.105), 0.021, 0.24, DARK, vertices=12,
         rotation=(math.radians(90), 0, 0), uv_scale=UV)
-    cyl("objective", (0, 0.23, 0.105), 0.027, 0.05, DARK, vertices=12,
+    cyl("sight_front", (0, 0.23, 0.105), 0.027, 0.05, DARK, vertices=12,
+        rotation=(math.radians(90), 0, 0), uv_scale=UV)
+    # Ocular bell. The scope had no back end, which looked odd and left the sight line
+    # with only one point to be defined by.
+    cyl("sight_rear", (0, -0.035, 0.105), 0.025, 0.05, DARK, vertices=12,
         rotation=(math.radians(90), 0, 0), uv_scale=UV)
     for y in (0.02, 0.18):
         cube("scope ring", (0, y, 0.088), (0.022, 0.020, 0.040), METAL, 0.004, uv_scale=UV)

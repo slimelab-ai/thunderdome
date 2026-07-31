@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SuppressionMap, SUPPRESSION, laneIsHot, coverStep,
+  SuppressionMap, SUPPRESSION, SUPPRESSING, laneIsHot, coverStep, worthSuppressing,
 } from '../src/suppression.js';
 
 // Line of sight stand-in: a wall along x = 0 blocks anything crossing it, except
@@ -103,4 +103,32 @@ test('breaking cover steps out of the lane rather than retreating down it', () =
 test('nowhere to hide returns null, so the caller carries on instead of freezing', () => {
   const lane = { x: 5, y: 1.2, z: 0, heat: 10 };
   assert.equal(coverStep(lane, { x: -3, y: 0, z: 0 }, clear), null);
+});
+
+test('cover you cannot stand in is not cover', () => {
+  const lane = { x: 5, y: 1.2, z: 0, heat: 10 };
+  const from = { x: -3, y: 0, z: 0 };
+  const out = coverStep(lane, from, wallAtX0);
+  // Every spot the wall would hide him in is inside a crate: he must be told there
+  // is nowhere to go, not sent to grind into it.
+  assert.equal(coverStep(lane, from, wallAtX0, { standable: () => false }), null);
+  assert.ok(out, 'and with clear ground he still finds it');
+});
+
+test('area fire needs a belief worth spending rounds on', () => {
+  const ok = { radius: 5, age: 2, rounds: 120, role: 'pointman', auto: true };
+  assert.equal(worthSuppressing(ok), true);
+
+  assert.equal(worthSuppressing({ ...ok, age: SUPPRESSING.maxAge + 1 }), false, 'stale');
+  assert.equal(worthSuppressing({ ...ok, radius: SUPPRESSING.maxRadius + 1 }), false, 'too vague');
+  assert.equal(worthSuppressing({ ...ok, rounds: SUPPRESSING.minRounds - 1 }), false,
+    'never on the last of the pool');
+  assert.equal(worthSuppressing({ ...ok, auto: false }), false, 'a pistol does not suppress');
+
+  // The support gunner is the one who does this, so he does it on thinner evidence —
+  // and he will do it with a weapon that is not automatic.
+  const vague = { ...ok, radius: SUPPRESSING.maxRadius + 2 };
+  assert.equal(worthSuppressing(vague), false);
+  assert.equal(worthSuppressing({ ...vague, role: 'support' }), true);
+  assert.equal(worthSuppressing({ ...ok, auto: false, role: 'support' }), true);
 });
