@@ -6,8 +6,16 @@ const BREACH_LANES = [0, -1, 1, -2, 2];
  * Wider than the assignment table, because rerouting around a covered approach has
  * to have somewhere to go — if the only alternatives are the two the squad is
  * already using, "flank it" degrades into "queue up behind him".
+ *
+ * It ran to ±3 and that was not far enough to hold an opinion about. Three lanes out
+ * is eleven metres off the approach; against a shooter posted wide, the whole far
+ * side of the pit sat outside the candidate set, so a squad asked to find a way
+ * round one was choosing between seven routes that all walked past him. Every one
+ * scored badly, the least-bad won, and they filed into it. ±5 reaches seventeen
+ * metres, which is across the arena — the far route is now something the chooser can
+ * actually name.
  */
-const BREACH_LANE_ORDER = [0, -1, 1, -2, 2, -3, 3];
+const BREACH_LANE_ORDER = [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5];
 
 export function coordinatedBreachLane(squad, fighter) {
   const ordered = [...squad].sort((a, b) => {

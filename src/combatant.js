@@ -13,7 +13,7 @@ import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
 } from './perception.js';
 import {
-  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, worthSuppressing,
+  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, worthSuppressing, laneSeverity,
 } from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -52,12 +52,24 @@ const SUPPRESSION_PERIOD = 0.22;
 const HOLD_BUDGET = 12;
 
 /**
- * Where along a candidate route to check for incoming fire, and what each point is
- * worth. Fractions of the way there, paired with weights — the destination counts
- * for six times the first step, because leaving a beaten zone means crossing it.
+ * How finely to check a candidate route for incoming fire.
+ *
+ * Every metre and a half of it, rather than at four fixed fractions of the way.
+ * A beaten zone is a *thin* thing — a couple of metres of corridor — and four
+ * samples on a twenty metre route are eight metres apart, so the lane fell straight
+ * between two of them. Measured on the lane-test map: a route whose sampled points
+ * landed at (-7.9, -5.9) and (-13, -4.1), either side of a crossing at x = -9,
+ * scored 0.13 and was chosen as the safest of eleven, and the fighter who walked it
+ * was dead four seconds later. Everything downstream was reasoning correctly about
+ * a route nobody had actually looked at.
+ *
+ * Weight still ramps toward the destination, because ending in a beaten zone is
+ * worse than crossing one, but no stretch of the walk goes unexamined now.
  */
-const ROUTE_SAMPLES = [[0.35, 0.5], [0.6, 1], [0.85, 1.5], [1, 3]];
-const ROUTE_WEIGHT_TOTAL = ROUTE_SAMPLES.reduce((sum, [, weight]) => sum + weight, 0);
+const ROUTE_STEP = 1.5;
+const ROUTE_MIN_SAMPLES = 4;
+const ROUTE_MAX_SAMPLES = 20;
+const routeSampleWeight = (t) => 0.5 + 2.5 * t * t;
 
 /** Scratch for the walked polyline a route cost is measured along. */
 const _routeLegs = [];
@@ -987,9 +999,16 @@ export class Combatant {
         // The squad's assignment still comes first — a crossfire is only a crossfire
         // if the lanes stay spread. It gets overruled only by ground that is being
         // actively covered, which is the one thing worth breaking formation over.
+        const sideByLane = new Map();
         const choice = this.archetype === 'rusher'
           ? { lane: assigned, goal: offsetBreachGoal(tp, this.pos, assigned), covered: false }
-          : safeBreachLane(tp, this.pos, assigned, goal => this._routeCost(world, goal, now));
+          : safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
+            const { cost, side } = this._routeCostBothWays(world, goal, now);
+            sideByLane.set(lane, side);
+            return cost;
+          });
+        // Walk it the way it was costed.
+        this.breachSide = sideByLane.get(choice.lane) ?? this.flankSide;
         this.breachLane = choice.lane;
         this.breachTarget = this.target;
         this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
@@ -1101,7 +1120,10 @@ export class Combatant {
           distance: dist,
           legDamage: this.legDmg,
         });
-        this._steerToward(world, dt, gx, gy, gz, move);
+        // Committed lanes are walked the way they were costed; everything else
+        // keeps the fighter's own habitual flank preference.
+        this._steerToward(world, dt, gx, gy, gz, move,
+          breaching ? (this.breachSide ?? this.flankSide) : this.flankSide);
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && !w.melee && heightGap < 0.8) {
         this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
@@ -1471,7 +1493,7 @@ export class Combatant {
    * use the same pathing to go looking. `walkableLine` is expensive, so the straight
    * -line test runs on the repath cadence rather than every frame.
    */
-  _steerToward(world, dt, gx, gy, gz, move) {
+  _steerToward(world, dt, gx, gy, gz, move, side = this.flankSide) {
     this.repathT = (this.repathT ?? 0) - dt;
     if (this.repathT <= 0) {
       this.repathT = 0.45 + Math.random() * 0.35;
@@ -1479,7 +1501,7 @@ export class Combatant {
       if (this._straightOK) {
         this.path = null;
       } else {
-        this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, this.flankSide);
+        this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, side);
         this.pathIdx = 0;
       }
     }
@@ -1765,16 +1787,30 @@ export class Combatant {
    *
    * Bails immediately when nothing is hot, which is most of the time.
    */
-  _routeCost(world, goal, now) {
+  _routeCost(world, goal, now, side = this.flankSide) {
     if (!this.suppression.anyDanger(now)) return 0;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
-    const legs = this._routeLegs(world, goal);
+    const legs = this._routeLegs(world, goal, side);
+    let walked = 0;
+    for (let i = 1; i < legs.length; i++) {
+      walked += Math.hypot(legs[i].x - legs[i - 1].x, legs[i].z - legs[i - 1].z);
+    }
+    const steps = Math.max(ROUTE_MIN_SAMPLES,
+      Math.min(ROUTE_MAX_SAMPLES, Math.ceil(walked / ROUTE_STEP)));
     let swept = 0;
-    for (const [t, weight] of ROUTE_SAMPLES) {
+    let total = 0;
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      const weight = routeSampleWeight(t);
+      total += weight;
       pointAlongPath(legs, t, _routePoint);
       _routePoint.y = chest;
-      if (this.suppression.covering(_routePoint, sees, now)) { swept += weight; continue; }
+      // Priced by how hard the lane is being worked, not merely by whether it is
+      // hot. Crossing stays cheap against a few opportunist rounds and becomes
+      // prohibitive against a rifle that has been sawing down the corridor.
+      const lane = this.suppression.covering(_routePoint, sees, now);
+      if (lane) { swept += weight * laneSeverity(lane, now); continue; }
       // Ground that has already taken somebody counts heavier than ground merely
       // presumed covered — a bite is worth more than a bang. Marks he is standing
       // inside are skipped: a hit lands a stride from the cover the victim was quite
@@ -1782,7 +1818,7 @@ export class Combatant {
       // expensive and pushes him into the open to escape a blob at his feet.
       swept += weight * this.suppression.markWeightAt(_routePoint, now, this.pos);
     }
-    return Math.min(1, swept / ROUTE_WEIGHT_TOTAL);
+    return Math.min(1, swept / Math.max(1e-6, total));
   }
 
   /**
@@ -1795,7 +1831,7 @@ export class Combatant {
    * movement now ask the navmesh the same question in the same way, so a lane is
    * scored on the route it actually commits him to.
    */
-  _routeLegs(world, goal) {
+  _routeLegs(world, goal, side = this.flankSide) {
     _routeLegs.length = 0;
     _routeLegs.push(this.pos);
     const gy = goal.y ?? this.pos.y;
@@ -1804,11 +1840,37 @@ export class Combatant {
       : true;
     if (!straight) {
       const path = world.nav.findPath(this.pos, { x: goal.x, y: gy, z: goal.z },
-        this.navSeed, this.flankSide);
+        this.navSeed, side);
       if (path && path.length) _routeLegs.push(...path);
     }
     _routeLegs.push(_routeGoal.set(goal.x, gy, goal.z));
     return _routeLegs;
+  }
+
+  /**
+   * The cheaper of the two ways round to `goal`, and which way that was.
+   *
+   * A goal on the far side of the pit is only safe if you *get there* the far way,
+   * and the navmesh optimises distance, so left round the obstacle is what it hands
+   * back even when the goal is on the right. That made the whole far side unusable:
+   * the destination was clean, the shortest path to it went straight down the beaten
+   * zone, the cost came back high, and the lane was thrown out. Asking the pathfinder
+   * for both sides and keeping the better one is what turns "somewhere safe to stand"
+   * into "a safe way of getting there".
+   *
+   * The side that won is carried to the commitment, because a route costed one way
+   * round and then walked the other is the straight-line bug over again.
+   */
+  _routeCostBothWays(world, goal, now) {
+    const own = this._routeCost(world, goal, now, this.flankSide);
+    // Only worth asking the pathfinder for the other way round when the way it
+    // prefers is genuinely bad. Costing both sides of every candidate doubled the
+    // route work for no measurable gain, and route sampling is dense now.
+    if (own < LANE_ABANDON) return { cost: own, side: this.flankSide };
+    const other = this._routeCost(world, goal, now, -this.flankSide);
+    return other < own
+      ? { cost: other, side: -this.flankSide }
+      : { cost: own, side: this.flankSide };
   }
 
   removeFrom(world) {

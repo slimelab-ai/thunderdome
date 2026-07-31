@@ -118,6 +118,27 @@ export function laneIsHot(lane, now) {
 }
 
 /**
+ * How much worse than "merely hot" this lane is, 1 upward.
+ *
+ * Routing used to treat every hot lane alike, so crossing one counted the same
+ * whether it was a man who had loosed four rounds a moment ago or a rifle that had
+ * been sawing down the same corridor for a minute. Brief crossings were priced as
+ * cheap — deliberately, because pricing them dear is what makes a squad cower — and
+ * that is right for the former and fatal for the latter. Two metres of beaten zone
+ * at a walk is most of a second, and a second in front of a saturated automatic is
+ * seven rounds.
+ *
+ * So the crossing price scales with how hard the thing is being worked: 1 at the
+ * threshold, 3 at a saturated lane, 4 once it has killed somebody. At the top of
+ * that range a single mid-route sample is enough to put a lane past the abandon
+ * line on its own, which is the arithmetic way of saying "go round".
+ */
+export function laneSeverity(lane, now) {
+  const saturation = Math.min(1, Math.max(0, lane.heat / SUPPRESSION.max));
+  return 1 + saturation * 2 + (now < lane.deadlyUntil ? 1 : 0);
+}
+
+/**
  * Tell a squad that this spot just got one of them hit.
  *
  * The victim logs it at full weight — he was there. Everyone in earshot logs it at

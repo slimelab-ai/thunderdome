@@ -10,6 +10,9 @@ import { audio } from './audio.js';
 import { NavMesh } from './nav.js';
 import { broadcastNoise, contactRadius } from './perception.js';
 import { laneIsHot, shareHitGround } from './suppression.js';
+import {
+  LANE_TEST, laneTestColliders, buildLaneTestMeshes, spotAt,
+} from './lane-test.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
@@ -2696,6 +2699,254 @@ async function watchHoldTrap(options = {}) {
   return trap;
 }
 
+// ============================================================ the lane test
+//
+// The held-corner question asked on a map built for asking it. See src/lane-test.js
+// for the geometry and why the real pit cannot answer it.
+//
+// The squad spawns behind a wall with one way out. The shooter holds the lane on the
+// left. Left is short and lethal; right is long and safe. Passing looks like: nobody
+// dies, nobody stands in the lane, and the squad spends its time on the safe side —
+// or, if the shooter stops, comes down the short side hard while he is reloading.
+
+function installLaneTestMap() {
+  const realColliders = world.colliders;
+  const realNav = world.nav;
+  const hidden = [];
+  for (const child of scene.children) {
+    if ((child.isMesh || child.isInstancedMesh) && child.visible) {
+      child.visible = false;
+      hidden.push(child);
+    }
+  }
+  const colliders = laneTestColliders();
+  const disposeMeshes = buildLaneTestMeshes(scene);
+  world.colliders = colliders;
+  world.nav = new NavMesh(colliders);
+  return () => {
+    disposeMeshes();
+    for (const child of hidden) child.visible = true;
+    world.colliders = realColliders;
+    world.nav = realNav;
+  };
+}
+
+function makeLaneTest(options = {}) {
+  const cfg = {
+    ammo: 600, mag: 30, reload: 1.9, interval: 0.1, accuracy: 0.85,
+    laneHalfWidth: 1.0, seconds: 75, lockPlayer: true,
+    /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
+    ceaseFireAfter: 0, lullSeconds: 0,
+    ...options,
+  };
+  const muzzle = new THREE.Vector3();
+  const ray = new THREE.Vector3();
+  const probe = new THREE.Vector3();
+  const rel = new THREE.Vector3();
+  const end = new THREE.Vector3();
+  let reach = 0;
+
+  player.slots = ['rifle'];
+  player.slotIdx = 0;
+  player.knifeOut = false;
+  player._mountViewmodel();
+
+  const state = {
+    cfg, mag: cfg.mag, ammo: cfg.ammo - cfg.mag, reload: 0, acc: 0,
+    fired: 0, reloads: 0, deaths: 0, laneEntries: 0, elapsed: 0, done: false,
+    trapFrames: 0, safeFrames: 0, botFrames: 0, laneFrames: 0,
+    pushedInLull: 0, lullFrames: 0,
+  };
+
+  const firingNow = () => {
+    if (!cfg.ceaseFireAfter) return true;
+    const cycle = cfg.ceaseFireAfter + cfg.lullSeconds;
+    return (state.elapsed % cycle) < cfg.ceaseFireAfter;
+  };
+
+  const aimLine = () => {
+    muzzle.set(player.pos.x, 1.5, player.pos.z);
+    ray.set(LANE_TEST.aim.x - player.pos.x, 1.15 - 1.5, LANE_TEST.aim.z - player.pos.z);
+    reach = ray.length() + 6;
+    ray.normalize();
+  };
+
+  state.standingInLane = (c) => {
+    probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
+    rel.subVectors(probe, muzzle);
+    const along = rel.dot(ray);
+    if (along < 1 || along > reach) return false;
+    const off = Math.hypot(rel.x - ray.x * along, rel.z - ray.z * along);
+    return off < cfg.laneHalfWidth && hasLoS(world.colliders, muzzle, probe);
+  };
+
+  const inLane = new Map();
+
+  state.step = (dt) => {
+    if (state.done) return state;
+    state.elapsed += dt;
+    if (cfg.lockPlayer) {
+      player.pos.set(LANE_TEST.post.x, 0, LANE_TEST.post.z);
+      world.playerProxy.pos.copy(player.pos);
+      world.playerProxy.eye = null;
+      player.hp = 1e6;
+      world.playerProxy.alive = true;
+      player.alive = true;
+    }
+    match.campT = 0;
+    match.campWarned = false;
+    aimLine();
+
+    const shooting = firingNow();
+    if (!shooting) { state.acc = 0; state.lullFrames++; }
+    else if (state.reload > 0) { state.reload -= dt; state.acc = 0; }
+    else {
+      state.acc += dt;
+      while (state.acc >= cfg.interval) {
+        state.acc -= cfg.interval;
+        if (state.mag <= 0) {
+          if (state.ammo <= 0) { state.done = true; break; }
+          const take = Math.min(cfg.mag, state.ammo);
+          state.mag = take; state.ammo -= take;
+          state.reload = cfg.reload; state.reloads++;
+          audio.reload(0);
+          break;
+        }
+        state.mag--; state.fired++;
+        world.emitNoise?.(world.playerProxy, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1);
+        end.copy(muzzle).addScaledVector(ray, reach);
+        fx.tracer(muzzle, end);
+        fx.muzzleFlash(muzzle, ray);
+        audio.shot(WEAPONS.rifle.sound, 1);
+        const caught = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
+        if (caught && Math.random() < cfg.accuracy) {
+          probe.set(caught.pos.x, caught.pos.y + 1.15, caught.pos.z);
+          caught.applyDamage(world, 'torso', WEAPONS.rifle.dmg, world.playerShooter, probe);
+        }
+      }
+    }
+    player.mag = state.mag;
+    player.reloading = state.reload;
+
+    for (const c of world.combatants) {
+      if (!c.alive || c.team !== 'enemy') continue;
+      state.botFrames++;
+      const now = state.standingInLane(c);
+      if (now) state.laneFrames++;
+      if (now && !inLane.get(c)) state.laneEntries++;
+      inLane.set(c, now);
+      if (spotAt(c.pos, LANE_TEST.deathTraps)) {
+        state.trapFrames++;
+        if (!shooting) state.pushedInLull++;
+      }
+      if (spotAt(c.pos, LANE_TEST.safeGround)) state.safeFrames++;
+    }
+    if (state.elapsed > cfg.seconds) state.done = true;
+    if (!world.combatants.some(c => c.alive && c.team === 'enemy')) state.done = true;
+    return state;
+  };
+
+  return state;
+}
+
+function laneTestReport(state, squad, seed) {
+  const share = (n) => +(n / Math.max(1, state.botFrames)).toFixed(3);
+  return {
+    seed, squad, deaths: state.deaths, survivors: squad - state.deaths,
+    laneEntries: state.laneEntries,
+    inLaneShare: share(state.laneFrames),
+    atDeathTraps: share(state.trapFrames),
+    atSafeGround: share(state.safeFrames),
+    pushedTrapsDuringLull: state.pushedInLull,
+    roundsFired: state.fired, reloads: state.reloads,
+    seconds: +state.elapsed.toFixed(1),
+  };
+}
+
+async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } = {}) {
+  const runs = [];
+  for (const seed of seeds) {
+    let s = seed >>> 0;
+    const realRandom = Math.random;
+    Math.random = () => {
+      s += 0x6d2b79f5; let t = s;
+      t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+    let restore = null;
+    try {
+      await window.__game.fight('circuits', rank);
+      restore = installLaneTestMap();
+      const enemies = world.combatants.filter(c => c.team === 'enemy');
+      for (const c of world.combatants) if (c.team === 'player') c.removeFrom(world);
+      enemies.forEach((c, i) => {
+        const spot = LANE_TEST.enemySpawn[i % LANE_TEST.enemySpawn.length];
+        c.pos.set(spot.x, 0, spot.z);
+        c.group.position.copy(c.pos);
+        c.spawnPos = c.pos.clone();
+        c.openingT = 0;
+        for (const k of Object.keys(c.ammoPools)) c.ammoPools[k] = 400;
+      });
+      const test = makeLaneTest(options);
+      const originalKill = world.onKill;
+      world.onKill = (killer, victim, part) => {
+        if (victim?.team === 'enemy') test.deaths++;
+        originalKill?.(killer, victim, part);
+      };
+      while (!test.done) { world.simTime += 1 / 60; stepMatch(1 / 60); test.step(1 / 60); }
+      world.onKill = originalKill;
+      runs.push(laneTestReport(test, enemies.length, seed));
+    } finally {
+      restore?.();
+      Math.random = realRandom;
+    }
+  }
+  const total = (k) => runs.reduce((sum, r) => sum + r[k], 0);
+  const mean = (k) => +(runs.reduce((sum, r) => sum + r[k], 0) / runs.length).toFixed(3);
+  return {
+    runs,
+    botLives: total('squad'),
+    deaths: total('deaths'),
+    deathRate: `${total('deaths')} / ${total('squad')}`,
+    laneEntries: total('laneEntries'),
+    meanInLaneShare: mean('inLaneShare'),
+    meanAtDeathTraps: mean('atDeathTraps'),
+    meanAtSafeGround: mean('atSafeGround'),
+    pushedTrapsDuringLull: total('pushedTrapsDuringLull'),
+  };
+}
+
+/** The same thing, on the real loop, so it can be watched. */
+async function watchLaneTest(options = {}) {
+  await window.__game.fight('circuits', options.rank ?? 5);
+  const restore = installLaneTestMap();
+  const enemies = world.combatants.filter(c => c.team === 'enemy');
+  for (const c of world.combatants) if (c.team === 'player') c.removeFrom(world);
+  enemies.forEach((c, i) => {
+    const spot = LANE_TEST.enemySpawn[i % LANE_TEST.enemySpawn.length];
+    c.pos.set(spot.x, 0, spot.z);
+    c.group.position.copy(c.pos);
+    c.spawnPos = c.pos.clone();
+    c.openingT = 0;
+    for (const k of Object.keys(c.ammoPools)) c.ammoPools[k] = 400;
+  });
+  player.pos.set(LANE_TEST.post.x, 0, LANE_TEST.post.z);
+  player.yaw = Math.atan2(LANE_TEST.aim.x - LANE_TEST.post.x, LANE_TEST.aim.z - LANE_TEST.post.z);
+  world.playerProxy.pos.copy(player.pos);
+  const test = makeLaneTest({ lockPlayer: false, ...options });
+  const originalKill = world.onKill;
+  world.onKill = (killer, victim, part) => {
+    if (victim?.team === 'enemy') test.deaths++;
+    originalKill?.(killer, victim, part);
+  };
+  world.scenario = (dt) => {
+    test.step(dt);
+    if (test.done) { world.scenario = null; world.onKill = originalKill; restore(); }
+  };
+  test.restore = () => { world.scenario = null; world.onKill = originalKill; restore(); };
+  return test;
+}
+
 function updateSpectatorCamera(dt) {
   if (!match.spectatorTarget?.alive) cycleSpectator(1);
   const target = match.spectatorTarget;
@@ -2787,6 +3038,10 @@ window.__game = {
   // sets the same thing up and lets the normal loop run it so you can watch.
   holdTrap: (opts) => runHoldTrap(opts),
   holdTrapWatch: (opts) => watchHoldTrap(opts),
+  // The purpose-built version: one way out, a short lethal route and a long safe
+  // one. `laneTest()` scores it; `laneTestWatch()` plays it in front of you.
+  laneTest: (opts) => runLaneTest(opts),
+  laneTestWatch: (opts) => watchLaneTest(opts),
   flushAnalytics() { return analytics.flush(); },
   get analyticsPending() { return analytics.queue.length; },
   setLocked(v) { locked = v; },
