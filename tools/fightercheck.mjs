@@ -52,6 +52,10 @@ const LIMITS = {
   headStep: 0.045, // m the head may move in one frame, through any state change
   churn: 0.60,     // how much blendspace weight may move in one frame
   bob: 0.085,      // m the head may rise and fall over one locomotion cycle
+  covered: 0.90,   // fraction of the visible fighter the hitboxes must cover
+  overhang: 0.30,  // fraction of hitbox coverage allowed to stick out past the mesh;
+                   // a box around a cylinder is ~27% over by geometry alone
+  headParted: 0.85,// fraction of skull hits that must come back as head hits
 };
 
 const browser = await puppeteer.launch({
@@ -462,6 +466,69 @@ const report = await page.evaluate(async () => {
   }
   rig._crouchK = 0;
 
+  // ---- hitbox coverage ----
+  //
+  // Do the bone hitboxes actually cover the fighter you can see?
+  //
+  // Nothing else checks this. The boxes are invisible, so a gap is a place where
+  // rounds pass through a visible body and nobody can tell why, and an overhang is a
+  // place where they connect with thin air. A grid of rays is cast at the fighter, and
+  // what the skinned mesh intercepts is compared against what the boxes intercept.
+  const coverage = [];
+  {
+    const ray = new T.Raycaster();
+    ray.firstHitOnly = false;
+    const dir = new T.Vector3();
+    const from = new T.Vector3();
+    for (const [name, drive] of [
+      ['aimed', () => { rig.setStance(0, false, 0, 1); rig.setAimWeight(1); }],
+      ['running', () => { rig.setStance(4.0, false, 0.3, 0.95); rig.setAimWeight(1); }],
+      ['crouched', () => { rig.setStance(1.4, true, 0, 1); rig.setAimWeight(1); }],
+    ]) {
+      rig.group.position.set(0, 0, 0);
+      for (let i = 0; i < 150; i++) { drive(); rig.setAim(0.05, 0.1); rig.update(DT); }
+      rig.group.updateMatrixWorld(true);
+
+      // Everything above the neck joint is head. Using a radius around the head *bone*
+      // instead is wrong twice over: the bone sits at the base of the skull, not its
+      // centre, so the sample lands on the jaw and throat.
+      const neckY = new T.Vector3()
+        .setFromMatrixPosition(rig.bones.get('head').matrixWorld).y + 0.03;
+      let mesh = 0, box = 0, both = 0, headRays = 0, headBoxed = 0;
+      // Cast from several angles: a fighter is shot at from the front, the side and
+      // behind, and a box that lines up from one of those can miss from another.
+      for (const yaw of [0, Math.PI / 2, Math.PI]) {
+        const cx = Math.sin(yaw) * 4, cz = Math.cos(yaw) * 4;
+        for (let gx = -22; gx <= 22; gx++) {
+          for (let gy = 0; gy <= 46; gy++) {
+            const off = gx * 0.022;
+            from.set(cx + Math.cos(yaw) * off, gy * 0.04, cz - Math.sin(yaw) * off);
+            dir.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+            ray.set(from, dir);
+            const hitMesh = ray.intersectObjects(rig.skinned, false);
+            const hitBox = ray.intersectObjects(rig.hitboxes, false);
+            if (hitMesh.length) mesh++;
+            if (hitBox.length) box++;
+            if (hitMesh.length && hitBox.length) both++;
+            // Rays that pass through the skull should come back as head hits.
+            if (hitMesh.length && hitMesh[0].point.y > neckY) {
+              headRays++;
+              if (hitBox.length && hitBox[0].object.userData.part === 'head') headBoxed++;
+            }
+          }
+        }
+      }
+      coverage.push({
+        name,
+        covered: mesh ? both / mesh : 0,
+        overhang: box ? (box - both) / box : 0,
+        headParted: headRays ? headBoxed / headRays : 1,
+      });
+    }
+    rig.setAimWeight(0);
+    rig._crouchK = 0;
+  }
+
   // ---- support hand ----
   //
   // Does the left hand actually hold the weapon?
@@ -528,7 +595,7 @@ const report = await page.evaluate(async () => {
   rig.setWeapon(null, null);
 
   g.scene.remove(rig.group);
-  return { cases, locked, aimRange, grip, transitions, bob };
+  return { cases, locked, aimRange, grip, transitions, bob, coverage };
 });
 
 await browser.close();
@@ -593,6 +660,16 @@ console.log('\nhead travel over one cycle (the "heads bob" number)');
 for (const b of report.bob) {
   console.log(`  ${b.name.padEnd(8)} rise ${(b.rise * 100).toFixed(1).padStart(5)} cm   sway ${(b.sway * 100).toFixed(1).padStart(5)} cm`
     + bad(b.rise > LIMITS.bob, `${b.name} head rises ${(b.rise * 100).toFixed(1)} cm`));
+}
+
+console.log('\nhitbox coverage: do the boxes cover the fighter you can see?');
+console.log('  pose       body covered   overhang   head boxes read head');
+for (const c of report.coverage) {
+  const pc = (v) => `${(v * 100).toFixed(1)}%`.padStart(7);
+  console.log(`  ${c.name.padEnd(10)} ${pc(c.covered)}      ${pc(c.overhang)}   ${pc(c.headParted)}`
+    + bad(c.covered < LIMITS.covered, `${c.name} leaves ${((1 - c.covered) * 100).toFixed(1)}% of the body unhittable`)
+    + bad(c.overhang > LIMITS.overhang, `${c.name} has ${(c.overhang * 100).toFixed(1)}% of its hitboxes off the body`)
+    + bad(c.headParted < LIMITS.headParted, `${c.name} reads only ${(c.headParted * 100).toFixed(0)}% of skull hits as head`));
 }
 
 console.log('\nsupport hand: distance from the left fist to the weapon it should be holding');

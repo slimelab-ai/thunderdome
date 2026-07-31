@@ -646,13 +646,16 @@ export class Player {
       pumpK,
     );
 
-    // update world proxy — leaning exposes ~70% of the offset to enemy fire
+    // Update the world proxy. The lean goes across in full: the hit model tilts the
+    // body about the feet rather than sliding it sideways, so how much of the offset
+    // reaches any given height falls out of the geometry. The 0.7 that used to be here
+    // was fudging around a model that moved the player's boots when he leaned.
     const pp = this.world.playerProxy;
     pp.pos.copy(this.pos);
     pp.alive = this.alive;
     pp.heightScale = this.heightScale;
-    pp.leanX = leanX * 0.7;
-    pp.leanZ = leanZ * 0.7;
+    pp.leanX = leanX;
+    pp.leanZ = leanZ;
   }
 
   // Ledge in front of us we can clamber onto: top 0.35–1.5 above feet, within reach, facing it.

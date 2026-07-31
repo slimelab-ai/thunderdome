@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WEAPONS, buildHeldGun } from './weapons.js';
-import { fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH } from './combat.js';
+import { fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH, playerAimPoint } from './combat.js';
 import { ITEM_TYPES } from './items.js';
 import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
@@ -582,7 +582,7 @@ export class Combatant {
       // geometric sightline to target — with no sight, range means nothing: keep hunting
       const eye = this.eyePos();
       const aim = this.target.isPlayer
-        ? new THREE.Vector3(this.target.pos.x, this.target.pos.y + 1.25 * this.target.heightScale, this.target.pos.z)
+        ? playerAimPoint(world.colliders, eye, world.playerProxy, _aimTmp).clone()
         : this.target.aimPoint();
       const sight = hasLoS(world.colliders, eye, aim);
 

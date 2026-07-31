@@ -87,7 +87,9 @@ const MAX_TURN = 10.0;
 const BONE_LENGTH = {
   head: 0.22, chest: 0.16, spine: 0.18, hips: 0.14,
   upperarm_l: 0.26, forearm_l: 0.23, upperarm_r: 0.26, forearm_r: 0.23,
+  hand_l: 0.11, hand_r: 0.11,
   thigh_l: 0.42, shin_l: 0.43, thigh_r: 0.42, shin_r: 0.43,
+  foot_l: 0.18, foot_r: 0.18,
 };
 
 /**
@@ -97,6 +99,10 @@ const BONE_LENGTH = {
  * bone-Y-along-the-bone convention). `lengthScale` and `lengthOffset` are fractions
  * of the bone's length, so the boxes stay right if a bone is retuned.
  *
+ * Limb boxes are sized close to the limb. A box around a cylinder overhangs it by
+ * about 27% no matter what, so that much is the floor rather than slack; anything
+ * beyond it is a fighter being hit where he visibly is not.
+ *
  * Two boxes share the `torso` part name so chest and abdomen are both torso hits;
  * `part` is what the damage model reads, not the mesh identity.
  */
@@ -104,14 +110,22 @@ const HITBOXES = [
   ['head', 'head', 0.25, 0.25, 1.05, 0.5],
   ['chest', 'torso', 0.40, 0.28, 1.35, 0.45],
   ['spine', 'torso', 0.34, 0.25, 1.15, 0.45],
-  ['upperarm_l', 'armL', 0.17, 0.17, 1.1, 0.5],
-  ['forearm_l', 'armL', 0.15, 0.15, 1.25, 0.5],
-  ['upperarm_r', 'armR', 0.17, 0.17, 1.1, 0.5],
-  ['forearm_r', 'armR', 0.15, 0.15, 1.25, 0.5],
+  // The pelvis. There was no box here at all, which left a 16 cm band across the
+  // widest part of the fighter — gut height — that rounds passed straight through.
+  // `npm run fightercheck` measures coverage against the drawn mesh now.
+  ['hips', 'torso', 0.36, 0.26, 1.65, 0.20],
+  ['upperarm_l', 'armL', 0.15, 0.15, 1.1, 0.5],
+  ['forearm_l', 'armL', 0.13, 0.13, 1.25, 0.5],
+  ['hand_l', 'armL', 0.11, 0.11, 1.3, 0.5],
+  ['upperarm_r', 'armR', 0.15, 0.15, 1.1, 0.5],
+  ['forearm_r', 'armR', 0.13, 0.13, 1.25, 0.5],
+  ['hand_r', 'armR', 0.11, 0.11, 1.3, 0.5],
   ['thigh_l', 'legL', 0.20, 0.20, 1.05, 0.5],
-  ['shin_l', 'legL', 0.17, 0.17, 1.1, 0.5],
+  ['shin_l', 'legL', 0.15, 0.15, 1.1, 0.5],
+  ['foot_l', 'legL', 0.13, 0.12, 1.15, 0.45],
   ['thigh_r', 'legR', 0.20, 0.20, 1.05, 0.5],
-  ['shin_r', 'legR', 0.17, 0.17, 1.1, 0.5],
+  ['shin_r', 'legR', 0.15, 0.15, 1.1, 0.5],
+  ['foot_r', 'legR', 0.13, 0.12, 1.15, 0.45],
 ];
 
 let loadPromise = null;

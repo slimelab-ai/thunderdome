@@ -286,6 +286,44 @@ the shoulder also swings the hand forward past the muzzle. `tools/poses/hands.js
 reports both hand positions in camera space so the pose can be solved against a
 target instead of nudged.
 
+### 6.3 Hit volumes
+
+Fighters are hit through invisible boxes parented to bones; the player is hit through a
+capsule and a head sphere. Neither has a visible representation, so both can be wrong
+indefinitely without anybody noticing — and both were.
+
+**The player's resolver is analytic.** It used to march the ray in 0.35 m steps against
+a head band 0.22 m tall, so whether a headshot registered came down to where the samples
+happened to land, and mostly they landed either side of it. Nobody could shoot the
+player in the face and no amount of aiming changed that. It is a proper ray-capsule
+intersection now, with a separate head sphere, and `test/hitbox.test.js` sweeps the
+whole head rather than sampling one lucky height.
+
+**The head wins overlaps.** Shoulders are wider than a skull, so at the top of the chest
+the body capsule is entered before the head sphere even on a shot going straight through
+the face — nearest-surface-wins reported the lower half of every head as a shoulder.
+
+**A lean pivots about the feet.** The head swings out, the boots stay put. Translating
+the whole capsule sideways carried the player's legs around the corner with him and
+exposed them to fire he had no way to account for.
+
+**Limb assignment comes from the ray, not the impact point.** An impact is on the
+surface by definition, so its distance from the body axis is always exactly the radius —
+measuring *that* made every hit an arm. What matters is how close to the centre line the
+round passed, which is a property of the ray.
+
+**The AI's aim point and the hit model must agree.** They are the same function over the
+same lean now. The AI used to aim at a fixed point over the player's feet with no lean
+term at all, so a player peeking a corner was being aimed at *through* the wall he was
+peeking past, and his exposed head drew no fire at all. Chest first, head if the chest
+is not there to be hit.
+
+**Cover the whole fighter.** There was no hitbox on the hips — a 16 cm band across the
+widest part of the body, at gut height, that rounds passed straight through — and none
+on the hands or feet. Coverage went from 88% to 99% of the drawn silhouette. Limb boxes
+are sized close to the limb: a box around a cylinder overhangs it by about 27% whatever
+you do, and anything past that is a fighter being hit where he visibly is not.
+
 ## 7. VFX rules
 
 **A shot comes from the barrel, and is drawn from the barrel, and those are the same
@@ -386,6 +424,7 @@ at its worst — and asserts:
 | `recoil` | that the muzzle actually swings under sustained automatic fire |
 | bore height | the shouldered weapon's bore against the sight line — a weapon carried at the chest cannot clear cover its owner can see over |
 | peek reach | how far a lean carries the muzzle, which is what combat may size its corner peek to |
+| coverage | fraction of the drawn fighter the bone hitboxes actually cover, how much sticks out past him, and whether skull hits come back as head hits |
 | transitions | worst single-frame head movement and blendspace churn through a dead stop, a standing start, an instant reversal, and per-frame heading noise |
 | bob | how far the head rides up and down and side to side over one cycle |
 | locked | the feet must not move *at all* when only aim or lean changes |
@@ -492,6 +531,14 @@ while converging perfectly in isolation. Resume from last frame's solution.
 heading inside `setStance` fixes it for the AI, the capture poses and the test bench at
 once. The alternative — asking every caller to hand over a clean direction — is the
 version where one of them forgets.
+
+**A resolver that samples cannot see anything smaller than its step.** The player's hit
+model marched in 0.35 m steps past a 0.22 m head. Every part of the system around it was
+correct and headshots still did not work.
+
+**Geometry that overlaps needs a stated winner.** Two volumes sharing a region resolve
+by whichever the ray reaches first, which is almost never the answer a player expects
+— a shot through the face entered the shoulder capsule first and was scored as an arm.
 
 **A gameplay offset with no matching visual is a cheat, whatever it was meant to be.**
 The peek offset, the tracer origin and the fire origin were three different points, and
