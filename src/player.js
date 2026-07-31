@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   WEAPONS, buildViewmodel, animateWeaponParts, solveSightAlignment, adsRelief,
 } from './weapons.js';
+import { Recoil, RecoilPattern } from './recoil.js';
 import { ViewModel } from './viewmodel.js';
 import { fireRay, applySpread, resolveCircle, wallHit, STEP_REACH, STAND_LIMIT } from './combat.js';
 import { ITEM_TYPES, countInPack, useFromPack, ammoInPack, consumeAmmo, makeCharacter } from './items.js';
@@ -26,6 +27,8 @@ const _casingAt = new THREE.Vector3();
 const EYE_STAND = 1.62;
 const EYE_CROUCH = 1.08;
 const BASE_FOV = 75;
+const DEG2RAD = Math.PI / 180;
+const RAD2DEG = 180 / Math.PI;
 
 export class Player {
   constructor(camera, world) {
@@ -76,8 +79,9 @@ export class Player {
     this.ads = 0;            // 0..1
     this.adsHeld = false;
     this.bloom = 0;          // recoil bloom
-    this.recoilPitch = 0;
-    this.recoilYaw = 0;
+    // Recoil is an offset on top of the aim, not a change to it. See src/recoil.js.
+    this.recoil = new Recoil();
+    this.recoilPattern = new RecoilPattern(this.weapon);
     this.kick = 0;           // viewmodel kick (eased toward kickTarget)
     this.kickTarget = 0;
     this.bobT = 0;
@@ -144,6 +148,9 @@ export class Player {
   }
 
   _mountViewmodel() {
+    // A new weapon is a new pattern, and a fresh index: the first round out of a
+    // freshly drawn gun is the top of its spray, not wherever the last one left off.
+    if (this.recoilPattern) this.recoilPattern.set(this.weapon);
     const id = this.weapon.id;
     if (!this.viewmodels[id]) this.viewmodels[id] = buildViewmodel(id);
     this.currentVM = this.viewmodels[id];
@@ -161,7 +168,7 @@ export class Player {
     this.mag = this.weapon.mag;
     this.reloading = 0; this.shellLoading = false; this.pumpT = 0;
     this.fireCooldown = 0; this.bloom = 0;
-    this.recoilPitch = 0; this.recoilYaw = 0;
+    this.recoil.reset();
     this.deathT = 0;
     this.stats.matchKills = 0; this.stats.matchHeadshots = 0;
     this.triggerHeld = false; this.adsHeld = false; this.ads = 0;
@@ -178,8 +185,16 @@ export class Player {
   onMouseMove(dx, dy) {
     if (!this.alive) return;
     const sens = 0.0021 * (1 - this.ads * 0.45);
-    this.yaw -= dx * sens;
-    this.pitch -= dy * sens;
+    // Through the recoil first.
+    //
+    // Input that opposes the current kick is spent cancelling it rather than moving
+    // the aim, so pulling down on a climbing gun returns the sights to where they were
+    // pointing and stops there. Adding recoil straight to the pitch instead — which is
+    // what this used to do — means every correction drags the aim below where it
+    // started, and the player is fighting their own compensation as well as the gun.
+    const look = this.recoil.applyLook(dx * sens * RAD2DEG, -dy * sens * RAD2DEG);
+    this.yaw -= look.x * DEG2RAD;
+    this.pitch += look.y * DEG2RAD;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
   }
 
@@ -579,8 +594,7 @@ export class Player {
     this.triggerQueued = false;
 
     // recoil recovery
-    this.recoilPitch *= Math.pow(0.001, dt);
-    this.recoilYaw *= Math.pow(0.001, dt);
+    // (recoil is integrated with the camera, below — it is an offset, not a decay)
     // Ease toward the impulse rather than snapping to it. Setting `kick` directly
     // moved the muzzle ~0.14 m in a single frame, which reads as a cut rather than a
     // kick; two or three frames of rise is still instant to the eye.
@@ -620,7 +634,14 @@ export class Player {
       this.pos.y + this._eyeSmooth + bobY + shake - leanDrop,
       this.pos.z - bobX * sin + leanZ
     );
-    this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw + this.recoilYaw, Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * 0.3);
+    // The offset rides on top of the aim: +x kicks right, so the camera's yaw (which
+    // increases to the left) takes it negative; +y kicks up, and pitch increases upward.
+    this.recoil.update(dt);
+    this.camera.rotation.set(
+      this.pitch + this.recoil.posY * DEG2RAD,
+      this.yaw - this.recoil.posX * DEG2RAD,
+      Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * 0.3,
+    );
 
     // ---- viewmodel pose ----
     //
@@ -641,6 +662,19 @@ export class Player {
     } else {
       vm.position.copy(hipPos);
       vm.quaternion.copy(_hipQuat);
+    }
+
+    // Scope glass: solid at the hip, gone by the time the player is looking through
+    // it. A scope with no lenses reads as a length of pipe from the outside, and a
+    // scope with lenses cannot be seen through — the only way to have both is to fade
+    // them out on the way up.
+    const lenses = this.currentVM && this.currentVM.group.userData.lenses;
+    if (lenses) {
+      const glass = Math.max(0, 1 - this.ads * 2.2);
+      for (const l of lenses) {
+        l.material.opacity = glass;
+        l.visible = glass > 0.01;
+      }
     }
 
     // Everything below is felt rather than aimed, so it composes on top — in the
@@ -891,9 +925,12 @@ export class Player {
     }
 
     // recoil
-    const r = w.recoil * (1 - this.ads * 0.35) * (1 - (this.skills.aim || 0) * 0.14) * (1 + this.armDmg * 0.8);
-    this.recoilPitch += 0.011 * r;
-    this.recoilYaw += (Math.random() - 0.5) * 0.008 * r;
+    // Modifiers only. The weapon's own strength lives in `recoilVelocity`, which the
+    // pattern has already applied — multiplying by `w.recoil` as well would count it
+    // twice and make the heavy guns quadratically worse than the light ones.
+    const r = (1 - this.ads * 0.35) * (1 - (this.skills.aim || 0) * 0.14) * (1 + this.armDmg * 0.8);
+    const kick = this.recoilPattern.next(this.world.simTime ?? performance.now() / 1000);
+    this.recoil.add(kick.x * r, kick.y * r);
     this.bloom += w.recoil * 0.45;
     this.kickTarget = Math.min(1, (this.kickTarget ?? 0) + 0.55);
 

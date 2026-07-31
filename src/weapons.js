@@ -10,22 +10,38 @@ import { bindAuthoredMaterials } from './materials.js';
 // that kills in one is a lane nobody crosses, while a sidearm cracking off across the
 // pit is a nuisance. Without this a player with the starting pistol could hold five
 // men behind a crate as effectively as an AK, which is not what a sidearm is.
+//
+// `recoilPattern` is the shape of the climb, one entry per shot, `x` right and `y` up,
+// in roughly unit terms — `recoilVelocity` sets how hard it is in degrees per second.
+// The list is walked in order and repeated if the magazine outlasts it, and the index
+// resets after `recoilCooldown` without firing, so every burst opens the same way.
+//
+// The point of a pattern rather than a random kick is that it can be *learned*: a
+// player who knows the gun can pull against it and hold a group. Sprays therefore
+// climb hard for the first handful of rounds and then break sideways, which is where
+// the skill is. `recoilRandom` adds a little scatter so it is not a machine.
+// See src/recoil.js.
+
 export const WEAPONS = {
   pistol: {
     id: 'pistol', name: 'P9 SIDEARM', price: 0, tier: 0,
     dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
-    // Just above what the decay eats at a fast trigger finger, so sustained
-    // deliberate fire does pin somebody after a few seconds and a couple of
-    // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
-    // at all, which is as wrong in the other direction.
-    suppression: 0.55,
     // When the slide is worked during the reload, as a fraction of the reload's
     // duration. Matches the frames in `anim_reload_pistol` where the support hand is
     // over the top of the weapon — without this the hand mimes a rack the slide never
     // performs, which is what made the reload read as a rifle's.
     slideRack: [0.66, 0.82],
+    // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
+    // sidearm's recoil is a flick you ride out between shots, not a climb.
+    recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
+    recoilVelocity: 7.0, recoilRandom: 1.4, recoilCooldown: 0.45,
+    // Just above what the decay eats at a fast trigger finger, so sustained
+    // deliberate fire does pin somebody after a few seconds and a couple of
+    // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
+    // at all, which is as wrong in the other direction.
+    suppression: 0.55,
     desc: 'Every contestant starts with one. 3 to the chest or 1 to the skull.',
   },
   smg: {
@@ -33,6 +49,15 @@ export const WEAPONS = {
     dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
+    // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
+    // rather than climbing straight — this is a weapon you walk onto a target.
+    recoilPattern: [
+      [0, 1], [0.05, 1], [0.12, 0.95], [0.2, 0.85], [0.28, 0.7], [0.3, 0.55],
+      [0.22, 0.45], [0.05, 0.4], [-0.18, 0.4], [-0.35, 0.35], [-0.45, 0.3],
+      [-0.4, 0.25], [-0.2, 0.25], [0.08, 0.25], [0.3, 0.2], [0.42, 0.2],
+      [0.38, 0.15], [0.2, 0.15], [-0.05, 0.15], [-0.28, 0.15],
+    ],
+    recoilVelocity: 4.6, recoilRandom: 1.8, recoilCooldown: 0.5,
     suppression: 0.75,
     desc: 'A hose of cheap brass. Wild past 12 meters, filthy up close.',
   },
@@ -41,11 +66,15 @@ export const WEAPONS = {
     dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
-    suppression: 0.6,
     // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
     // between shots; `shellReload` is the time to feed one round, repeated until the
     // tube is full — a shotgun does not swap a magazine.
     pump: 0.42, shellReload: 0.44,
+    // One heavy shove. There is no pattern to learn on a pump gun — you are back on
+    // target by the time the next shell is chambered.
+    recoilPattern: [[0, 1], [0.12, 1], [-0.12, 1]],
+    recoilVelocity: 15.0, recoilRandom: 2.2, recoilCooldown: 0.6,
+    suppression: 0.6,
     desc: '9 pellets of crowd-pleasing violence. Deletes torsos inside 10m.',
   },
   rifle: {
@@ -53,6 +82,17 @@ export const WEAPONS = {
     dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9,
     spread: 1.7, adsSpread: 0.4, recoil: 1.5, pellets: 1,
     aiRange: 20, adsFov: 55, sound: 'rifle',
+    // The one worth learning. Six rounds nearly straight up, then a hard break right
+    // and a slower drift back across — hold the trigger and you spell out the shape.
+    recoilPattern: [
+      [0, 1], [0.02, 1], [0.06, 0.98], [0.1, 0.92], [0.16, 0.84], [0.22, 0.72],
+      [0.32, 0.56], [0.42, 0.44], [0.48, 0.34], [0.46, 0.28], [0.34, 0.24],
+      [0.12, 0.22], [-0.14, 0.22], [-0.38, 0.2], [-0.52, 0.18], [-0.56, 0.16],
+      [-0.48, 0.14], [-0.3, 0.14], [-0.05, 0.14], [0.22, 0.12], [0.44, 0.12],
+      [0.54, 0.1], [0.5, 0.1], [0.34, 0.08], [0.1, 0.08], [-0.16, 0.08],
+      [-0.36, 0.08], [-0.46, 0.06], [-0.4, 0.06], [-0.22, 0.06],
+    ],
+    recoilVelocity: 6.2, recoilRandom: 1.1, recoilCooldown: 0.55,
     suppression: 1,
     desc: 'The workhorse of every syndicate in the league. 2–3 rounds does it.',
   },
@@ -61,6 +101,9 @@ export const WEAPONS = {
     dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1,
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
+    // A single hard punch straight up. You lose the sight picture and get it back.
+    recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
+    recoilVelocity: 17.0, recoilRandom: 1.0, recoilCooldown: 0.8,
     suppression: 1.15,
     desc: 'One shot, one funeral. Scoped. Slow. Surgical.',
   },
@@ -71,6 +114,7 @@ WEAPONS.knife = {
   id: 'knife', name: 'PIT SHANK', price: 0, tier: -1,
   dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0,
   spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
+  recoilPattern: [], recoilVelocity: 0,
   aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4,
   desc: 'Always with you. Two good slashes end anyone.',
 };
@@ -299,6 +343,14 @@ export function buildWeaponModel(id) {
       // So do the sights. Aiming is solved against where they actually are rather
       // than against a per-weapon offset somebody tuned by eye, so they have to
       // survive the export as findable objects. See tools/blender/weapons.py.
+      if (child.name === 'lens_ocular' || child.name === 'lens_objective') {
+        // Its own material instance, because opacity is animated per weapon and the
+        // surface registry hands out one shared material per name.
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        child.material.depthWrite = false;
+        (group.userData.lenses ||= []).push(child);
+      }
       if (child.name === 'sight_rear' || child.name === 'sight_front') {
         // Reference points, not art: they mark the middle of the notch and the tip of
         // the post, which are places you look *through* and *at*. Never drawn.

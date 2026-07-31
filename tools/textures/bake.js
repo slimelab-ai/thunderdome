@@ -497,7 +497,9 @@
       }
     }
     const ao = heightToAO(height, size, 3, 5);
-    return { albedo: alb, normal: heightToNormal(height, size, 6.5, 3), orm: packORM(size, ao, rough, metal) };
+    // Same reasoning as gunmetal: this dresses weapon receivers as well as arena
+    // steel, and it was the stronger of the two.
+    return { albedo: alb, normal: heightToNormal(height, size, 2.4, 3), orm: packORM(size, ao, rough, metal) };
   };
 
   /** Chain-link fence with a real alpha cut, woven rather than two crossed lines. */
@@ -687,12 +689,18 @@
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const i = y * size + x;
-        rough[i] = lerp(0.44, 0.24, clamp01((wear(x, y) - 0.58) * 3.5));
+        // Not glass. At 0.24 a metal this dense catches a specular pinprick from every
+        // coloured lamp in the room, and a weapon lives 25 cm from the camera — the
+        // whole gun crawled with multicoloured sparkle, worst of all down the sights.
+        rough[i] = lerp(0.54, 0.36, clamp01((wear(x, y) - 0.58) * 3.5));
       }
     }
     return {
       albedo: alb,
-      normal: heightToNormal(height, size, 4.5, 2),
+      // Gentle. A per-texel normal at strength 4.5 is a field of tiny mirrors, and the
+      // weapon texel rate is four times the arena's, so every one of them lands in
+      // frame at once.
+      normal: heightToNormal(height, size, 1.6, 3),
       orm: packORM(size, 1, rough, 0.92),
     };
   };

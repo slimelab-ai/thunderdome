@@ -20,7 +20,13 @@ g.step(1 / 60, 160);
 // rewrites `adsHeld` from the real mouse every frame. Holding it here is the only way
 // the weapon is still up when the shutter opens.
 const wantAds = !params.has('hip');
-const hold = () => { p.adsHeld = wantAds; p.mag = p.weapon.mag; requestAnimationFrame(hold); };
+const hold = () => {
+  p.adsHeld = wantAds; p.mag = p.weapon.mag;
+  // Pin the stance too: the capture free-runs for seconds and any drift in position
+  // or yaw makes the shot un-comparable with the last one.
+  p.pos.set(0, 0, 6); p.yaw = 0; p.pitch = 0;
+  requestAnimationFrame(hold);
+};
 hold();
 g.step(1 / 60, 90);
 
