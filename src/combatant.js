@@ -301,9 +301,17 @@ export class Combatant {
       cross.position.set(0.09, 0.06, 0.15);
       bone('chest')?.add(cross);
     } else if (this.archetype === 'rusher') {
+      // Warm paint, not a lamp.
+      //
+      // At 1.6 this cleared the bloom threshold (0.82, see src/render.js) and became a
+      // glowing ring on a man's head, readable across the whole arena — and the rusher
+      // is the archetype that sprints at you from an angle, so it announced every
+      // flank before it arrived. Archetype markers have to stay under that threshold;
+      // the medic's cross at 0.25 always did, which is why only this one gave the game
+      // away.
       const band = new THREE.Mesh(
         new THREE.BoxGeometry(0.29, 0.05, 0.29),
-        new THREE.MeshStandardMaterial({ color: 0x902a08, emissive: 0xff5a1a, emissiveIntensity: 1.6 }),
+        new THREE.MeshStandardMaterial({ color: 0x902a08, emissive: 0xff5a1a, emissiveIntensity: 0.3 }),
       );
       band.position.y = 0.135;
       bone('head')?.add(band);
@@ -870,7 +878,7 @@ export class Combatant {
         }
         const camDist = fireEye.distanceTo(world.cameraPos);
         audio.shot(w.sound, 1.2 / (1 + camDist * 0.09));
-        world.fx.muzzleFlash(fireEye, dir);
+        world.fx.muzzleFlash(fireEye, dir, { source: this });
         this.rig.trigger('fire');
 
         this.shotsFired = (this.shotsFired || 0) + 1;

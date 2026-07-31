@@ -356,22 +356,42 @@ unfair peek. `npm run fightercheck` measures how far a lean actually carries the
 (29 cm) and combat sizes its peek off that number. Past it, the fighter has to step out,
 and stepping out is visible.
 
+**Gameplay-visible brightness is a gameplay decision, not a look decision.** Three
+separate things here — a light's range, a sprite's size, an emissive's intensity — each
+chosen for how they looked in isolation, each ended up telling the player where the
+enemy was. Anything attached to a fighter that emits gets judged at the range it will
+actually be seen from.
+
 **A shared effect instance is a bug the moment two things can trigger it.** There was
 one muzzle flash sprite and one muzzle-flash point light for the whole game, and
 whoever fired last took both — so an enemy shooting across the pit stole the flash off
 the player's own weapon mid-burst. Flashes are pooled now, one per shooter.
 
-**A light that follows a shooter is tactical information.** That single point light,
-9 m across and lit for a third of every second of sustained fire, painted a pool on the
-floor around whoever was shooting and moved with them — a lamp announcing every flank,
-through walls they were otherwise properly hidden behind. Muzzle flashes no longer drive
-a world light at all. The player's own weapon keeps a small private one, because it
-cannot give anybody away and firing feels flat without it.
+**Muzzle flashes light the room, and nothing further.** They have to: when the house
+lights drop, the flashes are all there is. But a flash light is not shadowed — six
+shadow faces per shot is not affordable — so its *range* is what bounds the leak. At
+3.5 m a flash lights the shooter and his immediate surroundings, cannot reach across
+the arena, and gets a metre or two through a wall rather than announcing him on the
+far side of it. One light per shooter, from a pool. The single 9 m light that used to
+teleport to whoever fired last, and stayed lit a third of every second, read as a lamp
+following each enemy about.
 
-**Sustained fire is dimmer than the first round.** An automatic at 700 rpm retriggers
-its flash every 86 ms against a 45 ms decay, so every frame of a burst was drawn at
-full opacity, additively, through bloom — a solid block over the sights for as long as
-the trigger was held. A repeat inside 200 ms now peaks between a third and a half.
+**Sustained fire is dimmer than the first round, for everyone.** An automatic at
+700 rpm retriggers its flash every 86 ms against a 45 ms decay, so every frame of a
+burst was drawn at full opacity, additively, through bloom — a solid block over the
+sights for as long as the trigger was held. A repeat inside 200 ms now peaks between a
+third and a half; the first round of a burst is still full. Timed per shooter, so an
+enemy leaning on the trigger dims the same way the player does (81% of enemy flashes,
+in a measured firefight).
+
+**An emissive above the bloom threshold is a position beacon.** The bloom pass picks
+up anything over 0.82 (see `src/render.js`), and bloom is not occluded by distance the
+way a small bright object is — it spreads. The rusher's headband at emissive 1.6 became
+a glowing ring on a man's head readable from the far end of the arena, and the rusher is
+the archetype that sprints at you from an angle, so it announced every flank before it
+arrived. Archetype markers are warm paint, not lamps: the medic's cross at 0.25 never
+had the problem. Anything meant to be read at a glance up close belongs under the
+threshold.
 
 Effects are pooled and allocate nothing at runtime. A firefight spawns hundreds of
 emitters a second, and a garbage collection in the middle of one is a visible hitch.

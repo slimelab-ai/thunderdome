@@ -294,6 +294,11 @@ const UP = new THREE.Vector3(0, 1, 0);
 // Enough that a firefight never has two shooters sharing one.
 const MAX_FLASHES = 8;
 const FLASH_LIFE = 0.045;
+// Lights are dearer than sprites, so fewer; the pool only has to cover shooters
+// firing within 45 ms of each other.
+const MAX_FLASH_LIGHTS = 5;
+// Metres. Bounds how far a flash can light anything, walls included.
+const FLASH_LIGHT_RANGE = 3.5;
 
 const _tracerDir = new THREE.Vector3();
 const _decalPos = new THREE.Vector3();
@@ -350,21 +355,35 @@ export class FX {
       this.flashes.push({ sprite, life: 0, maxLife: FLASH_LIFE, peak: 1, near: false });
     }
     this.fCursor = 0;
-    // Kept for explosions, which genuinely light a room. Muzzle flashes no longer
-    // drive it: one shared point light hopping to whoever fired last painted a pool
-    // on the floor around every enemy, which read as a lamp following them about and
-    // gave their flanks away through walls they were properly hidden behind.
+    // Explosions, which genuinely light a room.
     this.flashLight = new THREE.PointLight(0xffc060, 0, 9, 2);
     scene.add(this.flashLight);
     this.flashTime = 0;
-    // The player's own weapon keeps a small light, because it cannot give anybody
-    // away and firing feels flat without one. Its own light, not the explosion's, so
-    // a shot cannot cut a grenade's flash short.
-    this.nearLight = new THREE.PointLight(0xffc060, 0, 5, 2);
-    scene.add(this.nearLight);
-    this.nearTime = 0;
+
+    // Muzzle flash lights: a pool, one per shooter, deliberately short-ranged.
+    //
+    // A firefight in the dark needs these — when the house lights drop, the flashes
+    // are the only thing lighting the room. What it does not need is what was here
+    // before: one 9 m light teleporting to whoever fired last and sitting on the floor
+    // around them for a third of every second, which read as a lamp following each
+    // enemy about.
+    //
+    // FLASH_LIGHT_RANGE is the fix for shining through walls. Point lights do not cast
+    // shadows here — six shadow faces per flash is not affordable — so the range is
+    // what bounds the leak: a flash cannot light anything more than 3.5 m away,
+    // through a wall or otherwise, and certainly not across the arena.
+    this.flashLights = [];
+    for (let i = 0; i < MAX_FLASH_LIGHTS; i++) {
+      const light = new THREE.PointLight(0xffc060, 0, FLASH_LIGHT_RANGE, 2);
+      scene.add(light);
+      this.flashLights.push({ light, life: 0 });
+    }
+    this.lCursor = 0;
     this._clock = 0;
-    this._lastFlashAt = -1;
+    // Last flash per shooter, so sustained fire from any one of them dims — not just
+    // the player's. Weak, because combatants are removed when they die.
+    this._lastFlashBy = new WeakMap();
+    this._lastPlayerFlash = -1;
 
     // ---- decals ----
     this.decalTextures = {
@@ -511,11 +530,16 @@ export class FX {
    * over the sights for as long as the trigger was held. Real eyes and real cameras
    * both stop responding linearly under that; here it just has to stop blinding.
    */
-  muzzleFlash(pos, dir = null, { near = false } = {}) {
-    const gap = this._clock - this._lastFlashAt;
-    if (near) this._lastFlashAt = this._clock;
+  muzzleFlash(pos, dir = null, { near = false, source = null } = {}) {
+    // Time since *this* shooter last fired. Sustained fire dims for everyone, not
+    // only the player: an enemy holding down an automatic strobed at full brightness
+    // every frame of the burst.
+    let last = -1;
+    if (near) { last = this._lastPlayerFlash; this._lastPlayerFlash = this._clock; }
+    else if (source) { last = this._lastFlashBy.get(source) ?? -1; this._lastFlashBy.set(source, this._clock); }
+    const gap = this._clock - last;
+    const sustained = last >= 0 && gap < 0.20;
     // Full brightness for a first shot, falling to a third under sustained fire.
-    const sustained = near && gap >= 0 && gap < 0.20;
     const peak = sustained ? 0.30 + 0.35 * (gap / 0.20) : 1;
 
     const f = this.flashes[this.fCursor = (this.fCursor + 1) % MAX_FLASHES];
@@ -523,7 +547,10 @@ export class FX {
     // Small. The flash sits ~40 cm from the first-person camera, so a size that looks
     // reasonable in world terms fills a third of the screen and blinds the shot you
     // are trying to place.
-    const s = (near ? 0.10 + Math.random() * 0.05 : 0.13 + Math.random() * 0.07)
+    // The world flash is the smaller of the two. It is additive and it blooms, so a
+    // generous one turns into a flare visible from the far end of the arena — the
+    // opposite of what a distant muzzle flash should read as.
+    const s = (near ? 0.10 + Math.random() * 0.05 : 0.085 + Math.random() * 0.04)
       * (sustained ? 0.78 : 1);
     f.sprite.scale.set(s, s, s);
     f.sprite.material.rotation = Math.random() * Math.PI;
@@ -533,11 +560,10 @@ export class FX {
     f.peak = peak;
     f.near = near;
 
-    if (near) {
-      this.nearLight.position.copy(pos);
-      this.nearLight.intensity = 7 * peak;
-      this.nearTime = FLASH_LIFE;
-    }
+    const fl = this.flashLights[this.lCursor = (this.lCursor + 1) % MAX_FLASH_LIGHTS];
+    fl.light.position.copy(pos);
+    fl.light.intensity = (near ? 7 : 5.5) * peak;
+    fl.life = FLASH_LIFE;
 
     for (let i = 0; i < 4; i++) {
       _v.set((Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6);
@@ -658,10 +684,11 @@ export class FX {
       f.sprite.material.opacity = (f.life / f.maxLife) * f.peak;
     }
 
-    if (this.nearTime > 0) {
-      this.nearTime -= dt;
-      if (this.nearTime <= 0) this.nearLight.intensity = 0;
-      else this.nearLight.intensity *= 0.7;
+    for (const fl of this.flashLights) {
+      if (fl.life <= 0) continue;
+      fl.life -= dt;
+      if (fl.life <= 0) fl.light.intensity = 0;
+      else fl.light.intensity *= 0.62;
     }
 
     // Explosions only.
