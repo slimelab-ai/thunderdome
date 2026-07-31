@@ -59,6 +59,36 @@ const HOLD_BUDGET = 12;
 const ROUTE_SAMPLES = [[0.35, 0.5], [0.6, 1], [0.85, 1.5], [1, 3]];
 const ROUTE_WEIGHT_TOTAL = ROUTE_SAMPLES.reduce((sum, [, weight]) => sum + weight, 0);
 
+/** Scratch for the walked polyline a route cost is measured along. */
+const _routeLegs = [];
+const _routeGoal = new THREE.Vector3();
+
+/**
+ * The point `t` of the way along a polyline, by distance walked on the floor.
+ *
+ * Fractions have to be of *path* length, not of the straight line — the whole point
+ * of costing the real route is that a flank is longer than the gap it covers.
+ */
+function pointAlongPath(points, t, out) {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+  }
+  const last = points[points.length - 1];
+  if (total < 1e-4) return out.set(last.x, last.y, last.z);
+  let want = total * t;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const seg = Math.hypot(b.x - a.x, b.z - a.z);
+    if (want <= seg || i === points.length - 1) {
+      const f = seg > 1e-6 ? Math.min(1, want / seg) : 1;
+      return out.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f);
+    }
+    want -= seg;
+  }
+  return out.set(last.x, last.y, last.z);
+}
+
 /** Sprinting boots are loud. One footfall report per this many seconds. */
 const SPRINT_NOISE_PERIOD = 0.45;
 
@@ -1708,23 +1738,46 @@ export class Combatant {
     if (!this.suppression.anyDanger(now)) return 0;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
+    const legs = this._routeLegs(world, goal);
     let swept = 0;
     for (const [t, weight] of ROUTE_SAMPLES) {
-      _routePoint.set(
-        this.pos.x + (goal.x - this.pos.x) * t,
-        chest,
-        this.pos.z + (goal.z - this.pos.z) * t,
-      );
-      // Deliberately lanes only. Killing ground is *not* consulted for routing:
-      // a hit lands where a man was exposed, which is a stride from the cover he was
-      // quite correctly using, so a mark centred on his feet makes every path out of
-      // his own position expensive and pushes him into the open to escape it. Tried
-      // it across the whole route and then at the destination alone; both measured
-      // worse than leaving routing to the lanes. See `_peekSwept` for where a mark
-      // does earn its keep.
-      if (this.suppression.covering(_routePoint, sees, now)) swept += weight;
+      pointAlongPath(legs, t, _routePoint);
+      _routePoint.y = chest;
+      if (this.suppression.covering(_routePoint, sees, now)) { swept += weight; continue; }
+      // Ground that has already taken somebody counts heavier than ground merely
+      // presumed covered — a bite is worth more than a bang. Marks he is standing
+      // inside are skipped: a hit lands a stride from the cover the victim was quite
+      // correctly using, so counting it makes every route out of his own position
+      // expensive and pushes him into the open to escape a blob at his feet.
+      swept += weight * this.suppression.markWeightAt(_routePoint, now, this.pos);
     }
-    return swept / ROUTE_WEIGHT_TOTAL;
+    return Math.min(1, swept / ROUTE_WEIGHT_TOTAL);
+  }
+
+  /**
+   * The polyline this fighter would actually walk to reach `goal`.
+   *
+   * Costing a straight line was the routing bug. Movement goes through the navmesh,
+   * so around a held corner the straight line to a flank goal clips the wall the
+   * flank exists to use — it samples ground the shooter cannot see, scores clean, and
+   * the fighter then walks a real path straight through the beaten zone. Cost and
+   * movement now ask the navmesh the same question in the same way, so a lane is
+   * scored on the route it actually commits him to.
+   */
+  _routeLegs(world, goal) {
+    _routeLegs.length = 0;
+    _routeLegs.push(this.pos);
+    const gy = goal.y ?? this.pos.y;
+    const straight = world.nav
+      ? world.nav.walkableLine(this.pos.x, this.pos.z, this.pos.y, goal.x, goal.z, gy)
+      : true;
+    if (!straight) {
+      const path = world.nav.findPath(this.pos, { x: goal.x, y: gy, z: goal.z },
+        this.navSeed, this.flankSide);
+      if (path && path.length) _routeLegs.push(...path);
+    }
+    _routeLegs.push(_routeGoal.set(goal.x, gy, goal.z));
+    return _routeLegs;
   }
 
   removeFrom(world) {

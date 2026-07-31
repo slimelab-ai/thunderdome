@@ -145,6 +145,32 @@ test('a killing ground outlasts the shooting that made it, and hits compound', (
   assert.ok(twice.markedAt({ x: 0, y: 1.15, z: 0 }, 20), 'and it stays known far longer');
 });
 
+test('a bite outweighs a bang, and twice bitten is simply not crossed', () => {
+  const map = new SuppressionMap();
+  const far = { x: 40, y: 0, z: 40 };          // somewhere he is not standing
+  map.mark({ x: 0, y: 0, z: 0 }, MARK.heat, 0);
+  assert.equal(map.markWeightAt({ x: 0, y: 1.15, z: 0 }, 0, far), MARK.weight);
+  assert.ok(MARK.weight > 1, 'heavier than ground merely presumed covered');
+
+  map.mark({ x: 0.5, y: 0, z: 0 }, MARK.heat, 1);
+  assert.equal(map.markWeightAt({ x: 0, y: 1.15, z: 0 }, 1, far), MARK.repeatWeight);
+  assert.equal(map.markWeightAt({ x: 30, y: 1.15, z: 30 }, 1, far), 0, 'clean ground is free');
+});
+
+test('the mark a fighter is standing in does not price his own way out', () => {
+  const map = new SuppressionMap();
+  map.mark({ x: 0, y: 0, z: 0 }, MARK.heat, 0);
+  const point = { x: 1, y: 1.15, z: 0 };
+  // Asked cold, the spot is dangerous...
+  assert.ok(map.markedAt(point, 0));
+  // ...but not to the man who made it by being shot there, or every route he could
+  // take out of his own cover would price as badly as staying in it.
+  assert.equal(map.markedAt(point, 0, { x: 0.5, y: 0, z: 0 }), null);
+  assert.equal(map.markWeightAt(point, 0, { x: 0.5, y: 0, z: 0 }), 0);
+  // Somebody else, standing clear, still sees it for what it is.
+  assert.ok(map.markedAt(point, 0, { x: 20, y: 0, z: 20 }));
+});
+
 test('marks are dropped once cold, rather than accumulating forever', () => {
   const map = new SuppressionMap();
   map.mark({ x: 0, y: 0, z: 0 }, MARK.heat, 0);

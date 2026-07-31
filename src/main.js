@@ -178,23 +178,33 @@ world.nav = new NavMesh(arena.colliders);
  * contact — never an exact one — and the player is the source of most of it, which
  * is what makes moving quietly a real decision rather than a cosmetic one.
  */
-world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
-  world,
-  // The player fires as `playerShooter` but is *targeted* as `playerProxy`. Contacts
-  // are keyed by entity, so they have to collapse to one identity here or a bot ends
-  // up holding a belief about somebody who is never a candidate to shoot at.
-  source === world.playerShooter ? world.playerProxy : source,
-  pos, kind, world.simTime, weight,
-);
-
 /**
- * Somebody just got hit standing here, and said so.
+ * (Re)install the world hooks that outlive any one match.
  *
- * The squad's record of ground that has actually drawn blood, as opposed to ground
- * a gun is presumed to cover. It needs no theory about where the shot came from,
- * which is exactly why it keeps working after the shooter has moved.
+ * `startMatch` already rebuilds the per-match callbacks; these two used to be
+ * assigned once at module load and never again, which made them the only hooks a
+ * test harness could stub *permanently*. An A/B that replaced `reportHit` for one
+ * arm silently kept the replacement for every run afterwards, so the second arm
+ * measured the first arm's behaviour and the comparison came out as noise dressed
+ * up as a result. Anything installed here is restored at the start of every bout.
  */
-world.reportHit = (victim, pos) => shareHitGround(world, victim, pos, world.simTime);
+function installWorldHooks() {
+  world.emitNoise = (source, pos, kind, weight = 1) => broadcastNoise(
+    world,
+    // The player fires as `playerShooter` but is *targeted* as `playerProxy`.
+    // Contacts are keyed by entity, so they have to collapse to one identity here or
+    // a bot ends up holding a belief about somebody who is never a candidate to
+    // shoot at.
+    source === world.playerShooter ? world.playerProxy : source,
+    pos, kind, world.simTime, weight,
+  );
+
+  // Somebody just got hit standing here, and said so. The squad's record of ground
+  // that has actually drawn blood, as opposed to ground a gun is presumed to cover.
+  world.reportHit = (victim, pos) => shareHitGround(world, victim, pos, world.simTime);
+}
+
+installWorldHooks();
 
 const player = new Player(camera, world);
 // Combat telemetry treats the first-person player like every other shooter.
@@ -664,6 +674,7 @@ function startMatch() {
     return;
   }
   clearCombatants();
+  installWorldHooks();
   match = makeMatch();
   spectatorCamera.reset();
   const liquidation = career.mode === 'liquidation';
@@ -2566,11 +2577,24 @@ window.__game = {
     camera.position.set(pos[0], pos[1], pos[2]);
     camera.lookAt(look[0], look[1], look[2]);
   },
+  /**
+   * Start a bout straight from the debug handle.
+   *
+   * Waits on `assetsReady` — which includes `arena.propsReady` — and returns a
+   * promise, because the props carry colliders. Called without waiting, the first
+   * bout after a page load runs in a pit whose crates have not arrived yet, so every
+   * sightline in it differs from every later bout. That made run #1 of a measurement
+   * session quietly incomparable with run #2, which is a fine way to read a result
+   * off nothing at all.
+   */
   fight(mode = 'circuits', rank = 15) {
-    career = newCareer(mode);
-    career.rank = rank;
-    market = createMarket(mode);
-    startMatch();
+    return assetsReady.then(() => {
+      career = newCareer(mode);
+      career.rank = rank;
+      market = createMarket(mode);
+      startMatch();
+      return match;
+    });
   },
 };
 

@@ -99,6 +99,17 @@ export const MARK = {
   merge: 2.5,
   /** How far the cry carries to squadmates. */
   range: 22,
+  /**
+   * How heavily known killing ground counts against a route, relative to ground a
+   * gun is merely presumed to cover.
+   *
+   * Above 1 on purpose: a bite is a stronger deterrent than a bang. At 1.6 a marked
+   * destination alone scores 0.8 against an abandon line of 0.5, so it is rejected
+   * outright where a merely-covered destination lands exactly on the line.
+   */
+  weight: 1.6,
+  /** ...and ground that has taken more than one man is simply not crossed. */
+  repeatWeight: 2.5,
 };
 
 /** Is this lane worth routing around right now? */
@@ -246,8 +257,15 @@ export class SuppressionMap {
     return found;
   }
 
-  /** The hottest piece of known killing ground this point sits in, or null. */
-  markedAt(point, now) {
+  /**
+   * The hottest piece of known killing ground this point sits in, or null.
+   *
+   * `standingIn` is the asker's own position, and any mark containing it is ignored.
+   * A hit lands where a man was exposed, which is a stride from the cover he was
+   * quite correctly using — so the mark he made by being shot sits on top of him,
+   * and counting it tells him the ground he is on is bad wherever he tries to go.
+   */
+  markedAt(point, now, standingIn = null) {
     this.decayTo(now);
     let worst = null;
     for (const mark of this.marks) {
@@ -255,9 +273,27 @@ export class SuppressionMap {
       if (worst && mark.heat <= worst.heat) continue;
       const dx = point.x - mark.x, dz = point.z - mark.z;
       if (dx * dx + dz * dz > MARK.radius * MARK.radius) continue;
+      if (standingIn) {
+        const sx = standingIn.x - mark.x, sz = standingIn.z - mark.z;
+        if (sx * sx + sz * sz <= MARK.radius * MARK.radius) continue;
+      }
       worst = mark;
     }
     return worst;
+  }
+
+  /**
+   * What this ground is worth against a route, as a multiple of a covered sample.
+   *
+   * A bite outweighs a bang: somewhere a man was actually hit is worse than
+   * somewhere a gun is merely presumed to reach, and somewhere two men were hit is
+   * a place the squad simply does not go — heavy enough on its own to put a
+   * destination past the abandon line.
+   */
+  markWeightAt(point, now, standingIn = null) {
+    const mark = this.markedAt(point, now, standingIn);
+    if (!mark) return 0;
+    return mark.hits > 1 ? MARK.repeatWeight : MARK.weight;
   }
 
   /** Anything at all worth routing around — a worked angle or a killing ground. */
