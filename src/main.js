@@ -2510,17 +2510,36 @@ const TRAP = {
 };
 
 function makeTrap(options = {}) {
-  const cfg = { ...TRAP, ...options };
-  const muzzle = new THREE.Vector3(cfg.post.x, 1.5, cfg.post.z);
-  const ray = new THREE.Vector3(cfg.aim.x - cfg.post.x, 1.15 - 1.5, cfg.aim.z - cfg.post.z);
-  const reach = ray.length() + cfg.overrun;
-  ray.normalize();
+  const cfg = { lockPlayer: true, ...TRAP, ...options };
+  const muzzle = new THREE.Vector3();
+  const ray = new THREE.Vector3();
   const probe = new THREE.Vector3();
   const rel = new THREE.Vector3();
+  const end = new THREE.Vector3();
+  let reach = 0;
+
+  // He is holding a *rifle*, so he had better be carrying one: the trap used to fire
+  // rifle rounds out of whatever the career happened to have equipped, which meant
+  // watching it showed a man with a pistol in his hands making no noise at all.
+  player.slots = ['rifle'];
+  player.slotIdx = 0;
+  player.knifeOut = false;
+  player._mountViewmodel();
+
   const state = {
-    cfg, muzzle, ray, reach, mag: cfg.mag, ammo: cfg.ammo - cfg.mag,
+    cfg, muzzle, mag: cfg.mag, ammo: cfg.ammo - cfg.mag,
     reload: 0, acc: 0, fired: 0, reloads: 0, deaths: 0, laneEntries: 0,
     closest: Infinity, inLane: new Map(), elapsed: 0, done: false,
+  };
+
+  // The held line, from wherever he is standing now. Recomputed rather than fixed so
+  // that a watcher who walks off the post takes his lane with him instead of leaving
+  // a ghost one behind.
+  const aimLine = () => {
+    muzzle.set(player.pos.x, 1.5, player.pos.z);
+    ray.set(cfg.aim.x - player.pos.x, 1.15 - 1.5, cfg.aim.z - player.pos.z);
+    reach = ray.length() + cfg.overrun;
+    ray.normalize();
   };
 
   // Standing in the lane he is holding — near the line, and actually visible from it.
@@ -2536,14 +2555,26 @@ function makeTrap(options = {}) {
   state.step = (dt) => {
     if (state.done) return state;
     state.elapsed += dt;
-    // He never leaves the post, and never dies — the question is what they do about
-    // him, not whether he can be killed.
-    player.pos.set(cfg.post.x, 0, cfg.post.z);
-    world.playerProxy.pos.copy(player.pos);
-    world.playerProxy.eye = null;
-    world.playerProxy.alive = true;
-    player.alive = true;
-    player.hp = 1e6;
+    if (cfg.lockPlayer) {
+      // Pinned to the post, and unkillable: the question is what they do about him,
+      // not whether he can be killed. Only for scoring — a watcher keeps his feet.
+      player.pos.set(cfg.post.x, 0, cfg.post.z);
+      world.playerProxy.pos.copy(player.pos);
+      world.playerProxy.eye = null;
+      // Unkillable only while scoring. A watcher is a real participant who can be
+      // killed — forcing `alive` on him while letting his health fall leaves him
+      // upright at zero, which is neither one thing nor the other.
+      player.hp = 1e6;
+      world.playerProxy.alive = true;
+      player.alive = true;
+    }
+    // Standing still for forty seconds is exactly what the crowd punishes, and a
+    // fire zone dropped on the post both cooks the man holding it and pushes the
+    // squad off the routes being measured. The scenario owns the anti-camp timer
+    // while it runs.
+    match.campT = 0;
+    match.campWarned = false;
+    aimLine();
 
     if (state.reload > 0) { state.reload -= dt; state.acc = 0; }
     else {
@@ -2555,10 +2586,17 @@ function makeTrap(options = {}) {
           const take = Math.min(cfg.mag, state.ammo);
           state.mag = take; state.ammo -= take;
           state.reload = cfg.reload; state.reloads++;
+          audio.reload(0);
           break;
         }
         state.mag--; state.fired++;
         world.emitNoise?.(world.playerProxy, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1);
+        // Seen and heard, not just simulated — without this the scenario ran in
+        // total silence and looked like nothing was happening.
+        end.copy(muzzle).addScaledVector(ray, reach);
+        fx.tracer(muzzle, end);
+        fx.muzzleFlash(muzzle, ray);
+        audio.shot(WEAPONS.rifle.sound, 1);
         const caught = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
         if (caught && Math.random() < cfg.accuracy) {
           probe.set(caught.pos.x, caught.pos.y + 1.15, caught.pos.z);
@@ -2566,13 +2604,15 @@ function makeTrap(options = {}) {
         }
       }
     }
+    player.mag = state.mag;              // so the HUD tells the truth about the trap
+    player.reloading = state.reload;
 
     for (const c of world.combatants) {
       if (!c.alive || c.team !== 'enemy') continue;
       const now = state.standingInLane(c);
       if (now && !state.inLane.get(c)) state.laneEntries++;
       state.inLane.set(c, now);
-      state.closest = Math.min(state.closest, Math.hypot(c.pos.x - cfg.post.x, c.pos.z - cfg.post.z));
+      state.closest = Math.min(state.closest, Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z));
     }
     if (state.elapsed > cfg.seconds) state.done = true;
     if (!world.combatants.some(c => c.alive && c.team === 'enemy')) state.done = true;
@@ -2629,10 +2669,21 @@ async function runHoldTrap({ seeds = [101, 202, 303, 404, 505, 606], rank = 5, .
   };
 }
 
-/** The same scenario, driven by the real loop, so it can be watched. */
+/**
+ * The same scenario, driven by the real loop, so it can be watched.
+ *
+ * The player is put on the post and pointed down the lane, and then left alone —
+ * `lockPlayer` is off, so you keep your feet and can walk off and watch from
+ * somewhere else if you would rather see it from the side. The lane follows you if
+ * you do; stand still and it is the scored scenario exactly.
+ */
 async function watchHoldTrap(options = {}) {
   await window.__game.fight('circuits', options.rank ?? 5);
-  const trap = makeTrap(options);
+  const cfg = { ...TRAP, ...options };
+  player.pos.set(cfg.post.x, 0, cfg.post.z);
+  player.yaw = Math.atan2(cfg.post.x - cfg.aim.x, cfg.aim.z - cfg.post.z);
+  world.playerProxy.pos.copy(player.pos);
+  const trap = makeTrap({ lockPlayer: false, ...options });
   const originalKill = world.onKill;
   world.onKill = (killer, victim, part) => {
     if (victim?.team === 'enemy') trap.deaths++;
