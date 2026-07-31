@@ -283,6 +283,14 @@ export function buildWeaponModel(id) {
       // So do the sights. Aiming is solved against where they actually are rather
       // than against a per-weapon offset somebody tuned by eye, so they have to
       // survive the export as findable objects. See tools/blender/weapons.py.
+      if (child.name === 'lens_ocular' || child.name === 'lens_objective') {
+        // Its own material instance, because opacity is animated per weapon and the
+        // surface registry hands out one shared material per name.
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        child.material.depthWrite = false;
+        (group.userData.lenses ||= []).push(child);
+      }
       if (child.name === 'sight_rear' || child.name === 'sight_front') {
         // Reference points, not art: they mark the middle of the notch and the tip of
         // the post, which are places you look *through* and *at*. Never drawn.

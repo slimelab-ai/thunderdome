@@ -643,6 +643,19 @@ export class Player {
       vm.quaternion.copy(_hipQuat);
     }
 
+    // Scope glass: solid at the hip, gone by the time the player is looking through
+    // it. A scope with no lenses reads as a length of pipe from the outside, and a
+    // scope with lenses cannot be seen through — the only way to have both is to fade
+    // them out on the way up.
+    const lenses = this.currentVM && this.currentVM.group.userData.lenses;
+    if (lenses) {
+      const glass = Math.max(0, 1 - this.ads * 2.2);
+      for (const l of lenses) {
+        l.material.opacity = glass;
+        l.visible = glass > 0.01;
+      }
+    }
+
     // Everything below is felt rather than aimed, so it composes on top — in the
     // weapon's own axes, because a gun kicks about itself.
     //

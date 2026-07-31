@@ -94,7 +94,7 @@ def finish(name, moving=(), budget=900):
     weapon that quietly cannot be aimed.
     """
     import bpy
-    keep = {m.name for m in moving} | {"sight_rear", "sight_front"}
+    keep = {m.name for m in moving} | {"sight_rear", "sight_front", "lens_ocular", "lens_objective"}
     have = {o.name for o in bpy.data.objects if o.type == "MESH"}
     missing = {"sight_rear", "sight_front"} - have
     if missing and name != "knife":
@@ -222,6 +222,29 @@ def dmr():
           rotation=(math.radians(90), 0, 0), major_segments=14, minor_segments=5)
     torus("objective rim", (0, 0.255, 0.105), 0.027, 0.0042, METAL,
           rotation=(math.radians(90), 0, 0), major_segments=14, minor_segments=5)
+
+    # Inside the tube: a sleeve so it has depth rather than being a pipe you see the
+    # room through, a duplex reticle, and two lenses.
+    #
+    # The lenses are named so the runtime can fade them as the weapon comes up: opaque
+    # at the hip, where a scope with no glass in it reads as a length of pipe, and out
+    # of the way by the time the player is looking through them. That is the only way
+    # to have both — geometry cannot be a lens and a window at the same time.
+    tube("scope sleeve", (0, 0.10, 0.105), 0.0185, 0.235, DARK, vertices=14,
+         rotation=(math.radians(90), 0, 0), uv_scale=UV)
+    cyl("lens_ocular", (0, -0.048, 0.105), 0.0235, 0.004, METAL, vertices=14,
+        rotation=(math.radians(90), 0, 0), uv_scale=UV)
+    cyl("lens_objective", (0, 0.243, 0.105), 0.0255, 0.004, METAL, vertices=14,
+        rotation=(math.radians(90), 0, 0), uv_scale=UV)
+
+    # Duplex reticle: four posts in from the tube wall, stopping short of the middle.
+    # The gap is deliberate — a solid cross sits on the thing being aimed at, and the
+    # sight-picture check would rightly call that a blocked crosshair.
+    for i, (dx, dz) in enumerate(((1, 0), (-1, 0), (0, 1), (0, -1))):
+        span = 0.0125
+        off = 0.0185 - span / 2
+        cube(f"reticle_{i}", (dx * off, 0.215, 0.105 + dz * off),
+             (0.0012 if dz else span, 0.0012, span if dz else 0.0012), DARK, 0)
     aim_marks(-0.035, 0.23, 0.105)
     # Rings, not blocks. Square mounts reaching up to the tube's centre put solid
     # metal across the sight line at z=0.105 — 19 cm of it, dead on the crosshair,
