@@ -6,6 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { setMaxAnisotropy } from './materials.js';
 
 /**
  * The render pipeline: HDR scene → ambient occlusion → bloom → tone map → AA → grade.
@@ -141,6 +142,15 @@ export class RenderPipeline {
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
+
+    // Anisotropic filtering, at whatever the hardware actually offers.
+    //
+    // The material library defaulted to 8 and nothing ever called the setter, so this
+    // ran at half the available quality on every machine that supports 16 — which is
+    // most of them. It costs nothing and it is worth the most exactly where the arena
+    // looks worst: a floor seen at a grazing angle, where an under-filtered sample
+    // smears the aggregate into mush a few metres out.
+    setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
     // Half-float targets: bloom needs values above 1.0 to have anything to pick out,
     // which an 8-bit target clips away before the pass ever sees them.
