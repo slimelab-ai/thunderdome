@@ -13,7 +13,8 @@ import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
 } from './perception.js';
 import {
-  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, worthSuppressing, laneSeverity,
+  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, stepOutOfLane, worthSuppressing,
+  laneSeverity,
 } from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -737,9 +738,11 @@ export class Combatant {
         this.coverGoal = null;
       } else if (!this.coverGoal || this.pinnedBy !== before ||
                  sees(this.pinnedBy, _routePoint.set(this.coverGoal.x, this.coverGoal.y + 1.15, this.coverGoal.z))) {
-        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees, {
-          standable: (p) => this._standable(world, p),
-        });
+        const standable = (p) => this._standable(world, p);
+        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees, { standable })
+          // Nowhere hidden within reach is not a reason to stay on the line. Cover is
+          // the good outcome; being off the line is the necessary one.
+          || stepOutOfLane(this.pinnedBy, this.pos, standable);
       }
       if (before && !this.pinnedBy) {
         // He just made it out of the lane. Settle here for a beat rather than
@@ -1105,9 +1108,11 @@ export class Combatant {
         this.archetype !== 'rusher';
       if (breakingCover) {
         this._traveling = true;
-        // Only sprint if the cover is actually far enough to be worth the gun coming
-        // down. Sprinting is what makes a fighter unable to shoot, so sprinting the
-        // last two metres into cover buys nothing and costs the whole exchange.
+        // Sprint only when the cover is far enough off to be worth the gun coming
+        // down for. Sprinting the whole way instead was tried, on the reasoning that
+        // the last stretch is inside the beaten zone anyway — it cost 8% of the
+        // damage the squad puts out and bought nothing, because a sprinting fighter
+        // cannot shoot and the exposure saved was already small.
         const coverGap = Math.hypot(this.coverGoal.x - this.pos.x, this.coverGoal.z - this.pos.z);
         this.sprintNow = coverGap > 3.5 && this.legDmg < 0.6;
         this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
@@ -1172,6 +1177,18 @@ export class Combatant {
         move.x += fx; move.z += fz;
       } else {
         this._strafing = true;
+        // Circling somebody at contact range, while standing in his beaten zone, is
+        // the one place a jink should be *chosen* rather than alternated. The orbit
+        // is what carries a fighter through the firing line: he is not walking at it,
+        // he is going round, and half of round is across. Only here — biasing the
+        // strafe at every range was tried and cost far more than it saved.
+        if (this.pinnedBy && dist < 8) {
+          const chestY = this.pos.y + 1.15 * this.scale;
+          for (const side of [this.strafeDir, -this.strafeDir]) {
+            _routePoint.set(this.pos.x + -fz * 2.2 * side, chestY, this.pos.z + fx * 2.2 * side);
+            if (!this._groundIsDangerous(world, _routePoint, now)) { this.strafeDir = side; break; }
+          }
+        }
         if (this._ledgeAhead(world, -fz * this.strafeDir, fx * this.strafeDir)) this.strafeDir *= -1;
         move.x += -fz * this.strafeDir; move.z += fx * this.strafeDir;
       }

@@ -253,6 +253,38 @@ export function coverStep(lane, from, losFn, {
   return null;
 }
 
+/**
+ * Just get out of the strip: sideways, across the rounds.
+ *
+ * `coverStep` looks for somewhere the lane cannot see, and in an open corridor there
+ * is often no such place within a few metres — so it returns null, and a fighter
+ * standing in the beaten zone with nothing to run to stands in the beaten zone. That
+ * is not a corner case: it was the single largest cause of death left, seven of
+ * sixteen, men parked in the open being shot while every other system correctly
+ * agreed they were in danger.
+ *
+ * Cover is the nice outcome. Not being on the line is the necessary one, and it is
+ * always available — perpendicular to the direction the rounds are travelling is the
+ * shortest way off it.
+ */
+export function stepOutOfLane(lane, from, standable = () => true, distances = [4, 6, 8]) {
+  let px, pz;
+  if (lane.facing) {
+    px = -lane.dz; pz = lane.dx;
+  } else {
+    const dx = from.x - lane.x, dz = from.z - lane.z;
+    const d = Math.hypot(dx, dz) || 1;
+    px = -dz / d; pz = dx / d;
+  }
+  for (const reach of distances) {
+    for (const side of [1, -1]) {
+      const point = { x: from.x + px * reach * side, y: from.y, z: from.z + pz * reach * side };
+      if (standable(point)) return point;
+    }
+  }
+  return null;
+}
+
 /** Everything one fighter knows about which angles are being worked. */
 export class SuppressionMap {
   constructor() {

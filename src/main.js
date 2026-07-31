@@ -2741,12 +2741,18 @@ function installLaneTestMap() {
  * that he holds one lane and never reacts to what walks into it. The human comes out
  * of play entirely and is left as a camera.
  */
-function spawnLaneTestShooter() {
+function spawnLaneTestShooter(hp = 1e6) {
   const facing = Math.atan2(LANE_TEST.aim.x - LANE_TEST.post.x, LANE_TEST.aim.z - LANE_TEST.post.z);
   const shooter = new Combatant({
     name: 'HOLDER', team: 'player', weaponId: 'rifle',
     skill: { spreadMult: 1, reaction: 0.4, speedMult: 0 },
-    hp: 1e6, shirt: 0x2e5d33,
+    // Effectively unkillable, and that is the point. He is not an opponent to be
+    // beaten; he is the cheese itself, a fixture doing one thing forever. Making him
+    // killable was a mistake — it ended runs early, flattered every number, and
+    // quietly changed the question from "can the squad handle this" into "can the
+    // squad out-damage it". Nobody should die to this however long he stands there.
+    // Lower `holderHp` to watch a fight resolve; never to score one.
+    hp, shirt: 0x2e5d33,
   });
   shooter.addTo(world, new THREE.Vector3(LANE_TEST.post.x, 0, LANE_TEST.post.z));
   shooter.yaw = facing;
@@ -2775,7 +2781,7 @@ function spawnLaneTestShooter() {
 function makeLaneTest(shooter, options = {}) {
   const cfg = {
     ammo: 600, mag: 30, reload: 1.9, interval: 0.1, accuracy: 0.85,
-    laneHalfWidth: 1.0, seconds: 75,
+    laneHalfWidth: 1.0, seconds: 75, holderHp: 1e6,
     /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
     ceaseFireAfter: 0, lullSeconds: 0,
     ...options,
@@ -2792,6 +2798,7 @@ function makeLaneTest(shooter, options = {}) {
     fired: 0, reloads: 0, deaths: 0, laneEntries: 0, elapsed: 0, done: false,
     trapFrames: 0, safeFrames: 0, botFrames: 0, laneFrames: 0,
     pushedInLull: 0, shooterHp: shooter.hp,
+    track: [], sampleT: 0, holderDownAt: null,
   };
 
   const firingNow = () => {
@@ -2854,6 +2861,10 @@ function makeLaneTest(shooter, options = {}) {
       }
     }
 
+    state.sampleT -= dt;
+    const sampling = state.sampleT <= 0;
+    if (sampling) state.sampleT = 0.25;
+
     for (const c of world.combatants) {
       if (!c.alive || c.team !== 'enemy') continue;
       state.botFrames++;
@@ -2861,6 +2872,21 @@ function makeLaneTest(shooter, options = {}) {
       if (now) state.laneFrames++;
       if (now && !inLane.get(c)) state.laneEntries++;
       inLane.set(c, now);
+      // Where everyone was and what they were doing, four times a second. The same
+      // per-fighter picture  carries in a headless bout, recorded here
+      // too — a scenario you cannot read back the movement from is a scenario you
+      // have to guess about, and guessing is what these turns kept going wrong on.
+      if (sampling) state.track.push({
+        t: +state.elapsed.toFixed(2), who: c.name, arch: c.archetype || null,
+        x: +c.pos.x.toFixed(2), z: +c.pos.z.toFixed(2),
+        hp: Math.round(Math.max(0, c.hp)),
+        range: +Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z).toFixed(1),
+        inLane: now, pinned: !!c.pinnedBy, sprint: !!c.sprintNow, peek: c.peekSide,
+        sight: !!c.contact?.visible, hold: +c.holdT.toFixed(1),
+        lane: c.breachLane, staging: !!c.breachStaging,
+        goal: [+c.breachGoal.x.toFixed(1), +c.breachGoal.z.toFixed(1)],
+        firing: shooting,
+      });
       if (spotAt(c.pos, LANE_TEST.deathTraps)) {
         state.trapFrames++;
         if (!shooting) state.pushedInLull++;
@@ -2868,6 +2894,10 @@ function makeLaneTest(shooter, options = {}) {
       if (spotAt(c.pos, LANE_TEST.safeGround)) state.safeFrames++;
     }
     state.shooterHp = shooter.hp;
+    if (!shooter.alive && state.holderDownAt === null) {
+      state.holderDownAt = +state.elapsed.toFixed(1);
+      state.done = true;
+    }
     if (state.elapsed > cfg.seconds) state.done = true;
     if (!world.combatants.some(c => c.alive && c.team === 'enemy')) state.done = true;
     return state;
@@ -2885,7 +2915,8 @@ function laneTestReport(state, squad, seed) {
     atDeathTraps: share(state.trapFrames),
     atSafeGround: share(state.safeFrames),
     pushedTrapsDuringLull: state.pushedInLull,
-    damageOnShooter: Math.round(1e6 - state.shooterHp),
+    holderDownAt: state.holderDownAt,
+    damageOnShooter: Math.round(state.cfg.holderHp - state.shooterHp),
     roundsFired: state.fired, reloads: state.reloads,
     seconds: +state.elapsed.toFixed(1),
   };
@@ -2923,7 +2954,7 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
       await window.__game.fight('circuits', rank);
       restore = installLaneTestMap();
       const enemies = placeLaneTestSquad();
-      const shooter = spawnLaneTestShooter();
+      const shooter = spawnLaneTestShooter(options.holderHp ?? 1e6);
       const test = makeLaneTest(shooter, options);
       const originalKill = world.onKill;
       world.onKill = (killer, victim, part) => {
@@ -2932,7 +2963,9 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
       };
       while (!test.done) { world.simTime += 1 / 60; stepMatch(1 / 60); test.step(1 / 60); }
       world.onKill = originalKill;
-      runs.push(laneTestReport(test, enemies.length, seed));
+      const report = laneTestReport(test, enemies.length, seed);
+      report.track = test.track;
+      runs.push(report);
     } finally {
       restore?.();
       Math.random = realRandom;
@@ -2950,6 +2983,7 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
     meanAtDeathTraps: mean('atDeathTraps'),
     meanAtSafeGround: mean('atSafeGround'),
     pushedTrapsDuringLull: total('pushedTrapsDuringLull'),
+    holderKilled: runs.filter(r => r.holderDownAt !== null).length + ' / ' + runs.length,
     damageOnShooter: total('damageOnShooter'),
   };
 }
@@ -2968,7 +3002,7 @@ async function watchLaneTest(options = {}) {
   const restoreMap = installLaneTestMap();
   const clearMarkers = buildLaneTestMarkers(scene);
   placeLaneTestSquad();
-  const shooter = spawnLaneTestShooter();
+  const shooter = spawnLaneTestShooter(options.holderHp ?? 1e6);
   const test = makeLaneTest(shooter, options);
   const originalKill = world.onKill;
   world.onKill = (killer, victim, part) => {
