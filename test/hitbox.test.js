@@ -197,3 +197,39 @@ test('with the player fully behind cover the aim falls back to the chest', () =>
   const aim = playerAimPoint(cover, from, pp);
   assert.ok(Math.abs(aim.y - 1.15) < 1e-6, 'should fall back to the chest, not stay at the head');
 });
+
+test('the head hitbox sits on the camera, so seeing is being seen', () => {
+  // The invariant the whole peek case rests on: if the player can see a point, that
+  // point can shoot him in the head. Deriving the head from a lean fraction instead
+  // put it 5 cm short of where he was peeking from — which around a tight corner is
+  // the difference between a sightline and a wall.
+  const pp = proxy({ lean: 0.55 });
+  pp.eye = new THREE.Vector3(0.42, 1.51, 0);      // leaned out and dropped, as the camera does
+  const from = new THREE.Vector3(3, 1.5, 8);
+  const dir = pp.eye.clone().sub(from).normalize();
+  const hit = rayVsPlayer(from, dir, pp, 50);
+  assert.ok(hit, 'a ray straight down the sightline misses him entirely');
+  assert.equal(hit.part, 'head');
+});
+
+test('the AI aims at the camera when only the head is exposed', () => {
+  const pp = proxy({ lean: 0.55 });
+  pp.eye = new THREE.Vector3(0.42, 1.51, 0);
+  const from = new THREE.Vector3(3, 1.5, 8);
+  // Cover across everything below the eye.
+  const cover = [wall(-4, 0, 0.4, 4, 1.42, 1.2)];
+  const aim = playerAimPoint(cover, from, pp);
+  assert.ok(aim.distanceTo(pp.eye) < 1e-6, `aimed at ${aim.toArray()}, expected the camera`);
+});
+
+test('the body still hangs off the camera, so the legs stay behind cover', () => {
+  const pp = proxy({ lean: 0.55 });
+  pp.eye = new THREE.Vector3(0.42, 1.51, 0);
+  // Chest is partway out along the axis from the boots to the eye.
+  const chest = playerAimPoint([], new THREE.Vector3(0, 1.5, 8), pp);
+  assert.ok(chest.x > 0 && chest.x < pp.eye.x, `chest x=${chest.x.toFixed(2)} is not between boots and eye`);
+  // Boots have not moved.
+  const feet = shootAt(pp, 0.45);
+  assert.ok(feet, 'the legs left the ground');
+  assert.match(feet.part, /^leg/);
+});

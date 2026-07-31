@@ -303,6 +303,14 @@ whole head rather than sampling one lucky height.
 the body capsule is entered before the head sphere even on a shot going straight through
 the face — nearest-surface-wins reported the lower half of every head as a shoulder.
 
+**The player's head sits on his camera.** Not at a fixed height over his feet, and not
+at a fraction of his lean — at the point he is actually looking from. That identity is
+the guarantee the whole corner-peek case rests on: *if he can see you, you can shoot him
+in the head*. Deriving the head instead left it 5 cm short of where he was peeking from
+and 10 cm above where he was looking from — the camera drops as it leans, which nothing
+else knew about — and around a tight corner 5 cm is the entire difference between a
+sightline and a wall. He could see them; they could not see him; nobody shot him.
+
 **A lean pivots about the feet.** The head swings out, the boots stay put. Translating
 the whole capsule sideways carried the player's legs around the corner with him and
 exposed them to fire he had no way to account for.
@@ -531,6 +539,12 @@ while converging perfectly in isolation. Resume from last frame's solution.
 heading inside `setStance` fixes it for the AI, the capture poses and the test bench at
 once. The alternative — asking every caller to hand over a clean direction — is the
 version where one of them forgets.
+
+**Two places computing "where the player is" will disagree, and the disagreement will
+be small enough to look like a bug in something else.** The camera and the hit model
+each derived a head position independently and landed 5 cm apart; the symptom was bots
+declining to shoot, which looks like an AI problem and is a geometry problem. One of
+them has to own the answer and the other has to read it.
 
 **A resolver that samples cannot see anything smaller than its step.** The player's hit
 model marched in 0.35 m steps past a 0.22 m head. Every part of the system around it was

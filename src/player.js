@@ -656,6 +656,15 @@ export class Player {
     pp.heightScale = this.heightScale;
     pp.leanX = leanX;
     pp.leanZ = leanZ;
+    // The point he is actually looking from, minus the bob and the shake — those are
+    // camera feel, not head position. The hit model puts his head here rather than
+    // deriving one, so that anything he can see round a corner can shoot him in it.
+    if (!pp.eye) pp.eye = new THREE.Vector3();
+    pp.eye.set(
+      this.pos.x + leanX,
+      this.pos.y + this._eyeSmooth - leanDrop,
+      this.pos.z + leanZ,
+    );
   }
 
   // Ledge in front of us we can clamber onto: top 0.35–1.5 above feet, within reach, facing it.

@@ -14,6 +14,7 @@ const _axis = new THREE.Vector3();
 const _n = new THREE.Vector3();
 const _playerFacing = new THREE.Vector3(0, 0, -1);
 const _aimAlt = new THREE.Vector3();
+const _eye = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
 
 // Distance to nearest wall/obstacle along ray (also floor plane y=0). Returns {dist, point}.
@@ -113,7 +114,7 @@ export const PLAYER_HITBOX = {
   bodyLow: 0.34,      // centre of the lower end cap
   bodyHigh: 1.22,     // centre of the upper end cap: the shoulders, not the skull
   headRadius: 0.15,
-  headY: 1.57,        // sits on the eye line; see Player.eyeHeight
+  headY: 1.57,        // fallback only; the head really sits on the camera
   // Below this fraction of the body capsule is legs, above it torso.
   legTop: 0.42,
   // A hit further than this fraction of the radius from the axis, in the torso band,
@@ -124,25 +125,52 @@ export const PLAYER_HITBOX = {
 };
 
 /**
- * Resolve a hostile ray against the player.
+ * The player's head sits on his camera.
  *
- * A lean pivots about the feet: the head swings out, the boots stay put. The model
- * this replaces translated the whole cylinder sideways, so leaning around a corner
- * carried the player's legs out with it and exposed them to fire nobody could see
- * the source of.
+ * Not at a fixed height over his feet, and not at a fraction of his lean — at the
+ * point he is actually looking from. That identity is the whole guarantee: if he can
+ * see you, you can shoot him in the head. Deriving it instead left the hittable head
+ * 5 cm short of where he was peeking from and 10 cm above where he was looking from
+ * (the camera drops as it leans, which nothing else knew about), and around a tight
+ * corner 5 cm is the entire difference between a sightline and a wall.
+ *
+ * `pp.eye` is set by the player each frame. The fallback keeps the old derivation for
+ * callers that have not got one.
  */
+function playerEye(pp, out) {
+  if (pp.eye) return out.copy(pp.eye);
+  const s = pp.heightScale || 1;
+  const y = PLAYER_HITBOX.headY * s;
+  const k = y / PLAYER_HITBOX.height;
+  return out.set(pp.pos.x + (pp.leanX || 0) * k, pp.pos.y + y, pp.pos.z + (pp.leanZ || 0) * k);
+}
+
+/**
+ * A point on the player's body axis at height `y` above his feet, in world space.
+ *
+ * The axis runs from between his boots to his eye, so a lean pivots about the feet:
+ * the head swings out, the boots stay put. Translating the whole volume sideways —
+ * which is what this replaces — carried his legs around the corner with him.
+ */
+function playerAxisPoint(pp, y, out) {
+  playerEye(pp, _eye);
+  const eyeH = _eye.y - pp.pos.y;
+  const k = eyeH > 1e-3 ? y / eyeH : 0;
+  return out.set(
+    pp.pos.x + (_eye.x - pp.pos.x) * k,
+    pp.pos.y + y,
+    pp.pos.z + (_eye.z - pp.pos.z) * k,
+  );
+}
+
+/** Resolve a hostile ray against the player. */
 export function rayVsPlayer(origin, dir, pp, maxDist) {
   const H = PLAYER_HITBOX;
   const s = pp.heightScale || 1;
-  const lx = pp.leanX || 0, lz = pp.leanZ || 0;
-  const tilt = (y) => y / H.height;      // how much of the lean has arrived by height y
 
-  _capA.set(pp.pos.x + lx * tilt(H.bodyLow * s), pp.pos.y + H.bodyLow * s,
-    pp.pos.z + lz * tilt(H.bodyLow * s));
-  _capB.set(pp.pos.x + lx * tilt(H.bodyHigh * s), pp.pos.y + H.bodyHigh * s,
-    pp.pos.z + lz * tilt(H.bodyHigh * s));
-  _head.set(pp.pos.x + lx * tilt(H.headY * s), pp.pos.y + H.headY * s,
-    pp.pos.z + lz * tilt(H.headY * s));
+  playerAxisPoint(pp, H.bodyLow * s, _capA);
+  playerAxisPoint(pp, H.bodyHigh * s, _capB);
+  playerEye(pp, _head);
 
   const body = rayVsCapsule(origin, dir, _capA, _capB, H.bodyRadius * s, maxDist);
   const head = rayVsCapsule(origin, dir, _head, _head, H.headRadius * s, maxDist);
@@ -209,18 +237,12 @@ export function setPlayerFacing(v) { _playerFacing.copy(v); }
  * past, and his exposed head drew no fire whatsoever.
  */
 export function playerAimPoint(colliders, from, pp, out = new THREE.Vector3()) {
-  const H = PLAYER_HITBOX;
   const s = pp.heightScale || 1;
-  const at = (y, o) => o.set(
-    pp.pos.x + (pp.leanX || 0) * (y / H.height),
-    pp.pos.y + y * s,
-    pp.pos.z + (pp.leanZ || 0) * (y / H.height),
-  );
-  at(1.15, out);
+  playerAxisPoint(pp, 1.15 * s, out);
   if (hasLoS(colliders, from, out)) return out;
-  at(H.headY, _aimAlt);
+  playerEye(pp, _aimAlt);
   if (hasLoS(colliders, from, _aimAlt)) return out.copy(_aimAlt);
-  return at(1.15, out);
+  return playerAxisPoint(pp, 1.15 * s, out);
 }
 
 // Apply angular spread (degrees) to a direction.
