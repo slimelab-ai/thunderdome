@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versioned } from './asset-version.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { surface, fighterUniform } from './materials.js';
@@ -19,7 +20,7 @@ import { GRIP_ANCHOR, SUPPORT_GRIP } from './weapons.js';
  * entirely, which no additive layer can express without fighting the idle sway.
  */
 
-const MODEL_URL = '/assets/models/fp_arms.glb';
+const MODEL_URL = versioned('/assets/models/fp_arms.glb');
 const ADDITIVE = new Set(['fire']);
 // Clips that move the support arm, and therefore need the grip pins to let go.
 // Clips that move the support arm off the weapon, and therefore need the grip pins to

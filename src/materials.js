@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { versioned } from './asset-version.js';
 
 /**
  * The material library.
@@ -25,7 +26,7 @@ export function setMaxAnisotropy(v) { maxAnisotropy = Math.max(1, Math.min(16, v
 function tex(file, { srgb = false } = {}) {
   const key = `${file}:${srgb}`;
   if (cache.has(key)) return cache.get(key);
-  const t = loader.load(`${TEX_DIR}/${file}.webp`);
+  const t = loader.load(versioned(`${TEX_DIR}/${file}.webp`));
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   // Colour maps are sRGB-encoded; normal and ORM maps are raw data and must not be
   // decoded, or the lighting is quietly wrong everywhere.
