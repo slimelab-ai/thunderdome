@@ -32,3 +32,9 @@ export function offsetBreachGoal(target, attacker, lane, {
     z: Math.max(-zLimit, Math.min(zLimit, target.z + fx * width)),
   };
 }
+
+export function shouldSprintAtTarget({ sight, melee = false, distance = 0, legDamage = 0 }) {
+  if (legDamage >= 0.6) return false;
+  if (melee) return distance > 3;
+  return !sight;
+}

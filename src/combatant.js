@@ -5,7 +5,9 @@ import { ITEM_TYPES } from './items.js';
 import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
-import { coordinatedBreachLane, offsetBreachGoal } from './tactics.js';
+import {
+  coordinatedBreachLane, offsetBreachGoal, shouldSprintAtTarget,
+} from './tactics.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _peekEye = new THREE.Vector3();
@@ -711,7 +713,15 @@ export class Combatant {
         } else {
           gx = tp.x; gz = tp.z; gy = this.target.pos.y;
         }
-        this.sprintNow = (opening || dist > 11 || !sight || (w.melee && dist > 3)) && this.legDmg < 0.6;
+        // A firearm user lowers out of sprint on visual contact, even while
+        // continuing toward a committed breach goal. Distance alone used to
+        // keep the gun down across a completely visible gap.
+        this.sprintNow = shouldSprintAtTarget({
+          sight: sight || this.peekSide !== 0,
+          melee: !!w.melee,
+          distance: dist,
+          legDamage: this.legDmg,
+        });
         // travel through the 3D navmesh.
         // walkableLine is expensive — evaluate it on the repath cadence, not per frame
         this.repathT = (this.repathT ?? 0) - dt;
@@ -789,7 +799,8 @@ export class Combatant {
       const muzzle = this.muzzleWorld(_muzzle);
       const muzzleSight = (sight || this.peekSide !== 0)
         && hasLoS(world.colliders, muzzle, aim);
-      const los = dist < engage * 2.2 && muzzleSight && !this.sprintNow;
+      const visibleTarget = dist < engage * 2.2 && muzzleSight;
+      const los = visibleTarget && !this.sprintNow;
 
       // marksman laser telegraph
       if (this.laser) {
@@ -803,8 +814,19 @@ export class Combatant {
       }
 
       // point-blank surprises get answered fast; long-range spotting takes longer
-      if (los && !this.hadLoS) this.reactionLeft = this.skill.reaction * (0.7 + Math.random() * 0.6) * Math.min(1.2, Math.max(0.35, dist / 12));
-      this.hadLoS = los;
+      if (visibleTarget && !this.hadLoS) {
+        this.reactionLeft = this.skill.reaction * (0.7 + Math.random() * 0.6) *
+          Math.min(1.2, Math.max(0.35, dist / 12));
+        world.onCombatEvent?.('sight_acquired', this, {
+          target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+          range: +dist.toFixed(2),
+          sprinting: this.sprintNow,
+          role: this.role,
+        });
+      }
+      // Recognition begins while the weapon is coming up; firing still requires
+      // the separate sprint, ADS, reaction, and aim gates below.
+      this.hadLoS = visibleTarget;
       if (this.reactionLeft > 0) this.reactionLeft -= dt;
 
       // Shoulder the weapon when there is something to shoot at a range worth aiming
