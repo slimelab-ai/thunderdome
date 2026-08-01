@@ -2948,6 +2948,10 @@ function placeLaneTestSquad() {
     c.spawnPos = c.pos.clone();
     c.openingT = 0;
     for (const k of Object.keys(c.ammoPools)) c.ammoPools[k] = 400;
+    // Everyone carries a medkit; the medic carries the bag. Supplies came from the
+    // rank roll before, which meant most of the squad had nothing to use and the
+    // medic nothing worth watching.
+    c.healKits = c.archetype === 'medic' ? 6 : 1;
   });
   return enemies;
 }

@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { WEAPONS, buildHeldGun } from './weapons.js';
-import { fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH, playerAimPoint } from './combat.js';
+import {
+  fireRay, applySpread, hasLoS, wallHit, resolveCircle, groundHeight, STEP_REACH,
+  playerAimPoint,
+} from './combat.js';
 import { ITEM_TYPES } from './items.js';
 import { audio } from './audio.js';
 import { FighterRig } from './fighter-rig.js';
@@ -29,6 +32,7 @@ const _laneFrom = new THREE.Vector3();
 const _laneTo = new THREE.Vector3();
 const _routePoint = new THREE.Vector3();
 const _suppressAt = new THREE.Vector3();
+const _nadeDir = new THREE.Vector3();
 
 /** How often a fighter sweeps every hostile for line of sight, in seconds. */
 const SCAN_PERIOD = 0.18;
@@ -1057,15 +1061,25 @@ export class Combatant {
           const bdx = world.playerProxy.pos.x - tp.x, bdz = world.playerProxy.pos.z - tp.z;
           if (bdx * bdx + bdz * bdz < 8 * 8) friendlyInBlast = true;
         }
-        if (!friendlyInBlast) {
+        const ndx = tp.x - this.pos.x, ndz = tp.z - this.pos.z;
+        const nd = Math.hypot(ndx, ndz) || 1;
+        const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
+        // The throw has to clear whatever he is standing behind. Nothing ever
+        // checked, so a man tucked against a wall lobbed his grenade into it, took
+        // the bounce at his own feet, and did this repeatedly — the check is the
+        // first few metres of the actual arc, and a blocked throw is kept for a
+        // better spot rather than spent on the wall.
+        _nadeDir.set((ndx / nd) * nspd, 4.3, (ndz / nd) * nspd).normalize();
+        const eye = this.eyePos();
+        const clearance = wallHit(world.colliders, eye, _nadeDir, 6).dist;
+        if (clearance < Math.min(5, nd * 0.6)) {
+          this.nadeCd = 2.5;   // wrong spot, not wrong idea — try again shortly
+        } else if (!friendlyInBlast) {
           this.nades--;
           this.nadeCd = 13 + Math.random() * 8;
-          const ndx = tp.x - this.pos.x, ndz = tp.z - this.pos.z;
-          const nd = Math.hypot(ndx, ndz) || 1;
-          const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
           const jit = () => 1 + (Math.random() - 0.5) * 0.14;
           this.rig.trigger('throw');
-          world.throwGrenade(this.eyePos(), new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
+          world.throwGrenade(eye, new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
           world.onCombatEvent?.('grenade_throw', this, { target: this.target?.name || null, range: dist });
         } else {
           this.nadeCd = 2; // re-evaluate shortly
@@ -1186,13 +1200,30 @@ export class Combatant {
       // answer standing at the edge, listening. He holds while rounds are still
       // coming out and goes the moment they stop.
       this.waitingForGap = false;
-      if (needTravel && breaching && this.breachCost > 0 && !assist &&
-          this.holdSpent < HOLD_BUDGET && timeSinceFired(this.suppression, now) < GAP_SECONDS) {
-        needTravel = false;
-        this.waitingForGap = true;
-        this._strafing = true;
-        move.x += -fz * this.strafeDir * 0.5; move.z += fx * this.strafeDir * 0.5;
-        this.holdSpent += dt;
+      if (needTravel && !assist && this.holdSpent < HOLD_BUDGET && this.archetype !== 'rusher') {
+        // Mid-peek is not the moment to wander off. The peek cycle and the travel
+        // urge ran on separate clocks: lean, cooldown, and during the cooldown
+        // `blindPush` said go — so he took half a step toward the breach, the
+        // cooldown expired, and he stepped back to lean again, twitching at the
+        // corner for as long as both wanted him. The report from the spectator seat
+        // was exactly right: two options, no decision. Committing to a peek now
+        // commits to the corner until the cycle is done — look, and maybe fire, and
+        // *then* choose where to walk.
+        const midPeek = this.peekCd > 0 && !sight && dist < engage * 1.8;
+        // And whoever he is and wherever he is going: if the next few steps are into
+        // ground something is firing down *right now*, he waits for the gap. This
+        // was gated on a committed side-lane, so direct pursuit — dist > engage,
+        // lane 0, no breach entry at all — walked straight into a working gun.
+        _routePoint.set(this.pos.x + fx * 2.5, this.pos.y + 1.15 * this.scale, this.pos.z + fz * 2.5);
+        const intoFire = timeSinceFired(this.suppression, now) < GAP_SECONDS &&
+          ((breaching && this.breachCost > 0) || this._groundIsDangerous(world, _routePoint, now));
+        if (midPeek || intoFire) {
+          needTravel = false;
+          this.waitingForGap = intoFire;
+          this._strafing = true;
+          move.x += -fz * this.strafeDir * 0.5; move.z += fx * this.strafeDir * 0.5;
+          this.holdSpent += dt;
+        }
       }
 
       // The man on overwatch does not advance. His job is the enemy's attention, and
@@ -1782,6 +1813,17 @@ export class Combatant {
    * chasing a contact.
    */
   _huntFor(world, dt, now, move) {
+    // A medic with a patient has a job before he has a hunt. Walking to the wounded
+    // lived only inside the has-target branch, so a medic who had lost contact with
+    // the enemy — which is most of a fight spent behind cover — went looking for
+    // somebody to fight instead of treating the man bleeding next to him.
+    if (this.archetype === 'medic' && this.mendTarget?.alive && this.mendCd <= 0) {
+      const adx = this.mendTarget.pos.x - this.pos.x, adz = this.mendTarget.pos.z - this.pos.z;
+      if (adx * adx + adz * adz < 2.2 * 2.2) { this.mendT = 1.6; return; }
+      this._traveling = true;
+      this._steerToward(world, dt, this.mendTarget.pos.x, this.mendTarget.pos.y, this.mendTarget.pos.z, move);
+      return;
+    }
     // Being shot at by somebody you cannot even find is the clearest case there is:
     // get off the X first, look for him second.
     if (this.pinnedBy && this.coverGoal) {
@@ -1858,6 +1900,11 @@ export class Combatant {
    */
   _jinkAwayFromFire(world, fx, fz, now, reach = 2.5) {
     if (!this.suppression.anyDanger(now)) return;
+    // Re-decided a few times a second, not per frame. At the edge of an arc the
+    // two sides can trade places sample to sample, and a per-frame re-pick turned
+    // that boundary noise into a fighter vibrating in place.
+    if (now - (this._jinkAt ?? -9) < 0.35) return;
+    this._jinkAt = now;
     const chestY = this.pos.y + 1.15 * this.scale;
     let safest = 0;
     for (const side of [this.strafeDir, -this.strafeDir]) {
