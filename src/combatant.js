@@ -7,13 +7,14 @@ import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
 import {
   coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
-  shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
+  shouldSprintAtTarget, searchProbe, SEARCH_PROBES, electOverwatch, isCovered,
 } from './tactics.js';
 import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
 } from './perception.js';
 import {
-  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, worthSuppressing,
+  SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, stepOutOfLane, worthSuppressing,
+  laneSeverity,
 } from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -52,12 +53,24 @@ const SUPPRESSION_PERIOD = 0.22;
 const HOLD_BUDGET = 12;
 
 /**
- * Where along a candidate route to check for incoming fire, and what each point is
- * worth. Fractions of the way there, paired with weights — the destination counts
- * for six times the first step, because leaving a beaten zone means crossing it.
+ * How finely to check a candidate route for incoming fire.
+ *
+ * Every metre and a half of it, rather than at four fixed fractions of the way.
+ * A beaten zone is a *thin* thing — a couple of metres of corridor — and four
+ * samples on a twenty metre route are eight metres apart, so the lane fell straight
+ * between two of them. Measured on the lane-test map: a route whose sampled points
+ * landed at (-7.9, -5.9) and (-13, -4.1), either side of a crossing at x = -9,
+ * scored 0.13 and was chosen as the safest of eleven, and the fighter who walked it
+ * was dead four seconds later. Everything downstream was reasoning correctly about
+ * a route nobody had actually looked at.
+ *
+ * Weight still ramps toward the destination, because ending in a beaten zone is
+ * worse than crossing one, but no stretch of the walk goes unexamined now.
  */
-const ROUTE_SAMPLES = [[0.35, 0.5], [0.6, 1], [0.85, 1.5], [1, 3]];
-const ROUTE_WEIGHT_TOTAL = ROUTE_SAMPLES.reduce((sum, [, weight]) => sum + weight, 0);
+const ROUTE_STEP = 1.5;
+const ROUTE_MIN_SAMPLES = 4;
+const ROUTE_MAX_SAMPLES = 20;
+const routeSampleWeight = (t) => 0.5 + 2.5 * t * t;
 
 /** Scratch for the walked polyline a route cost is measured along. */
 const _routeLegs = [];
@@ -282,6 +295,10 @@ export class Combatant {
     this.breachGoal = new THREE.Vector3();
     this.breachLane = 0;
     this.breachStaging = false;
+    this.breachCost = 0;
+    /** Holding the angle for the squad, or moving behind somebody who is. */
+    this.onOverwatch = false;
+    this.covered = false;
     this.cooldown = 0.5 + Math.random();
     this.burstLeft = this._burstSize();
     this.reactionLeft = 0;
@@ -706,7 +723,12 @@ export class Combatant {
       this.holdSpent = Math.max(0, this.holdSpent - dt * 0.5);
     }
     this.suppressT -= dt;
-    if (this.suppressT <= 0 && this.archetype !== 'rusher') {
+    // Rushers used to skip this entirely, which made them blind rather than brave.
+    // A rusher should take the short way and accept the crossing — he still does,
+    // because the lane chooser and the break-for-cover branch both exempt him — but
+    // knowing where the beaten zone is lets him sprint across it instead of jogging
+    // into it and stopping. Charging is the archetype; not noticing is a bug.
+    if (this.suppressT <= 0) {
       this.suppressT = SUPPRESSION_PERIOD * (0.85 + Math.random() * 0.3);
       const before = this.pinnedBy;
       const sees = (from, to) => this._laneSees(world, from, to);
@@ -720,9 +742,11 @@ export class Combatant {
         this.coverGoal = null;
       } else if (!this.coverGoal || this.pinnedBy !== before ||
                  sees(this.pinnedBy, _routePoint.set(this.coverGoal.x, this.coverGoal.y + 1.15, this.coverGoal.z))) {
-        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees, {
-          standable: (p) => this._standable(world, p),
-        });
+        const standable = (p) => this._standable(world, p);
+        this.coverGoal = coverStep(this.pinnedBy, this.pos, sees, { standable })
+          // Nowhere hidden within reach is not a reason to stay on the line. Cover is
+          // the good outcome; being off the line is the necessary one.
+          || stepOutOfLane(this.pinnedBy, this.pos, standable);
       }
       if (before && !this.pinnedBy) {
         // He just made it out of the lane. Settle here for a beat rather than
@@ -730,6 +754,36 @@ export class Combatant {
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
       }
+      // Getting a fighter to use the cover on his own side: three attempts, three
+      // losses, so the record is here instead of the code.
+      //
+      //   walk him to a coverStep spot ......... deaths 14->18/30, damage 80.7k->68.1k
+      //   bias his jink toward the unswept side  deaths 18->22/30, damage 71k->55.7k
+      //   the same, gated so only the rusher and
+      //   shieldman accept being exposed ....... damage 11.5k->8.4k, deaths unchanged
+      //
+      // The third was run against a holder who *swings* onto whatever shows, built
+      // precisely because the first two might only have measured badly for want of a
+      // scenario that punishes exposure. It did punish it — and cover-seeking still
+      // lost. Every version trades a firing solution for a better place to stand, and
+      // the exposure saved has never once covered the loss.
+      //
+      // The finding underneath is larger than the positioning. Against a holder who
+      // turns, the squad loses all thirty of thirty however they stand, at every
+      // accuracy worth calling a player. Their answer to a held angle is to shoot
+      // back from wherever they are, and that answer does not work — which is a
+      // question about suppressing and displacing as a squad, not about where one
+      // man puts his feet.
+      // Fighting *from* cover, rather than wherever the walk happened to end, is
+      // the obvious next thing and it does not work. A fighter who has flanked wide
+      // is out of the beaten zone and so not pinned, and he stands in the open
+      // trading with a man behind a wall — the cover on his side goes unused, which
+      // looks wrong and is wrong. But moving him onto it costs more than it saves:
+      // using the target position as the thing to hide from and  to find
+      // the spot, deaths went 14 to 18 of 30 and damage put on the shooter fell from
+      // 80,700 to 68,100. He spends the fight relocating instead of shooting, and is
+      // exposed while he does it. Whatever fixes this has to keep his weapon on the
+      // target while he moves, which is a different mechanism to this one.
       // A committed lane is re-examined while he walks it.
       //
       // The route was costed once, at the moment of commitment, and then honoured for
@@ -741,7 +795,12 @@ export class Combatant {
       //
       // Held for a beat first, so a lane cannot be abandoned the instant it is taken
       // and the two decisions oscillate.
-      if (this.breachT > 0 && this.breachLane !== 0 && this.breachTarget === this.target &&
+      // Lane 0 was excluded from this check, which is precisely backwards: lane 0 is
+      // the one that runs straight at him. A fighter who commits in the first half
+      // second — before a shot has been fired, when every route costs nothing —
+      // walks the centre and nothing re-examines it, which is the walking-straight-in
+      // you see at the start of a fight.
+      if (this.breachT > 0 && this.breachTarget === this.target &&
           now - (this._breachAt ?? -99) > 0.8 && this.suppression.anyDanger(now) &&
           this._routeCost(world, this.breachGoal, now) >= LANE_ABANDON) {
         this.breachT = 0;   // re-decide on the next think, with the fire as it is now
@@ -778,6 +837,27 @@ export class Combatant {
       // Keep the record pointer live: `tick` may have replaced or dropped it.
       this.contact = this.perception.get(this.target);
       if (!this.contact) this.target = null;
+    }
+
+    // ---- bounding ----
+    // Somebody holds the angle; everybody else moves behind it. Elected rather than
+    // assigned so it survives men dying, and re-elected on the think cadence so the
+    // job passes to whoever still has eyes on.
+    if (this.target) {
+      const squad = world.combatants.filter(c => c.alive && c.team === this.team);
+      const setter = electOverwatch(squad, this.target);
+      const wasSetter = this.onOverwatch;
+      this.onOverwatch = setter === this;
+      this.covered = isCovered(setter, this, now);
+      if (this.onOverwatch && !wasSetter) {
+        world.onCombatEvent?.('overwatch_set', this, {
+          target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+          squad: squad.length,
+        });
+      }
+    } else {
+      this.onOverwatch = false;
+      this.covered = false;
     }
 
     const speedMult = 1 - this.legDmg * 0.45;
@@ -987,9 +1067,27 @@ export class Combatant {
         // The squad's assignment still comes first — a crossfire is only a crossfire
         // if the lanes stay spread. It gets overruled only by ground that is being
         // actively covered, which is the one thing worth breaking formation over.
-        const choice = this.archetype === 'rusher'
-          ? { lane: assigned, goal: offsetBreachGoal(tp, this.pos, assigned), covered: false }
-          : safeBreachLane(tp, this.pos, assigned, goal => this._routeCost(world, goal, now));
+        const sideByLane = new Map();
+        // Discounting contested ground for a covered man was tried here, to buy back
+        // some pressure on the near side. It changed nothing measurable at 0.5 or at
+        // 0.75 — byte-identical runs — because covering fire does not actually stop
+        // the man being covered from being seen, so the route that was lethal stays
+        // lethal and the cheapest one still wins. Near-side pressure needs somebody
+        // whose *job* is to draw the angle, not a fighter who was going to route
+        // round anyway and got a discount.
+        const priced = safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
+          const { cost, side } = this._routeCostBothWays(world, goal, now);
+          sideByLane.set(lane, side);
+          return cost;
+        });
+        // The rusher gets the same survey and a different conclusion. He is never
+        // pinned down and never routes the long way — but he was previously handed
+        // the squad assignment untested, which on the centre lane is a charge
+        // straight down the barrel. Brave is picking the cheapest way in and going
+        // anyway; walking the worst one because nobody looked is just stupid.
+        const choice = this.archetype === 'rusher' ? { ...priced, covered: false } : priced;
+        // Walk it the way it was costed.
+        this.breachSide = sideByLane.get(choice.lane) ?? this.flankSide;
         this.breachLane = choice.lane;
         this.breachTarget = this.target;
         this.breachGoal.set(choice.goal.x, choice.goal.y, choice.goal.z);
@@ -997,6 +1095,7 @@ export class Combatant {
         // the centre lane — otherwise lane 0 falls through to "go straight at him"
         // and the whole point of staging is thrown away.
         this.breachStaging = !!choice.staging;
+        this.breachCost = choice.cost ?? 0;
         this._breachAt = now;
         // A lane taken to get away from incoming fire is committed to for longer than
         // a routine one. Re-deciding on the usual six-second cadence sent a fighter
@@ -1037,7 +1136,20 @@ export class Combatant {
 
       // One fighter establishes the direct sightline. Side lanes remain committed
       // through momentary contact so the squad creates an actual crossfire.
-      const needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
+      let needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
+
+      // The man on overwatch does not advance. His job is the enemy's attention, and
+      // he cannot hold it while walking — a lowered weapon covers nobody.
+      if (this.onOverwatch && !assist && sight) needTravel = false;
+      // And nobody crosses worked ground unescorted. This is the whole mechanism:
+      // the crossings that kill people are the ones taken while every squadmate is
+      // also moving, so the enemy is free to watch the one lane that matters. If the
+      // route is clean he goes regardless — bounding is for contested ground.
+      if (!this.onOverwatch && !assist && !this.covered &&
+          this.breachT > 0 && this.breachCost > 0 && this.holdSpent < HOLD_BUDGET) {
+        needTravel = false;
+        this._strafing = true;
+      }
       // Standing in a lane somebody is working: getting out of it outranks
       // everything below, including the breach he is committed to.
       //
@@ -1053,11 +1165,15 @@ export class Combatant {
         this.archetype !== 'rusher';
       if (breakingCover) {
         this._traveling = true;
-        // Only sprint if the cover is actually far enough to be worth the gun coming
-        // down. Sprinting is what makes a fighter unable to shoot, so sprinting the
-        // last two metres into cover buys nothing and costs the whole exchange.
-        const coverGap = Math.hypot(this.coverGoal.x - this.pos.x, this.coverGoal.z - this.pos.z);
-        this.sprintNow = coverGap > 3.5 && this.legDmg < 0.6;
+        // Run, the whole way, until he is off the line.
+        //
+        // This used to sprint only when the cover was more than a few metres off, so
+        // he could keep shooting over the last stretch — but the last stretch is
+        // inside the beaten zone by definition. A lowered weapon for a second and a
+        // half is a trade worth making every time, because the fighter who makes it
+        // is alive afterwards and firing for the rest of the match; the one who kept
+        // his sights up across the open is not firing at all.
+        this.sprintNow = this.legDmg < 0.6;
         this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
       } else if (this.peekSide && !sight) {
         // Working a corner outranks holding behind it.
@@ -1100,8 +1216,12 @@ export class Combatant {
           melee: !!w.melee,
           distance: dist,
           legDamage: this.legDmg,
+          crossingFire: !!this.pinnedBy,
         });
-        this._steerToward(world, dt, gx, gy, gz, move);
+        // Committed lanes are walked the way they were costed; everything else
+        // keeps the fighter's own habitual flank preference.
+        this._steerToward(world, dt, gx, gy, gz, move,
+          breaching ? (this.breachSide ?? this.flankSide) : this.flankSide);
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && !w.melee && heightGap < 0.8) {
         this._strafing = true;
         if (this._ledgeAhead(world, -fx, -fz)) {
@@ -1116,6 +1236,18 @@ export class Combatant {
         move.x += fx; move.z += fz;
       } else {
         this._strafing = true;
+        // Circling somebody at contact range, while standing in his beaten zone, is
+        // the one place a jink should be *chosen* rather than alternated. The orbit
+        // is what carries a fighter through the firing line: he is not walking at it,
+        // he is going round, and half of round is across. Only here — biasing the
+        // strafe at every range was tried and cost far more than it saved.
+        if (this.pinnedBy && dist < 8) {
+          const chestY = this.pos.y + 1.15 * this.scale;
+          for (const side of [this.strafeDir, -this.strafeDir]) {
+            _routePoint.set(this.pos.x + -fz * 2.2 * side, chestY, this.pos.z + fx * 2.2 * side);
+            if (!this._groundIsDangerous(world, _routePoint, now)) { this.strafeDir = side; break; }
+          }
+        }
         if (this._ledgeAhead(world, -fz * this.strafeDir, fx * this.strafeDir)) this.strafeDir *= -1;
         move.x += -fz * this.strafeDir; move.z += fx * this.strafeDir;
       }
@@ -1226,7 +1358,11 @@ export class Combatant {
                  this.reactionLeft <= 0 && this.contact && !this.contact.visible &&
                  worthSuppressing({
                    radius: uncertainty, age: now - this.contact.t,
-                   rounds: this._poolFor(this.weaponId), role: this.role, auto: !!w.auto,
+                   rounds: this._poolFor(this.weaponId),
+                   // On overwatch he is the reason anyone else can move, so he
+                   // shoots at ground on the same terms a support gunner does.
+                   role: this.onOverwatch ? 'support' : this.role,
+                   auto: this.onOverwatch || !!w.auto,
                  })) {
         // Area fire at a place, not a person.
         //
@@ -1471,7 +1607,7 @@ export class Combatant {
    * use the same pathing to go looking. `walkableLine` is expensive, so the straight
    * -line test runs on the repath cadence rather than every frame.
    */
-  _steerToward(world, dt, gx, gy, gz, move) {
+  _steerToward(world, dt, gx, gy, gz, move, side = this.flankSide) {
     this.repathT = (this.repathT ?? 0) - dt;
     if (this.repathT <= 0) {
       this.repathT = 0.45 + Math.random() * 0.35;
@@ -1479,7 +1615,7 @@ export class Combatant {
       if (this._straightOK) {
         this.path = null;
       } else {
-        this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, this.flankSide);
+        this.path = world.nav.findPath(this.pos, { x: gx, y: gy, z: gz }, this.navSeed, side);
         this.pathIdx = 0;
       }
     }
@@ -1675,12 +1811,12 @@ export class Combatant {
    * worked*. The second one accumulates — one round is nothing, twenty into the
    * same doorway is a reason to go round.
    */
-  hearNoise(source, pos, kind, now, weight = 1) {
+  hearNoise(source, pos, kind, now, weight = 1, dir = null) {
     const contact = this.perception.hear(source, pos, kind, this.pos, now);
     // Gated on the contact, which is falsy exactly when the noise was out of
     // earshot — a fighter cannot be pinned by fire he cannot hear.
     if (contact && kind === 'gunshot') {
-      this.suppression.record(pos, SUPPRESSION.shot * weight, now);
+      this.suppression.record(pos, SUPPRESSION.shot * weight, now, { dir });
     }
     return contact;
   }
@@ -1705,10 +1841,13 @@ export class Combatant {
     this.rig.trigger('fire');
     // Firing is a decision to be located. Everyone hostile inside earshot gets a
     // rough fix on the muzzle — the loudest, cheapest way to give yourself away.
-    world.emitNoise?.(this, from, 'gunshot', w.suppression ?? 1);
+    world.emitNoise?.(this, from, 'gunshot', w.suppression ?? 1, dir);
     const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
     if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
     this.shotsFired = (this.shotsFired || 0) + 1;
+    // When he last put a round out, which is what 'covering' means to the
+    // rest of the squad — an elected setter holding his fire covers nobody.
+    this.lastShotAt = world.simTime ?? 0;
   }
 
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
@@ -1765,16 +1904,30 @@ export class Combatant {
    *
    * Bails immediately when nothing is hot, which is most of the time.
    */
-  _routeCost(world, goal, now) {
+  _routeCost(world, goal, now, side = this.flankSide) {
     if (!this.suppression.anyDanger(now)) return 0;
     const sees = (from, to) => this._laneSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
-    const legs = this._routeLegs(world, goal);
+    const legs = this._routeLegs(world, goal, side);
+    let walked = 0;
+    for (let i = 1; i < legs.length; i++) {
+      walked += Math.hypot(legs[i].x - legs[i - 1].x, legs[i].z - legs[i - 1].z);
+    }
+    const steps = Math.max(ROUTE_MIN_SAMPLES,
+      Math.min(ROUTE_MAX_SAMPLES, Math.ceil(walked / ROUTE_STEP)));
     let swept = 0;
-    for (const [t, weight] of ROUTE_SAMPLES) {
+    let total = 0;
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      const weight = routeSampleWeight(t);
+      total += weight;
       pointAlongPath(legs, t, _routePoint);
       _routePoint.y = chest;
-      if (this.suppression.covering(_routePoint, sees, now)) { swept += weight; continue; }
+      // Priced by how hard the lane is being worked, not merely by whether it is
+      // hot. Crossing stays cheap against a few opportunist rounds and becomes
+      // prohibitive against a rifle that has been sawing down the corridor.
+      const lane = this.suppression.covering(_routePoint, sees, now);
+      if (lane) { swept += weight * laneSeverity(lane, now); continue; }
       // Ground that has already taken somebody counts heavier than ground merely
       // presumed covered — a bite is worth more than a bang. Marks he is standing
       // inside are skipped: a hit lands a stride from the cover the victim was quite
@@ -1782,7 +1935,7 @@ export class Combatant {
       // expensive and pushes him into the open to escape a blob at his feet.
       swept += weight * this.suppression.markWeightAt(_routePoint, now, this.pos);
     }
-    return Math.min(1, swept / ROUTE_WEIGHT_TOTAL);
+    return Math.min(1, swept / Math.max(1e-6, total));
   }
 
   /**
@@ -1795,7 +1948,7 @@ export class Combatant {
    * movement now ask the navmesh the same question in the same way, so a lane is
    * scored on the route it actually commits him to.
    */
-  _routeLegs(world, goal) {
+  _routeLegs(world, goal, side = this.flankSide) {
     _routeLegs.length = 0;
     _routeLegs.push(this.pos);
     const gy = goal.y ?? this.pos.y;
@@ -1804,11 +1957,37 @@ export class Combatant {
       : true;
     if (!straight) {
       const path = world.nav.findPath(this.pos, { x: goal.x, y: gy, z: goal.z },
-        this.navSeed, this.flankSide);
+        this.navSeed, side);
       if (path && path.length) _routeLegs.push(...path);
     }
     _routeLegs.push(_routeGoal.set(goal.x, gy, goal.z));
     return _routeLegs;
+  }
+
+  /**
+   * The cheaper of the two ways round to `goal`, and which way that was.
+   *
+   * A goal on the far side of the pit is only safe if you *get there* the far way,
+   * and the navmesh optimises distance, so left round the obstacle is what it hands
+   * back even when the goal is on the right. That made the whole far side unusable:
+   * the destination was clean, the shortest path to it went straight down the beaten
+   * zone, the cost came back high, and the lane was thrown out. Asking the pathfinder
+   * for both sides and keeping the better one is what turns "somewhere safe to stand"
+   * into "a safe way of getting there".
+   *
+   * The side that won is carried to the commitment, because a route costed one way
+   * round and then walked the other is the straight-line bug over again.
+   */
+  _routeCostBothWays(world, goal, now) {
+    const own = this._routeCost(world, goal, now, this.flankSide);
+    // Only worth asking the pathfinder for the other way round when the way it
+    // prefers is genuinely bad. Costing both sides of every candidate doubled the
+    // route work for no measurable gain, and route sampling is dense now.
+    if (own < LANE_ABANDON) return { cost: own, side: this.flankSide };
+    const other = this._routeCost(world, goal, now, -this.flankSide);
+    return other < own
+      ? { cost: other, side: -this.flankSide }
+      : { cost: own, side: this.flankSide };
   }
 
   removeFrom(world) {

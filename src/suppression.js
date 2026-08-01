@@ -43,6 +43,39 @@ export const SUPPRESSION = {
   deadly: 9,
   /** How far down the lane the fire actually threatens, in metres. */
   range: 30,
+  /**
+   * Half the arc a held angle actually covers.
+   *
+   * A lane used to be a *circle*: anything the firing position could see counted as
+   * covered. Against a man in the open that is most of the pit, so every route out
+   * of a spawn priced the same — far side, near side, straight down the middle, all
+   * of it — and a squad asked to pick the safe one had nothing to pick with. It
+   * would hold until the budget expired and then walk the least-bad, which on a map
+   * with an obvious way round is the worst possible reading of the situation.
+   *
+   * A man holding a corner threatens a cone. Forty degrees either side is generous —
+   * wider than a sight picture, because he is scanning and can swing — but it is
+   * finite, which is the part that matters: it leaves ground that is *not* his
+   * problem, and that ground is what the other lane is made of.
+   */
+  halfArc: (40 * Math.PI) / 180,
+  /**
+   * Where he starts being able to swing onto you, and how much wider that makes the
+   * arc when you are right on top of him.
+   *
+   * This used to switch the arc *off* inside seven metres, which meant that at
+   * contact range every direction read as lethal — so a fighter circling him had no
+   * safe side to circle toward, and the pick-your-jink logic that was supposed to
+   * keep him out of the firing line silently had nothing to pick between. He orbited
+   * straight through it, every game.
+   *
+   * The arc widens instead of vanishing: forty degrees at range, a hundred at his
+   * elbow. Standing at his shoulder is still dangerous, standing behind him is still
+   * not, and the narrow strip he is actually firing down remains distinguishable
+   * from the rest of the circle — which is the whole thing the model is for.
+   */
+  swingRange: 7,
+  swingWiden: (70 * Math.PI) / 180,
   /** Two firing positions this close are one lane. */
   merge: 3.5,
   /** Seconds of cold silence before a lane is forgotten entirely. */
@@ -115,6 +148,27 @@ export const MARK = {
 /** Is this lane worth routing around right now? */
 export function laneIsHot(lane, now) {
   return lane.heat >= SUPPRESSION.hot || now < lane.deadlyUntil;
+}
+
+/**
+ * How much worse than "merely hot" this lane is, 1 upward.
+ *
+ * Routing used to treat every hot lane alike, so crossing one counted the same
+ * whether it was a man who had loosed four rounds a moment ago or a rifle that had
+ * been sawing down the same corridor for a minute. Brief crossings were priced as
+ * cheap — deliberately, because pricing them dear is what makes a squad cower — and
+ * that is right for the former and fatal for the latter. Two metres of beaten zone
+ * at a walk is most of a second, and a second in front of a saturated automatic is
+ * seven rounds.
+ *
+ * So the crossing price scales with how hard the thing is being worked: 1 at the
+ * threshold, 3 at a saturated lane, 4 once it has killed somebody. At the top of
+ * that range a single mid-route sample is enough to put a lane past the abandon
+ * line on its own, which is the arithmetic way of saying "go round".
+ */
+export function laneSeverity(lane, now) {
+  const saturation = Math.min(1, Math.max(0, lane.heat / SUPPRESSION.max));
+  return 1 + saturation * 2 + (now < lane.deadlyUntil ? 1 : 0);
 }
 
 /**
@@ -203,6 +257,38 @@ export function coverStep(lane, from, losFn, {
       // a fighter walking into a wall until the fire stops.
       if (!standable(point)) continue;
       if (!losFn(lane, { x: point.x, y: point.y + probeY, z: point.z })) return point;
+    }
+  }
+  return null;
+}
+
+/**
+ * Just get out of the strip: sideways, across the rounds.
+ *
+ * `coverStep` looks for somewhere the lane cannot see, and in an open corridor there
+ * is often no such place within a few metres — so it returns null, and a fighter
+ * standing in the beaten zone with nothing to run to stands in the beaten zone. That
+ * is not a corner case: it was the single largest cause of death left, seven of
+ * sixteen, men parked in the open being shot while every other system correctly
+ * agreed they were in danger.
+ *
+ * Cover is the nice outcome. Not being on the line is the necessary one, and it is
+ * always available — perpendicular to the direction the rounds are travelling is the
+ * shortest way off it.
+ */
+export function stepOutOfLane(lane, from, standable = () => true, distances = [4, 6, 8]) {
+  let px, pz;
+  if (lane.facing) {
+    px = -lane.dz; pz = lane.dx;
+  } else {
+    const dx = from.x - lane.x, dz = from.z - lane.z;
+    const d = Math.hypot(dx, dz) || 1;
+    px = -dz / d; pz = dx / d;
+  }
+  for (const reach of distances) {
+    for (const side of [1, -1]) {
+      const point = { x: from.x + px * reach * side, y: from.y, z: from.z + pz * reach * side };
+      if (standable(point)) return point;
     }
   }
   return null;
@@ -310,7 +396,7 @@ export class SuppressionMap {
    * angle shifts about as he shoots, and a cloud of thirty near-identical lanes
    * would be thirty line-of-sight tests for one gun.
    */
-  record(origin, heat, now, { deadly = false } = {}) {
+  record(origin, heat, now, { deadly = false, dir = null } = {}) {
     this.decayTo(now);
     let lane = null;
     let nearest = SUPPRESSION.merge * SUPPRESSION.merge;
@@ -327,8 +413,25 @@ export class SuppressionMap {
       lane = {
         x: origin.x, y: origin.y, z: origin.z,
         heat: 0, kills: 0, firstAt: now, lastAt: now, deadlyUntil: -Infinity,
+        dx: 0, dz: 0, facing: false,
       };
       this.lanes.push(lane);
+    }
+    // Which way the rounds are going, smoothed. A fighter working an angle drifts
+    // across it; the mean of where he has been shooting is the angle he is holding.
+    if (dir) {
+      const len = Math.hypot(dir.x, dir.z);
+      if (len > 1e-4) {
+        const nx = dir.x / len, nz = dir.z / len;
+        if (lane.facing) {
+          lane.dx += (nx - lane.dx) * 0.25;
+          lane.dz += (nz - lane.dz) * 0.25;
+          const m = Math.hypot(lane.dx, lane.dz) || 1;
+          lane.dx /= m; lane.dz /= m;
+        } else {
+          lane.dx = nx; lane.dz = nz; lane.facing = true;
+        }
+      }
     }
     lane.heat = Math.min(SUPPRESSION.max, lane.heat + heat);
     lane.lastAt = now;
@@ -359,7 +462,17 @@ export class SuppressionMap {
       if (!laneIsHot(lane, now)) continue;
       if (worst && lane.heat <= worst.heat) continue;
       const dx = point.x - lane.x, dz = point.z - lane.z;
-      if (dx * dx + dz * dz > SUPPRESSION.range * SUPPRESSION.range) continue;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > SUPPRESSION.range * SUPPRESSION.range) continue;
+      // Outside the arc he is holding, and far enough that he would have to turn to
+      // reach you, this ground is not his. That exclusion is what makes one route
+      // meaningfully safer than another.
+      if (lane.facing) {
+        const d = Math.sqrt(d2) || 1;
+        const closeness = Math.max(0, 1 - d / SUPPRESSION.swingRange);
+        const halfArc = SUPPRESSION.halfArc + closeness * SUPPRESSION.swingWiden;
+        if ((dx / d) * lane.dx + (dz / d) * lane.dz < Math.cos(halfArc)) continue;
+      }
       if (!losFn(lane, point)) continue;
       worst = lane;
     }

@@ -80,6 +80,38 @@ test('a lane only covers ground it can see, inside its range', () => {
   assert.equal(map.covering(far, clear, now), null);
 });
 
+test('a lane covers the arc it is held on, not the circle around it', () => {
+  const map = new SuppressionMap();
+  const muzzle = { x: 0, y: 1.2, z: 0 };
+  // Twenty rounds down +x, so the lane learns which way it is pointing.
+  for (let i = 0; i < 20; i++) map.record(muzzle, SUPPRESSION.shot, i * 0.05, { dir: { x: 1, z: 0 } });
+  const lane = map.lanes[0];
+  assert.equal(lane.facing, true);
+  assert.ok(lane.dx > 0.99, 'pointing where the rounds went');
+
+  const now = 1;
+  assert.ok(map.covering({ x: 20, y: 1.15, z: 0 }, clear, now), 'straight down the lane');
+  assert.ok(map.covering({ x: 18, y: 1.15, z: 8 }, clear, now), 'and inside the arc');
+  // Square abeam and behind is somebody else's problem — this is the exclusion that
+  // makes one route safer than another.
+  assert.equal(map.covering({ x: 0, y: 1.15, z: 20 }, clear, now), null, 'abeam');
+  assert.equal(map.covering({ x: -20, y: 1.15, z: 0 }, clear, now), null, 'behind');
+
+  // Close in the arc widens rather than switching off, which is what leaves a
+  // circling fighter somewhere to circle *to*. His shoulder is still his; his back
+  // is still not. Turning the arc off entirely down here made every direction lethal
+  // and quietly disabled the logic that keeps a rusher out of the firing line.
+  assert.ok(map.covering({ x: 0, y: 1.15, z: 1.5 }, clear, now), 'at his shoulder');
+  assert.equal(map.covering({ x: -1.5, y: 1.15, z: 0 }, clear, now), null, 'at his back');
+});
+
+test('a lane with no recorded direction still covers everything it can see', () => {
+  const map = new SuppressionMap();
+  for (let i = 0; i < 20; i++) map.record({ x: 0, y: 1.2, z: 0 }, SUPPRESSION.shot, i * 0.05);
+  assert.equal(map.lanes[0].facing, false);
+  assert.ok(map.covering({ x: 0, y: 1.15, z: 20 }, clear, 1), 'no facing means no exclusion');
+});
+
 test('the hottest covering lane wins, and a cold one never covers anything', () => {
   const map = new SuppressionMap();
   for (let i = 0; i < 4; i++) map.record({ x: 5, y: 1, z: 0 }, SUPPRESSION.shot, i * 0.1);
