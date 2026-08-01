@@ -1709,7 +1709,11 @@ export class Combatant {
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
     // peeking leans harder than plain strafing. Sign: positive is to his right, which
     // is exactly where the peek eye offsets for side=+1.
-    const leanTarget = this.peekSide ? this.peekSide : (this._strafing ? this.strafeDir * 0.35 : 0);
+    // The strafe-lean belongs to actual strafing. Keyed on intent alone it flapped
+    // in time with the micro-jink — leaning back and forth on the spot, every frame,
+    // which from above read as the model breaking. Standing men do not lean.
+    const leanTarget = this.peekSide ? this.peekSide
+      : (this._strafing && (this._animSpeed ?? 0) > 0.5 ? this.strafeDir * 0.35 : 0);
     this.leanK += (leanTarget - this.leanK) * Math.min(1, dt * 6);
 
     this.group.position.copy(this.pos);
@@ -1720,13 +1724,44 @@ export class Combatant {
     // cross-step over a forward walk. Local +Z is forward (see the yaw convention at
     // the top of the steering code); local +X is therefore his left, so the rightward
     // component carries a minus sign.
+    //
+    // The animation reads a *smoothed* velocity, not the raw frame delta. A fighter
+    // holding at a corner micro-jinks — half a step left, half a step right, wall
+    // contact rotating the leftovers — and feeding those raw deltas to the blendspace
+    // played a full walk cycle on the spot with the direction flapping sign every
+    // frame. Averaged as a vector, oscillation cancels to nothing and he stands;
+    // genuine travel passes through untouched. The deadband kills the residue.
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
-    const wdx = this._moveDX || 0, wdz = this._moveDZ || 0;
+    // Net displacement over the last twenty-odd frames, not an average velocity. An
+    // EMA was tried first and the jink swings are slower than any usable smoothing
+    // constant, so it faithfully tracked each one and the rig was still fed a walk
+    // ninety percent of the time he stood still. Where he IS versus where he WAS a
+    // third of a second ago cannot be fooled by oscillation: back-and-forth nets to
+    // nothing, real travel passes through whole.
+    if (!this._trail) { this._trail = []; this._trailAt = 0; }
+    const T = 30;
+    if (this._trail.length < T) this._trail.push({ x: this.pos.x, z: this.pos.z });
+    else {
+      const slot = this._trail[this._trailAt];
+      slot.x = this.pos.x; slot.z = this.pos.z;
+      this._trailAt = (this._trailAt + 1) % T;
+    }
+    const oldest = this._trail.length < T ? this._trail[0] : this._trail[this._trailAt % this._trail.length];
+    const window = Math.max(dt, (this._trail.length - 1) * dt);
+    const nx = this.pos.x - oldest.x, nz = this.pos.z - oldest.z;
+    let animSpeed = Math.hypot(nx, nz) / window;
+    // 0.6 m/s: below the slowest genuine gait (a crouched limp is ~0.9), above what
+    // half a second of jinking nets. Anything under it is shuffling, and shuffling
+    // is standing as far as the legs are concerned.
+    if (animSpeed < 0.6) animSpeed = 0;
+    this._animSpeed = animSpeed;
+    const wdx = animSpeed > 0 ? nx / Math.max(1, this._trail.length - 1) : 0;
+    const wdz = animSpeed > 0 ? nz / Math.max(1, this._trail.length - 1) : 0;
     const localF = wdx * sy + wdz * cy;
     const localR = -(wdx * cy - wdz * sy);
     // A limping fighter's stride slows with him, because the blendspace advances on
     // distance travelled — the leg wound is visible in the walk, not just the numbers.
-    this.rig.setStance(this.currentSpeed || 0, this.crouchK < 0.9, localR, localF);
+    this.rig.setStance(animSpeed, this.crouchK < 0.9, localR, localF);
     // Lean is a spine bend in the rig now, not a roll of the whole object: rolling
     // pivoted him about his feet and lifted a boot off the floor.
     this.rig.setLean(this.leanK);
