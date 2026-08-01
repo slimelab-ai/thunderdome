@@ -205,7 +205,31 @@ function installWorldHooks() {
   // Somebody just got hit standing here, and said so. The squad's record of ground
   // that has actually drawn blood, as opposed to ground a gun is presumed to cover.
   world.reportHit = (victim, pos) => shareHitGround(world, victim, pos, world.simTime);
+
+  /**
+   * "Taking the left." Spread, without anybody reading anybody's mind.
+   *
+   * Lane assignment walked the live squad roster, which is a fighter knowing what
+   * four other men intend without being told — and it still produced a mob, because
+   * everyone then re-costed their way onto the same safe approach anyway. This is the
+   * same coordination bought honestly: he says it, and the men near enough to hear
+   * take it into account. Out of earshot is out of the loop.
+   */
+  world.callLane = (caller, lane, target) => {
+    let told = 0;
+    for (const mate of world.combatants) {
+      if (!mate.alive || mate === caller || mate.team !== caller.team) continue;
+      if (!mate.hearLaneCall) continue;
+      if (Math.hypot(mate.pos.x - caller.pos.x, mate.pos.z - caller.pos.z) > LANE_CALL_RANGE) continue;
+      mate.hearLaneCall(caller, lane, target, world.simTime);
+      told++;
+    }
+    return told;
+  };
 }
+
+/** How far "taking the left" carries. A shout, not a radio. */
+const LANE_CALL_RANGE = 26;
 
 installWorldHooks();
 
