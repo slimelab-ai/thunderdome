@@ -1248,6 +1248,7 @@ export class Combatant {
         // A squadmate just died up ahead, or every approach is covered: hold the
         // angle and jink rather than feeding the corner one man at a time.
         this._strafing = true;
+        this._jinkAwayFromFire(world, fx, fz, now);
         move.x += -fz * this.strafeDir * 0.7; move.z += fx * this.strafeDir * 0.7;
       } else if (needTravel || opening) {
         this._traveling = true;
@@ -1284,6 +1285,7 @@ export class Combatant {
           breaching ? (this.breachSide ?? this.flankSide) : this.flankSide);
       } else if (dist < engage * 0.45 && this.weaponId !== 'shotgun' && !w.melee && heightGap < 0.8) {
         this._strafing = true;
+        this._jinkAwayFromFire(world, fx, fz, now);
         if (this._ledgeAhead(world, -fx, -fz)) {
           // backing up would mean falling off — hold and strafe instead
           if (this._ledgeAhead(world, -fz * this.strafeDir, fx * this.strafeDir)) this.strafeDir *= -1;
@@ -1296,18 +1298,7 @@ export class Combatant {
         move.x += fx; move.z += fz;
       } else {
         this._strafing = true;
-        // Circling somebody at contact range, while standing in his beaten zone, is
-        // the one place a jink should be *chosen* rather than alternated. The orbit
-        // is what carries a fighter through the firing line: he is not walking at it,
-        // he is going round, and half of round is across. Only here — biasing the
-        // strafe at every range was tried and cost far more than it saved.
-        if (this.pinnedBy && dist < 8) {
-          const chestY = this.pos.y + 1.15 * this.scale;
-          for (const side of [this.strafeDir, -this.strafeDir]) {
-            _routePoint.set(this.pos.x + -fz * 2.2 * side, chestY, this.pos.z + fx * 2.2 * side);
-            if (!this._groundIsDangerous(world, _routePoint, now)) { this.strafeDir = side; break; }
-          }
-        }
+        this._jinkAwayFromFire(world, fx, fz, now);
         if (this._ledgeAhead(world, -fz * this.strafeDir, fx * this.strafeDir)) this.strafeDir *= -1;
         move.x += -fz * this.strafeDir; move.z += fx * this.strafeDir;
       }
@@ -1826,6 +1817,30 @@ export class Combatant {
       if (box.containsXZ(point.x, point.z, this.radius)) return false;
     }
     return true;
+  }
+
+  /**
+   * Pick the side to jink toward, when one side is swept and the other is not.
+   *
+   * A fighter trading at the edge of a lane drifts into it, because his strafe
+   * alternates on a timer and half of "round" is "across". This was tried once
+   * before at every range and measured worse — but that was while a lane was a
+   * *circle*, so both sides read as lethal and the choice was a coin flip wearing a
+   * jacket. With an arc there is a side that genuinely is not his, and picking it is
+   * the difference between circling a man and walking through his sights.
+   *
+   * Only when something is actually hot; otherwise the jink stays random, which is
+   * what makes a fighter hard to lead.
+   */
+  _jinkAwayFromFire(world, fx, fz, now, reach = 2.5) {
+    if (!this.suppression.anyDanger(now)) return;
+    const chestY = this.pos.y + 1.15 * this.scale;
+    let safest = 0;
+    for (const side of [this.strafeDir, -this.strafeDir]) {
+      _routePoint.set(this.pos.x + -fz * reach * side, chestY, this.pos.z + fx * reach * side);
+      if (!this._groundIsDangerous(world, _routePoint, now)) { safest = side; break; }
+    }
+    if (safest) this.strafeDir = safest;
   }
 
   // would moving 0.9m in (dx,dz) walk us off a >0.8m ledge?
