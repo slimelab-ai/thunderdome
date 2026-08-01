@@ -2873,7 +2873,7 @@ function makeLaneTest(shooter, options = {}) {
     swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
     lastAttacker: null, hurtAt: -99, swingKills: 0, swingEngagements: 0,
     noticing: null, noticedAt: 0, settleUntil: 0, laneOpenFor: 0, swingCap: 0,
-    chaining: false,
+    chaining: false, lastRoundAt: -99,
   };
 
   const firingNow = () => {
@@ -3039,6 +3039,7 @@ function makeLaneTest(shooter, options = {}) {
         fx.muzzleFlash(muzzle, _trapDir);
         audio.shot(WEAPONS.rifle.sound, 1);
 
+        state.lastRoundAt = state.elapsed;
         if (state.engaging === state.swingTarget && state.swingTarget) state.swingShots++;
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
@@ -3072,10 +3073,16 @@ function makeLaneTest(shooter, options = {}) {
         hp: Math.round(Math.max(0, c.hp)),
         range: +Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z).toFixed(1),
         inLane: now, pinned: !!c.pinnedBy, sprint: !!c.sprintNow, peek: c.peekSide,
-        sight: !!c.contact?.visible, hold: +c.holdT.toFixed(1),
+        sight: !!c.contact?.visible, hold: +c.holdT.toFixed(1), waiting: !!c.waitingForGap,
         lane: c.breachLane, staging: !!c.breachStaging,
         goal: [+c.breachGoal.x.toFixed(1), +c.breachGoal.z.toFixed(1)],
         firing: shooting,
+        // Whether rounds were actually coming out, which is not the same as whether
+        // he was nominally shooting: reloads and turns are gaps inside a burst
+        // schedule that never stops. The first version of this recorded the schedule
+        // and therefore reported that nobody ever crossed in a gap, which was a fact
+        // about the metric rather than about the squad.
+        quiet: +(state.elapsed - state.lastRoundAt).toFixed(2),
       });
       if (spotAt(c.pos, LANE_TEST.deathTraps)) {
         state.trapFrames++;

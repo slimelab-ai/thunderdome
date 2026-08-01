@@ -15,7 +15,7 @@ import {
 } from './perception.js';
 import {
   SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, stepOutOfLane, worthSuppressing,
-  laneSeverity,
+  laneSeverity, laneQuietFor, timeSinceFired,
 } from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -68,6 +68,28 @@ const HOLD_BUDGET = 12;
  * Weight still ramps toward the destination, because ending in a beaten zone is
  * worse than crossing one, but no stretch of the walk goes unexamined now.
  */
+/**
+ * What crossing ground costs relative to stopping on it, and what a gap in the
+ * firing knocks off that again.
+ *
+ * The model refused every route that touched a beaten zone, which against anybody
+ * holding a real angle means refusing every route. A man who sprints through two
+ * metres of it to reach a better position has done the right thing; a man who walks
+ * to a spot inside it and stays has not, and only the destination weight should
+ * speak to that.
+ */
+/**
+ * How long the fire has to have stopped before a crossing counts as a gap.
+ *
+ * Shorter than a reload and longer than the beat between bursts, so a man waits out
+ * a magazine change without being fooled by the pause inside one.
+ */
+const GAP_SECONDS = 0.45;
+
+const TRANSIT_DISCOUNT = 0.4;
+const LULL_DISCOUNT = 0.45;
+const LULL_SECONDS = 0.6;
+
 const ROUTE_STEP = 1.5;
 const ROUTE_MIN_SAMPLES = 4;
 const ROUTE_MAX_SAMPLES = 20;
@@ -1155,6 +1177,24 @@ export class Combatant {
       // through momentary contact so the squad creates an actual crossfire.
       let needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
 
+      // Wait at the edge for the gap, then run it.
+      //
+      // The route is priced when it is committed to, which is almost never the moment
+      // a reload happens — so a fighter who had correctly decided to cross set off
+      // into a lane that was mid-burst, and not one crossing in twenty landed in a
+      // break. *Whether* to cross is a routing question; *when* is one you can only
+      // answer standing at the edge, listening. He holds while rounds are still
+      // coming out and goes the moment they stop.
+      this.waitingForGap = false;
+      if (needTravel && breaching && this.breachCost > 0 && !assist &&
+          this.holdSpent < HOLD_BUDGET && timeSinceFired(this.suppression, now) < GAP_SECONDS) {
+        needTravel = false;
+        this.waitingForGap = true;
+        this._strafing = true;
+        move.x += -fz * this.strafeDir * 0.5; move.z += fx * this.strafeDir * 0.5;
+        this.holdSpent += dt;
+      }
+
       // The man on overwatch does not advance. His job is the enemy's attention, and
       // he cannot hold it while walking — a lowered weapon covers nobody.
       if (this.onOverwatch && !assist && sight) needTravel = false;
@@ -1233,7 +1273,10 @@ export class Combatant {
           melee: !!w.melee,
           distance: dist,
           legDamage: this.legDmg,
-          crossingFire: !!this.pinnedBy,
+          // Knowing the route crosses fire is itself the reason to run it. He used to
+          // only sprint once he was already standing in the beaten zone, which is a
+          // second too late to be the point.
+          crossingFire: !!this.pinnedBy || (breaching && this.breachCost > 0),
         });
         // Committed lanes are walked the way they were costed; everything else
         // keeps the fighter's own habitual flank preference.
@@ -1331,7 +1374,14 @@ export class Combatant {
       // Shoulder the weapon when there is something to shoot at a range worth aiming
       // at. Inside knife range nobody bothers, and a sprinting fighter has the weapon
       // down by definition.
-      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2;
+      // The gun comes up when he stops, not while he is crossing open ground.
+      //
+      // Shouldering costs a third of his speed, so aiming *while walking into the
+      // open* is the worst of both — slow and exposed, and it is what you see when a
+      // fighter strolls into a lane with his sights up instead of leaning out of the
+      // corner he just left. Standing still behind something, or leaning, he aims.
+      const walkingExposed = this._traveling && !!this.pinnedBy;
+      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed;
       // Up in about a third of a second, down slower — a fighter who has just been
       // shot at keeps his weapon up for a moment.
       const adsRate = this.wantsAds ? 3.4 : 2.0;
@@ -1955,7 +2005,21 @@ export class Combatant {
       // hot. Crossing stays cheap against a few opportunist rounds and becomes
       // prohibitive against a rifle that has been sawing down the corridor.
       const lane = this.suppression.covering(_routePoint, sees, now);
-      if (lane) { swept += weight * laneSeverity(lane, now); continue; }
+      if (lane) {
+        let bite = laneSeverity(lane, now);
+        // Ground you run across is not ground you stand on. A destination inside the
+        // beaten zone is still refused outright, but the crossing on the way to
+        // somewhere better is a second and a half at a sprint, and pricing it as
+        // though he were going to stop there is what left the squad with no way in
+        // at all. Quiet lanes are cheaper again — a reload or a turn onto somebody
+        // else is exactly the moment to take the gap.
+        if (t < 1) {
+          bite *= TRANSIT_DISCOUNT;
+          if (laneQuietFor(lane, now) > LULL_SECONDS) bite *= LULL_DISCOUNT;
+        }
+        swept += weight * bite;
+        continue;
+      }
       // Ground that has already taken somebody counts heavier than ground merely
       // presumed covered — a bite is worth more than a bang. Marks he is standing
       // inside are skipped: a hit lands a stride from the cover the victim was quite

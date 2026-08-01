@@ -479,3 +479,35 @@ export class SuppressionMap {
     return worst;
   }
 }
+
+
+/**
+ * Has this lane gone quiet, right now?
+ *
+ * Not cold — quiet. A reload, a turn onto somebody else, a moment of indecision: the
+ * lane is still dangerous and still hot, but nothing is coming out of it this second.
+ * That gap is the thing a squad is supposed to move in, and it needs a name separate
+ * from the heat, which is deliberately slow to fall so that nobody walks in behind
+ * the last round.
+ */
+export function laneQuietFor(lane, now) {
+  return Math.max(0, now - (lane.lastAt ?? -99));
+}
+
+
+/**
+ * Seconds since anything hot last put a round out, or Infinity if nothing is hot.
+ *
+ * The gap a squad is supposed to move in. Heat cannot express it — heat is
+ * deliberately slow to fall so nobody walks in behind the last round — so a lane can
+ * be thoroughly hot and *quiet* at the same time, which is exactly what a reload is.
+ * Waiting for the heat to drop means waiting four seconds for a gap that lasts two.
+ */
+export function timeSinceFired(map, now) {
+  let latest = -Infinity;
+  for (const lane of map.lanes) {
+    if (!laneIsHot(lane, now)) continue;
+    if (lane.lastAt > latest) latest = lane.lastAt;
+  }
+  return latest === -Infinity ? Infinity : Math.max(0, now - latest);
+}
