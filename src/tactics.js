@@ -98,12 +98,21 @@ export const LANE_ABANDON = 0.5;
 const STAGING_REACH = 0.6;
 
 export function safeBreachLane(target, attacker, assigned, routeCost, opts = {}) {
+  // A lane a squadmate has said he is taking costs a little more than one nobody
+  // has claimed. Priced rather than reordered: order here only breaks ties, so
+  // shuffling it just shoved everyone off their assigned lanes and onto whichever
+  // single clean lane was left — measured spread across the angles *fell* from 88
+  // degrees to 34. The cost is what actually decides, so the preference belongs in
+  // the cost. Small enough that a genuinely safer shared lane still wins, because
+  // two men on one good angle beats one man on a lethal one.
+  const taken = opts.taken || null;
+  const share = opts.sharePenalty ?? 0.15;
   const order = [assigned, ...BREACH_LANE_ORDER.filter(lane => lane !== assigned)];
   let best = null;
   const consider = (reach) => {
     for (const lane of order) {
       const goal = offsetBreachGoal(target, attacker, lane, { ...opts, reach });
-      const cost = routeCost(goal, lane);
+      const cost = routeCost(goal, lane) + (taken && taken.has(lane) ? share : 0);
       if (cost <= 0) return { lane, goal, cost: 0, covered: false, staging: reach < 1 };
       if (!best || cost < best.cost - 1e-6) best = { lane, goal, cost, staging: reach < 1 };
     }
@@ -223,4 +232,34 @@ export function electOverwatch(squad, target) {
  */
 export function isCovered(setter, self, now, within = 1.5) {
   return !!setter && setter !== self && setter.alive && now - (setter.lastShotAt ?? -99) < within;
+}
+
+
+/**
+ * How long a squadmate's call stays worth respecting, in seconds.
+ *
+ * Long enough that a squad fanning out does not immediately re-converge, short
+ * enough that a lane goes back in the pool once the man who called it is dead or has
+ * changed his mind and not said so.
+ */
+export const CALL_TTL = 7;
+
+/**
+ * The lanes this fighter believes are spoken for.
+ *
+ * Built from what he has actually been told, not from reading his squadmates'
+ * intentions. A man who is out of earshot, or who called before this fighter was
+ * listening, is a man whose lane is unknown — and two of them ending up on the same
+ * approach is the correct outcome of that, not a bug.
+ */
+export function lanesSpokenFor(calls, target, now) {
+  const taken = new Set();
+  if (!calls) return taken;
+  for (const [caller, call] of calls) {
+    if (!caller.alive) continue;
+    if (call.target !== target) continue;
+    if (now - call.at > CALL_TTL) continue;
+    taken.add(call.lane);
+  }
+  return taken;
 }

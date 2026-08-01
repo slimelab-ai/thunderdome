@@ -8,6 +8,7 @@ import { surface } from './materials.js';
 import {
   coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
   shouldSprintAtTarget, searchProbe, SEARCH_PROBES, electOverwatch, isCovered,
+  lanesSpokenFor,
 } from './tactics.js';
 import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
@@ -296,6 +297,8 @@ export class Combatant {
     this.breachLane = 0;
     this.breachStaging = false;
     this.breachCost = 0;
+    /** What squadmates have told him they are doing. Never read off them. */
+    this.knownLanes = new Map();
     /** Holding the angle for the squad, or moving behind somebody who is. */
     this.onOverwatch = false;
     this.covered = false;
@@ -754,19 +757,28 @@ export class Combatant {
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
       }
-      // Getting a fighter to use the cover on his own side: three attempts, three
+      // Getting a fighter to use the cover on his own side: four attempts, four
       // losses, so the record is here instead of the code.
       //
       //   walk him to a coverStep spot ......... deaths 14->18/30, damage 80.7k->68.1k
       //   bias his jink toward the unswept side  deaths 18->22/30, damage 71k->55.7k
       //   the same, gated so only the rusher and
       //   shieldman accept being exposed ....... damage 11.5k->8.4k, deaths unchanged
+      //   the overwatch setter only, who has
+      //   stopped advancing anyway ............. damage 1,744->981, +7% survival
       //
-      // The third was run against a holder who *swings* onto whatever shows, built
+      // The third ran against a holder who *swings* onto whatever shows, built
       // precisely because the first two might only have measured badly for want of a
-      // scenario that punishes exposure. It did punish it — and cover-seeking still
-      // lost. Every version trades a firing solution for a better place to stand, and
-      // the exposure saved has never once covered the loss.
+      // scenario that punishes exposure. It did punish it, and cover-seeking still
+      // lost. The fourth removed the last excuse — the setter has already stopped
+      // advancing, so the steps cost him no firing time in principle — and lost too.
+      //
+      // Four mechanisms, one result, so it is the premise that is wrong rather than
+      // the implementations. Movement and fire are exclusive here: a fighter who is
+      // walking is not shooting, and against an opponent who cannot be killed,
+      // surviving longer while shooting less is not winning. Cover will only start
+      // paying when a fighter can relocate without going quiet — which is a firing
+      // -while-moving mechanism, not another way of choosing where to stand.
       //
       // The finding underneath is larger than the positioning. Against a holder who
       // turns, the squad loses all thirty of thirty however they stand, at every
@@ -1068,6 +1080,7 @@ export class Combatant {
         // if the lanes stay spread. It gets overruled only by ground that is being
         // actively covered, which is the one thing worth breaking formation over.
         const sideByLane = new Map();
+        const taken = lanesSpokenFor(this.knownLanes, this.target, now);
         // Discounting contested ground for a covered man was tried here, to buy back
         // some pressure on the near side. It changed nothing measurable at 0.5 or at
         // 0.75 — byte-identical runs — because covering fire does not actually stop
@@ -1079,7 +1092,7 @@ export class Combatant {
           const { cost, side } = this._routeCostBothWays(world, goal, now);
           sideByLane.set(lane, side);
           return cost;
-        });
+        }, { taken });
         // The rusher gets the same survey and a different conclusion. He is never
         // pinned down and never routes the long way — but he was previously handed
         // the squad assignment untested, which on the centre lane is a charge
@@ -1096,6 +1109,10 @@ export class Combatant {
         // and the whole point of staging is thrown away.
         this.breachStaging = !!choice.staging;
         this.breachCost = choice.cost ?? 0;
+        // Say it out loud. Squadmates near enough to hear leave this lane alone,
+        // which is what fans the squad across the angles — and the ones out of
+        // earshot will not, which is the honest cost of being out of earshot.
+        world.callLane?.(this, this.breachLane, this.target);
         this._breachAt = now;
         // A lane taken to get away from incoming fire is committed to for longer than
         // a routine one. Re-deciding on the usual six-second cadence sent a fighter
@@ -1803,6 +1820,17 @@ export class Combatant {
     for (const c of world.combatants) if (c.team !== this.team) look(c);
   }
 
+  /**
+   * A squadmate has called the lane he is taking.
+   *
+   * Kept per caller, so a man changing his mind replaces his own call rather than
+   * adding a second one. Only ever reached through `world.callLane`, which decides
+   * who was close enough to hear it — this fighter never reads a squadmate's
+   * intentions, he is only ever told them.
+   */
+  hearLaneCall(caller, lane, target, now) {
+    this.knownLanes.set(caller, { lane, target, at: now });
+  }
   /**
    * A noise reached him. Only ever called through `world.emitNoise`.
    *

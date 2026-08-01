@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
-  shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
+  shouldSprintAtTarget, searchProbe, SEARCH_PROBES, lanesSpokenFor, CALL_TTL,
 } from '../src/tactics.js';
 
 test('a squad assigns one suppressor and alternating breach lanes', () => {
@@ -131,4 +131,34 @@ test('firearm users stop sprinting on visual contact while melee fighters close'
   assert.equal(shouldSprintAtTarget({ sight: true, distance: 20 }), false);
   assert.equal(shouldSprintAtTarget({ sight: true, melee: true, distance: 8 }), true);
   assert.equal(shouldSprintAtTarget({ sight: false, distance: 20, legDamage: 0.7 }), false);
+});
+
+test('a lane a squadmate has called costs more, but is still available', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  // Equal ground everywhere, so the only thing separating the lanes is who spoke.
+  const taken = new Set([-1]);
+  const picked = safeBreachLane(target, attacker, -1, () => 0.3, { taken });
+  assert.notEqual(picked.lane, -1, 'he yields the angle a squadmate claimed');
+
+  // ...but not at any price. Two men on one good angle beats one on a lethal one.
+  const onlyMinusOneIsSafe = (goal, lane) => (lane === -1 ? 0.1 : 0.9);
+  const shared = safeBreachLane(target, attacker, 2, onlyMinusOneIsSafe, { taken });
+  assert.equal(shared.lane, -1);
+});
+
+test('only calls he was actually told, about this target, and recently, count', () => {
+  const mate = { alive: true };
+  const dead = { alive: false };
+  const holder = {};
+  const other = {};
+  const calls = new Map([
+    [mate, { lane: 2, target: holder, at: 100 }],
+    [dead, { lane: 3, target: holder, at: 100 }],
+    [other, { lane: 4, target: {}, at: 100 }],
+  ]);
+  const taken = lanesSpokenFor(calls, holder, 101);
+  assert.deepEqual([...taken], [2], 'a dead caller and a call about somebody else are ignored');
+  assert.equal(lanesSpokenFor(calls, holder, 100 + CALL_TTL + 1).size, 0, 'and stale calls expire');
+  assert.equal(lanesSpokenFor(null, holder, 0).size, 0, 'a fighter told nothing knows nothing');
 });
