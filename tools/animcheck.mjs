@@ -247,6 +247,19 @@ const report = await page.evaluate(async (opts) => {
   return out;
 }, { only, verbose });
 
+const fxLayers = await page.evaluate(() => {
+  const g = window.__game, cam = g.camera, f = g.world.fx;
+  const check = (o) => ({ seen: cam.layers.test(o.layers), mask: o.layers.mask });
+  return {
+    flash: check(f.flashes[0].sprite),
+    tracer: check(f.tracers[0].mesh),
+    decal: check(f.decals[0].mesh),
+    hot: check(f.hot.points),
+    soft: check(f.soft.points),
+    casings: check(f.casings),
+  };
+});
+
 await browser.close();
 
 // ---------------------------------------------------------------- reporting
@@ -295,6 +308,26 @@ for (const r of report) {
     if (r._cam < -0.002) fail(`${r.weapon}/fire: the camera kicks DOWN`);
     else if (Math.abs(r._cam) <= 0.002) fail(`${r.weapon}/fire: no camera kick`);
   }
+}
+
+// Effects must be visible to the camera and invisible to the ambient occlusion
+// prepass. GTAO rebuilds depth with an override material, which knows nothing about
+// blending, so anything additive left on the default layer goes in as solid geometry
+// and shadows itself — the muzzle flash shipped as a black rectangle around the
+// flare. The two halves fail in opposite directions and both are silent: leave an
+// effect on layer 0 and it boxes itself, move it off every layer the camera watches
+// and it simply stops drawing.
+{
+  const LAYER0 = 1;
+  for (const [name, v] of Object.entries(fxLayers)) {
+    if (!v.seen) fail(`fx/${name}: the camera cannot see it — wrong layer, so it never draws`);
+    const occludes = (v.mask & LAYER0) !== 0;
+    // Casings are opaque objects lying on the floor; they *should* occlude.
+    if (name === 'casings' ? !occludes : occludes) {
+      fail(`fx/${name}: ${occludes ? 'is' : 'is not'} in the AO prepass, and should ${occludes ? 'not ' : ''}be`);
+    }
+  }
+  console.log(`fx layers   ${Object.keys(fxLayers).length} effect pools checked`);
 }
 
 for (const e of pageErrors) fail(`page error: ${e}`);
