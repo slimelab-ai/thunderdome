@@ -2823,6 +2823,8 @@ function makeLaneTest(shooter, options = {}) {
      * costs the enemy nothing.
      */
     swingNotice: 0.45, swingSettle: 1.1,
+    /** How much longer he stays on a man each time he lands a round on him. */
+    swingStay: 0.8,
     /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
     ceaseFireAfter: 0, lullSeconds: 0,
     ...options,
@@ -2977,6 +2979,12 @@ function makeLaneTest(shooter, options = {}) {
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
           state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
+          // He finishes what he starts. Landing rounds keeps him on the man rather
+          // than dropping him at the end of a fixed count — a burst and a shrug let
+          // wounded fighters walk away and advance, which nobody would do.
+          if (state.engaging === state.swingTarget) {
+            state.swingUntil = Math.max(state.swingUntil, state.elapsed + cfg.swingStay);
+          }
         }
       }
     }

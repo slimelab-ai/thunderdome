@@ -795,7 +795,12 @@ export class Combatant {
       //
       // Held for a beat first, so a lane cannot be abandoned the instant it is taken
       // and the two decisions oscillate.
-      if (this.breachT > 0 && this.breachLane !== 0 && this.breachTarget === this.target &&
+      // Lane 0 was excluded from this check, which is precisely backwards: lane 0 is
+      // the one that runs straight at him. A fighter who commits in the first half
+      // second — before a shot has been fired, when every route costs nothing —
+      // walks the centre and nothing re-examines it, which is the walking-straight-in
+      // you see at the start of a fight.
+      if (this.breachT > 0 && this.breachTarget === this.target &&
           now - (this._breachAt ?? -99) > 0.8 && this.suppression.anyDanger(now) &&
           this._routeCost(world, this.breachGoal, now) >= LANE_ABANDON) {
         this.breachT = 0;   // re-decide on the next think, with the fire as it is now
@@ -1063,6 +1068,13 @@ export class Combatant {
         // if the lanes stay spread. It gets overruled only by ground that is being
         // actively covered, which is the one thing worth breaking formation over.
         const sideByLane = new Map();
+        // Discounting contested ground for a covered man was tried here, to buy back
+        // some pressure on the near side. It changed nothing measurable at 0.5 or at
+        // 0.75 — byte-identical runs — because covering fire does not actually stop
+        // the man being covered from being seen, so the route that was lethal stays
+        // lethal and the cheapest one still wins. Near-side pressure needs somebody
+        // whose *job* is to draw the angle, not a fighter who was going to route
+        // round anyway and got a discount.
         const priced = safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
           const { cost, side } = this._routeCostBothWays(world, goal, now);
           sideByLane.set(lane, side);
