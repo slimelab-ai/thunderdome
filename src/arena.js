@@ -373,7 +373,20 @@ export function buildArena(scene) {
     colliders.push(new CylinderCollider(cx, 0, cz, 0.43, 1.113));
   };
 
-  const addAuthoredBox = (file, fallbackMat, cx, cz, w, h, d, ry, nativeSize) => {
+  /**
+   * An authored prop scaled to (w, h, d), with a collider that need not be that size.
+   *
+   * `w/h/d` are the prop's *bounding box* — they have to be, because that is what the
+   * asset is scaled by. For anything box-shaped the collider can be the same numbers.
+   * For anything that tapers, they are wrong in the way the barrels already were:
+   * a box proxy around a round drum left four invisible corners, and a box proxy
+   * around a Jersey barrier does the same along its sloped flanks. Shots stop in
+   * mid-air half a metre out from a barrier you are trying to shoot past.
+   *
+   * `hull` overrides the collider extents. Give it the dimensions of the part that is
+   * actually solid at shooting height, not the silhouette including feet and flares.
+   */
+  const addAuthoredBox = (file, fallbackMat, cx, cz, w, h, d, ry, nativeSize, hull = null) => {
     const fallback = () => {
       const m = new THREE.Mesh(boxGeo(w, h, d), fallbackMat);
       m.position.set(cx, h / 2, cz);
@@ -386,13 +399,34 @@ export function buildArena(scene) {
       new THREE.Vector3(w / nativeSize.x, h / nativeSize.y, d / nativeSize.z),
       fallback,
     );
-    addCollider(cx, 0, cz, w, h, d, ry);
+    addCollider(cx, 0, cz, hull ? hull[0] : w, hull ? hull[1] : h, hull ? hull[2] : d, ry);
   };
 
   // Native bounds include armor caps/feet, not only each asset's concrete core.
   const arenaBlockSize = new THREE.Vector3(7.95, 2.65, 1.057);
+  /**
+   * A sightline breaker. Its collider is thinner than its bounding box.
+   *
+   * The block is capped: a coping wider than the wall beneath it. Sampled from above
+   * it reads as a solid slab right out to its bounding box, which is how the collider
+   * came to be sized that way — but a shot passing at chest height goes *under* the
+   * cap and meets the body 18 cm further in. Shots aimed along one of these stopped in
+   * clear air a hand's width off the wall, and at the centre of the map that is most
+   * of the fights on it.
+   *
+   * 0.86 is a measured compromise rather than the body depth. The block also carries
+   * pilasters standing proud of recessed panels, so no single box fits both: matching
+   * the panel (0.775) clears every phantom wall but lets a grazing shot clip a
+   * pilaster, while matching the pilaster puts the invisible wall back. Sweeping both
+   * faults across every block on the map, 0.86 is the widest hull that still measures
+   * zero phantom blocking, and it costs fewer grazing leaks than the panel fit does.
+   *
+   * Only the depth is corrected. The cap overhangs the ends too, but the ends are a
+   * sixth of the length and nobody grazes a wall along its short axis.
+   */
   const addArenaBlock = (cx, cz, w, h, d, ry = 0) =>
-    addAuthoredBox('arena_block', M.concrete, cx, cz, w, h, d, ry, arenaBlockSize);
+    addAuthoredBox('arena_block', M.concrete, cx, cz, w, h, d, ry, arenaBlockSize,
+      [w, h, d * 0.86]);
 
   // central raised slab + pillars
   addBox(M.concrete, 0, 0, 5, 0.55, 5);
@@ -413,11 +447,18 @@ export function buildArena(scene) {
   addAuthoredBox('weapons_crate', M.wood, -13, 6, 1.9, 1.1, 1.6, 0.3, crateSize);
 
   // low sandbag-style walls (shoot over standing, hide crouched)
+  //
+  // A Jersey barrier is a tapered slab: measured across one of these, the full height
+  // only holds over the middle 70% of its depth and the outer flanks fall away to
+  // ankle level, and the crown sits at 0.93 of the bounding height. Colliding the
+  // whole box put half a metre of nothing along both flanks — 27% of shots aimed past
+  // one stopped in mid-air. The hull is the slab, not the silhouette.
   const barrierSize = new THREE.Vector3(4.15, 1.18, 0.92);
-  addAuthoredBox('concrete_barricade', M.painted, -6, -3.5, 4.2, 1.05, 0.6, 0, barrierSize);
-  addAuthoredBox('concrete_barricade', M.painted, 6, 3.5, 4.2, 1.05, 0.6, 0, barrierSize);
-  addAuthoredBox('concrete_barricade', M.painted, -13, 1, 3.4, 1.05, 0.7, 0.5, barrierSize);
-  addAuthoredBox('concrete_barricade', M.painted, 13, -1, 3.4, 1.05, 0.7, 0.5, barrierSize);
+  const barrierHull = (w, h, d) => [w, h * 0.93, d * 0.70];
+  addAuthoredBox('concrete_barricade', M.painted, -6, -3.5, 4.2, 1.05, 0.6, 0, barrierSize, barrierHull(4.2, 1.05, 0.6));
+  addAuthoredBox('concrete_barricade', M.painted, 6, 3.5, 4.2, 1.05, 0.6, 0, barrierSize, barrierHull(4.2, 1.05, 0.6));
+  addAuthoredBox('concrete_barricade', M.painted, -13, 1, 3.4, 1.05, 0.7, 0.5, barrierSize, barrierHull(3.4, 1.05, 0.7));
+  addAuthoredBox('concrete_barricade', M.painted, 13, -1, 3.4, 1.05, 0.7, 0.5, barrierSize, barrierHull(3.4, 1.05, 0.7));
 
   // ---- sightline breakers: no spawn-to-spawn LOS ----
   // gate screens: a full-height wall shields each spawn; you exit around its edges
@@ -496,7 +537,26 @@ export function buildArena(scene) {
     car.rotation.y = 0.4;
     scene.add(car);
   });
-  addCollider(8, 0, -8.5, 4.2, 1.65, 2.02, 0.4);
+  // Two boxes, because a car is not one.
+  //
+  // This was a single 4.2 x 1.65 slab, which is the height of the *cabin* applied
+  // along the whole length. Measured against the model, the boot sits at 1.12 and the
+  // bonnet at 1.15-1.20 — so roughly two fifths of the car was carrying half a metre
+  // of invisible wall at exactly standing eye height. Line up a shot across the
+  // bonnet at someone on the far side and the round stops in clear air. 38% of shots
+  // taken past this prop were being eaten that way, the worst by 1.32 m.
+  //
+  // Offsets are along the car's own long axis; the world conversion is three's RotY,
+  // the same one `Collider` inverts (local x → world x·cos, z·−sin).
+  {
+    const CX = 8, CZ = -8.5, YAW = 0.4;
+    const cos = Math.cos(YAW), sin = Math.sin(YAW);
+    // Body: the full footprint, at the height of the lower bodywork.
+    addCollider(CX, 0, CZ, 4.2, 1.22, 2.02, YAW);
+    // Cabin: measured to span the middle 2.4 m, centred a little aft of the axle line.
+    const u = -0.25;
+    addCollider(CX + u * cos, 0, CZ - u * sin, 2.4, 1.67, 1.9, YAW);
+  }
 
   // barrels
   addBarrel(-2.2, -12.5); addBarrel(-3.1, -12.1); addBarrel(2.4, 12.4); addBarrel(3.3, 12.0);
