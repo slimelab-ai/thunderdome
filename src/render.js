@@ -7,7 +7,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { setMaxAnisotropy } from './materials.js';
-import { FX_NO_AO_LAYER } from './fx.js';
+import { NO_OCCLUDE_LAYER } from './layers.js';
 
 /**
  * The render pipeline: HDR scene → ambient occlusion → bloom → tone map → AA → grade.
@@ -179,14 +179,14 @@ export class RenderPipeline {
     // it for the beauty pass, and it is dropped for the duration of GTAO's own
     // renders. Wrapping `render` rather than editing the addon keeps this working
     // across three.js upgrades.
-    camera.layers.enable(FX_NO_AO_LAYER);
+    camera.layers.enable(NO_OCCLUDE_LAYER);
     const aoRender = this.aoPass.render.bind(this.aoPass);
     this.aoPass.render = (...args) => {
-      camera.layers.disable(FX_NO_AO_LAYER);
+      camera.layers.disable(NO_OCCLUDE_LAYER);
       try {
         aoRender(...args);
       } finally {
-        camera.layers.enable(FX_NO_AO_LAYER);
+        camera.layers.enable(NO_OCCLUDE_LAYER);
       }
     };
     this.aoPass.blendIntensity = 0.85;

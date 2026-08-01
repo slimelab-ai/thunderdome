@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import * as THREE from 'three';
+import { NO_OCCLUDE_LAYER } from './layers.js';
 import { WEAPONS, buildHeldGun } from './weapons.js';
 import {
   fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH,
@@ -199,6 +200,12 @@ function nameTagSprite(name, color) {
   tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true }));
   sp.scale.set(1.5, 0.375, 1);
+  // A label is not a surface. Left on the default layer, the occlusion pass treats the
+  // quad as geometry and darkens it — and because that pass re-renders with an override
+  // material, which does not billboard, the dark patch lands at whatever angle the raw
+  // quad happens to face. That is the black rectangle sitting askew behind the name.
+  // See src/layers.js.
+  sp.layers.set(NO_OCCLUDE_LAYER);
   return sp;
 }
 

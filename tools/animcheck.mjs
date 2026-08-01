@@ -264,9 +264,19 @@ const report = await page.evaluate(async (opts) => {
   return out;
 }, { only, verbose });
 
-const fxLayers = await page.evaluate(() => {
+const fxLayers = await page.evaluate(async () => {
   const g = window.__game, cam = g.camera, f = g.world.fx;
   const check = (o) => ({ seen: cam.layers.test(o.layers), mask: o.layers.mask });
+  // A match with crew in it, so the name-tag sprites actually exist to be checked.
+  const strays = [];
+  g.scene.traverse((o) => {
+    // Every sprite in the game is a billboard — a flash, a label. None of them are
+    // surfaces, so none of them belong in the occlusion prepass. Checking the whole
+    // scene rather than a list of known pools is the point: the name tags were a
+    // second instance of the muzzle-flash bug, found by a player rather than by this,
+    // because the list only had the things I already knew about.
+    if (o.isSprite && (o.layers.mask & 1)) strays.push(o.name || o.type);
+  });
   return {
     flash: check(f.flashes[0].sprite),
     tracer: check(f.tracers[0].mesh),
@@ -274,6 +284,7 @@ const fxLayers = await page.evaluate(() => {
     hot: check(f.hot.points),
     soft: check(f.soft.points),
     casings: check(f.casings),
+    strays,
   };
 });
 
@@ -341,7 +352,12 @@ for (const r of report) {
 // and it simply stops drawing.
 {
   const LAYER0 = 1;
+  for (const n of fxLayers.strays) {
+    fail(`sprite "${n}" is on the default layer, so ambient occlusion draws a dark`
+      + ' rectangle over it at whatever angle its quad faces');
+  }
   for (const [name, v] of Object.entries(fxLayers)) {
+    if (name === 'strays') continue;
     if (!v.seen) fail(`fx/${name}: the camera cannot see it — wrong layer, so it never draws`);
     const occludes = (v.mask & LAYER0) !== 0;
     // Casings are opaque objects lying on the floor; they *should* occlude.
@@ -349,7 +365,8 @@ for (const r of report) {
       fail(`fx/${name}: ${occludes ? 'is' : 'is not'} in the AO prepass, and should ${occludes ? 'not ' : ''}be`);
     }
   }
-  console.log(`fx layers   ${Object.keys(fxLayers).length} effect pools checked`);
+  console.log(`fx layers   ${Object.keys(fxLayers).length - 1} pools checked, `
+  + `${fxLayers.strays.length} stray sprite(s) on the occluding layer`);
 }
 
 for (const e of pageErrors) fail(`page error: ${e}`);
