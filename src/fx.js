@@ -1,6 +1,25 @@
 import * as THREE from 'three';
 
 /**
+ * Layer for effects that must not be treated as geometry by the ambient occlusion
+ * pass. See `Pipeline` in src/render.js, which drops this layer for GTAO's depth and
+ * normal prepass and keeps it for everything else.
+ *
+ * GTAO re-renders the scene with an override material to build a depth buffer, and an
+ * override material ignores the fact that a sprite is additive, or that a particle is
+ * transparent — it writes them as solid occluders. The muzzle flash then darkened its
+ * own quad, and the visible result was a black rectangle where the flash should be:
+ * the flare drawn correctly, sitting inside a box of its own ambient occlusion.
+ *
+ * Everything that is light, haze, or an overlay belongs here: flash sprites, both
+ * particle pools, tracers, and decals. A decal looks like geometry but is a coplanar
+ * skin on a wall that already occludes — treated as a separate surface it rings every
+ * bullet hole with its own shadow. Shell casings stay out of it: they are opaque
+ * objects lying on the floor and should occlude like anything else.
+ */
+export const FX_NO_AO_LAYER = 2;
+
+/**
  * Combat VFX.
  *
  * Everything here is pooled and allocation-free at runtime — a firefight spawns
@@ -224,6 +243,8 @@ class ParticlePool {
 
     this.points = new THREE.Points(geo, this.material);
     this.points.frustumCulled = false;
+    // Light and haze, not geometry — kept out of the AO prepass.
+    this.points.layers.set(FX_NO_AO_LAYER);
     scene.add(this.points);
 
     this.state = new Array(this.count).fill(null).map(() => ({
@@ -333,6 +354,7 @@ export class FX {
       const m = new THREE.Mesh(tGeo, tMat.clone());
       m.visible = false;
       m.frustumCulled = false;
+      m.layers.set(FX_NO_AO_LAYER);
       scene.add(m);
       this.tracers.push({ mesh: m, life: 0, maxLife: 0.06 });
     }
@@ -351,6 +373,7 @@ export class FX {
         blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
       }));
       sprite.visible = false;
+      sprite.layers.set(FX_NO_AO_LAYER);
       scene.add(sprite);
       this.flashes.push({ sprite, life: 0, maxLife: FLASH_LIFE, peak: 1, near: false });
     }
@@ -400,6 +423,7 @@ export class FX {
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
       }));
       m.visible = false;
+      m.layers.set(FX_NO_AO_LAYER);
       scene.add(m);
       this.decals.push({ mesh: m, age: 0, life: 0, grow: 0, base: 1 });
     }
