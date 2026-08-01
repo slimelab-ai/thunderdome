@@ -323,6 +323,22 @@ export class RenderPipeline {
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     const dpr = Math.min(window.devicePixelRatio, this.tier.maxPixelRatio) * this.renderScale;
+
+    // Film artifacts are sized in display pixels but computed in buffer pixels.
+    //
+    // The grain hash runs once per buffer pixel and the aberration offset is a UV
+    // distance, so when the buffer is smaller than the display — the adaptive scale
+    // dropping, or a phone whose DPR is capped well below its screen — every grain
+    // fleck becomes a several-pixel flickering chunk and the fringe widens into
+    // smear. At full strength on a 0.62-scale buffer that is most of what "crunchy"
+    // meant. Scale both by how much of the display resolution the buffer actually
+    // has: native look unchanged, degraded buffers get proportionally gentler film.
+    const coverage = Math.min(1, dpr / window.devicePixelRatio);
+    if (this.gradePass) {
+      this.gradePass.uniforms.uGrain.value = GradeShader.uniforms.uGrain.value * coverage;
+      this.gradePass.uniforms.uAberration.value = GradeShader.uniforms.uAberration.value * coverage;
+    }
+
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h);
     this.composer.setPixelRatio(dpr);

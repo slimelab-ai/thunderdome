@@ -148,8 +148,10 @@ export function preloadFighter() {
       asset = { scene: gltf.scene, clips };
       return asset;
     }).catch((err) => {
+      // Rethrow so `assetsReady` rejects. Returning null here resolved it with a
+      // match full of invisible fighters and no failure anywhere visible.
       console.error('[fighter-rig] could not load the fighter model', err);
-      return null;
+      throw err;
     });
   }
   return loadPromise;

@@ -310,7 +310,15 @@ export function preloadWeapons() {
         bindAuthoredMaterials(gltf.scene);
         weaponAssets.set(id, gltf.scene);
       })
-      .catch((err) => console.error(`[weapons] could not load ${id}`, err))));
+      .catch((err) => {
+        // Log *and rethrow*. Swallowing this resolved `assetsReady` with a weapon
+        // that does not exist: `buildWeaponModel` returns an empty group when the
+        // asset never landed, so a blocked GLB meant a fighter holding an invisible
+        // gun and no error anywhere but a console line nobody was watching.
+        // Verified by blocking dmr.glb — zero meshes, all benches green.
+        console.error(`[weapons] could not load ${id}`, err);
+        throw err;
+      })));
   }
   return weaponLoad;
 }
@@ -368,7 +376,8 @@ export function buildWeaponModel(id) {
 
   const asset = weaponAssets.get(id);
   if (asset) install(asset);
-  else preloadWeapons().then(() => { const a = weaponAssets.get(id); if (a) install(a); });
+  // Quiet on rejection: the loader logged it and `assetsReady` carries the failure.
+  else preloadWeapons().then(() => { const a = weaponAssets.get(id); if (a) install(a); }, () => {});
 
   return { group, muzzle, parts };
 }
