@@ -142,6 +142,22 @@ const report = await page.evaluate(async (opts) => {
     // Recoil is an offset on the aim now, in degrees, up positive — same sign as the
     // camera pitch it replaced, so the check below reads the same way.
     s.camPitch = p.recoil ? p.recoil.posY : 0;
+    // Is the camera still on the player's head?
+    //
+    // Every measurement here is taken relative to the viewmodel, which hangs off the
+    // camera — so if the camera has wandered off the eye, nothing below means what it
+    // says. It can wander for reasons that have nothing to do with animation: the
+    // death slump parks it at 0.25 m and only the live update path puts it back, and
+    // `matrixWorld` is refreshed at render time while `step` never renders.
+    //
+    // This is worth its own check rather than a comment because of how the failure
+    // presents. The bench does not report "the camera is on the floor"; it reports
+    // "the dmr's support hand sits 0.187 m off its target", and someone then goes
+    // looking at the reload clip. Name the real fault.
+    const camW = new T.Vector3();
+    g.camera.getWorldPosition(camW);
+    s.camOffEye = Math.abs(camW.y - (p.pos.y + p.eyeHeight));
+
     const t = vm._supportTarget && vm._supportTarget();
     if (t) {
       // Measured in world space: a distance is invariant under the camera transform,
@@ -212,6 +228,7 @@ const report = await page.evaluate(async (opts) => {
       jump: +jump.toFixed(4),
       jumpAt,
       jumpWhat,
+      camOffEye: +Math.max(...frameData.map((f) => f.camOffEye)).toFixed(3),
       reachMedian: reaches.length ? +reaches[Math.floor(reaches.length / 2)].toFixed(4) : null,
       reachMax: reaches.length ? +reaches[reaches.length - 1].toFixed(4) : null,
       finite,
@@ -295,6 +312,11 @@ for (const r of report) {
   if (!r.finite) fail(`${r.weapon}/${r.action}: non-finite transform`);
   if (r.jump > LIMITS.jump) {
     fail(`${r.weapon}/${r.action}: ${r.jumpWhat} jumps ${r.jump.toFixed(3)} m in one frame (at frame ${r.jumpAt})`);
+  }
+  // Checked before the pose numbers, because it invalidates them.
+  if (r.camOffEye > 0.05) {
+    fail(`${r.weapon}/${r.action}: the camera sits ${r.camOffEye.toFixed(2)} m off the player's eye — `
+      + 'the viewmodel numbers below are measured against the wrong origin and mean nothing');
   }
   if (r.reachMedian !== null && r.reachMedian > LIMITS.reach) {
     fail(`${r.weapon}/${r.action}: support hand sits ${r.reachMedian.toFixed(3)} m off its target`);
