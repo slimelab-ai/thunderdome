@@ -2834,7 +2834,14 @@ function makeLaneTest(shooter, options = {}) {
         if (state.engaging === state.swingTarget && state.swingTarget) state.swingShots++;
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
-          state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
+          // The round still has to get there. Retention deliberately keeps him on a
+          // man who has just ducked behind something — the *hold* is right, and the
+          // kill through the wall was not: acquisition checked line of sight but
+          // firing never did, so a flanker who reached cover during the grace period
+          // died through it. Walls stop bullets, including his.
+          if (hasLoS(world.colliders, muzzle, probe)) {
+            state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
+          }
         }
       }
     }

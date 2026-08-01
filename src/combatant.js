@@ -1303,12 +1303,31 @@ export class Combatant {
         move.x += -fz * this.strafeDir; move.z += fx * this.strafeDir;
       }
 
-      // face target
+      // Face what he is doing, which is not always the target.
+      //
+      // He faced the target's believed position unconditionally — through walls,
+      // while sprinting the other way — which produced two things you could see from
+      // the spectator seat: a squad staring at a shooter none of them had line on,
+      // and "sprints" played as slow sideways shuffles, because the run was a strafe
+      // relative to a body pointed at the enemy. Travelling blind, or at a sprint,
+      // he looks where he is going; the wide vision cone still catches most of what
+      // matters, and anything it misses is what a man running with his head down
+      // genuinely misses.
       const targetYaw = Math.atan2(dx, dz);
+      let faceYaw = targetYaw;
+      if (this._traveling && (this.sprintNow || !sight) && move.lengthSq() > 0.01) {
+        faceYaw = Math.atan2(move.x, move.z);
+      }
+      let turn = faceYaw - this.yaw;
+      while (turn > Math.PI) turn -= Math.PI * 2;
+      while (turn < -Math.PI) turn += Math.PI * 2;
+      this.yaw += turn * Math.min(1, dt * 7);
+      // Aim error toward the *target*, which is what gates firing — a man looking
+      // down his own route has a large one, and correctly cannot shoot behind
+      // himself while running.
       let dy = targetYaw - this.yaw;
       while (dy > Math.PI) dy -= Math.PI * 2;
       while (dy < -Math.PI) dy += Math.PI * 2;
-      this.yaw += dy * Math.min(1, dt * 7);
 
       // ---- shooting ----
       // dry gun? switch to a fed one, or pull the knife
@@ -1371,7 +1390,12 @@ export class Combatant {
       // open* is the worst of both — slow and exposed, and it is what you see when a
       // fighter strolls into a lane with his sights up instead of leaning out of the
       // corner he just left. Standing still behind something, or leaning, he aims.
-      const walkingExposed = this._traveling && !!this.pinnedBy;
+      // Gated on travelling at all, not merely on travelling through a known lane.
+      // The reactive shooter punishes being seen anywhere, and "walked straight out
+      // into the open with his sights up" was the exact report — a man outside any
+      // recorded beaten zone still ADS-strolled into view. Moving is moving: the gun
+      // comes up when the feet stop.
+      const walkingExposed = this._traveling;
       this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed;
       // Up in about a third of a second, down slower — a fighter who has just been
       // shot at keeps his weapon up for a moment.
