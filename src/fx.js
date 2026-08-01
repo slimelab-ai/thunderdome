@@ -645,9 +645,17 @@ export class FX {
   decal(kind, pos, normal, size, growTime, opacity) {
     const d = this.decals[this.decalCursor = (this.decalCursor + 1) % MAX_DECALS];
     const map = this.decalTextures[kind];
-    d.mesh.material.map = map;
+    // `needsUpdate` only when the map *slot* goes from empty to filled — that flips
+    // USE_MAP and genuinely needs a new program. Swapping one texture for another is
+    // a uniform change and needs nothing; setting the flag anyway (as this used to,
+    // on every placement) made three.js re-acquire the program per bullet impact.
+    if (!d.mesh.material.map) {
+      d.mesh.material.map = map;
+      d.mesh.material.needsUpdate = true;
+    } else {
+      d.mesh.material.map = map;
+    }
     d.mesh.material.color.set(kind === 'scorch' ? 0x0e0d0c : 0xffffff);
-    d.mesh.material.needsUpdate = true;
     _n.copy(normal).normalize();
     if (_n.lengthSq() < 0.5) _n.set(0, 1, 0);
     // Decals face *out* of the surface, so flip an inbound shot direction.

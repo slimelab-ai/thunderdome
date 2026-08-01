@@ -639,8 +639,12 @@ export class Player {
     // The offset rides on top of the aim: +x kicks right, so the camera's yaw (which
     // increases to the left) takes it negative; +y kicks up, and pitch increases upward.
     this.recoil.update(dt);
+    // The pitch clamp above runs before the recoil offset is added, so the *sum* is
+    // clamped again here: past ±90° a YXZ euler crosses the pole and the whole view
+    // reads as flipped. Nothing legitimate ever hits this — it is the last line of
+    // defence for whatever upstream bug or input glitch gets this far.
     this.camera.rotation.set(
-      this.pitch + this.recoil.posY * DEG2RAD,
+      Math.max(-1.5, Math.min(1.5, this.pitch + this.recoil.posY * DEG2RAD)),
       this.yaw - this.recoil.posX * DEG2RAD,
       Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * 0.3,
     );

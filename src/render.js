@@ -214,7 +214,7 @@ export class RenderPipeline {
     this.gradePass = new ShaderPass(GradeShader);
 
     this.setQuality(quality);
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', () => { this._pendingResize = true; });
   }
 
   get tier() { return TIERS[this.quality]; }
@@ -242,7 +242,7 @@ export class RenderPipeline {
     if (tier.grade) this.composer.addPass(this.gradePass);
 
     this.onShadowMapSize?.(tier.shadowMap);
-    this.resize();
+    this._pendingResize = true;
   }
 
   /**
@@ -301,9 +301,16 @@ export class RenderPipeline {
    * a resolution change that oscillates is worse than a low one that holds.
    */
   _adapt(frameMs) {
-    this._frameAvg = this._frameAvg === undefined
-      ? frameMs
-      : this._frameAvg + (frameMs - this._frameAvg) * 0.05;
+    // A hitch is not a resolution problem. A shader compile or a GC pause lands as
+    // one frame of hundreds of ms; fed into the average, it walks the scale down and
+    // back up over the following seconds — a staircase of resizes fixing a cost that
+    // was already gone. The first match start compiles every fighter and weapon
+    // program at once and used to do exactly that. Only steady-state frames vote.
+    if (frameMs < 100) {
+      this._frameAvg = this._frameAvg === undefined
+        ? frameMs
+        : this._frameAvg + (frameMs - this._frameAvg) * 0.05;
+    }
     this._adaptCooldown = (this._adaptCooldown ?? 0) - 1;
     if (this._adaptCooldown > 0) return;
 
@@ -317,7 +324,7 @@ export class RenderPipeline {
     // Half a second of frames before reconsidering, so a change gets time to show up
     // in the average it is being judged by.
     this._adaptCooldown = 30;
-    this.resize();
+    this._pendingResize = true;
   }
 
   resize() {
@@ -341,16 +348,26 @@ export class RenderPipeline {
 
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h);
+    // The composer forwards device-pixel sizes to every pass itself, so this pair is
+    // the whole story: adding explicit per-pass setSize calls on top (as this used
+    // to) reallocates GTAO's four targets, bloom's five mip pairs and SMAA's two a
+    // third time each per resize.
     this.composer.setPixelRatio(dpr);
     this.composer.setSize(w, h);
-    this.aoPass.setSize(w * dpr, h * dpr);
-    this.bloomPass.setSize(w * dpr, h * dpr);
-    this.smaaPass.setSize(w * dpr, h * dpr);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
   render(elapsed) {
+    // Resize before drawing, never after. Setting the canvas size discards the
+    // drawing buffer and the replacement comes back opaque black (no alpha on this
+    // context); a resize after composer.render() in the same rAF hands that black
+    // buffer to the compositor — one black frame per adaptive-scale step, which is
+    // exactly the flicker the first match used to open with.
+    if (this._pendingResize) {
+      this._pendingResize = false;
+      this.resize();
+    }
     const t0 = performance.now();
     this.gradePass.uniforms.uTime.value = elapsed;
     this.composer.render();
