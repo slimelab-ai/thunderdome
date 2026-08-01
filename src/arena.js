@@ -3,6 +3,7 @@ import { versioned } from './asset-version.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Collider, CylinderCollider } from './collider.js';
 import { surface, worldUV, bindAuthoredMaterials } from './materials.js';
+import { MeshCollider, collectTriangles } from './meshcollider.js';
 
 // Arena footprint: X in [-W/2, W/2], Z in [-D/2, D/2]. Player gate south (+Z), enemy gate north (-Z).
 export const ARENA = { W: 44, D: 32, WALL_H: 5 };
@@ -210,6 +211,8 @@ export function buildArena(scene) {
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.012;
+  // Paint on the concrete. The floor under it is what stops a round.
+  ring.userData.noCollide = true;
   scene.add(ring);
 
   // ---------- walls ----------
@@ -347,6 +350,8 @@ export function buildArena(scene) {
   const headMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.15, 7, 5), headMat, people.length);
   bodyMesh.castShadow = headMesh.castShadow = false;   // the crowd is behind the cage; shadows there cost and show nothing
   bodyMesh.frustumCulled = headMesh.frustumCulled = false;
+  // Scenery behind the cage: never cover, never an obstruction.
+  bodyMesh.userData.noCollide = headMesh.userData.noCollide = true;
   scene.add(bodyMesh, headMesh);
   crowd.push({ bodyMesh, headMesh, people });
 
@@ -374,19 +379,15 @@ export function buildArena(scene) {
   };
 
   /**
-   * An authored prop scaled to (w, h, d), with a collider that need not be that size.
+   * An authored prop scaled to (w, h, d), with a bounding-box collider to match.
    *
-   * `w/h/d` are the prop's *bounding box* — they have to be, because that is what the
-   * asset is scaled by. For anything box-shaped the collider can be the same numbers.
-   * For anything that tapers, they are wrong in the way the barrels already were:
-   * a box proxy around a round drum left four invisible corners, and a box proxy
-   * around a Jersey barrier does the same along its sloped flanks. Shots stop in
-   * mid-air half a metre out from a barrier you are trying to shoot past.
-   *
-   * `hull` overrides the collider extents. Give it the dimensions of the part that is
-   * actually solid at shooting height, not the silhouette including feet and flares.
+   * The box is honestly the prop's bounds, and that is now the right thing for it to
+   * be: it is a movement volume, not a shooting surface. Rays go through the arena's
+   * real triangles (see src/meshcollider.js), so there is no longer any reason to
+   * shave the box toward the silhouette — and every reason not to, since a box
+   * smaller than the thing inside it lets a walking fighter clip into the geometry.
    */
-  const addAuthoredBox = (file, fallbackMat, cx, cz, w, h, d, ry, nativeSize, hull = null) => {
+  const addAuthoredBox = (file, fallbackMat, cx, cz, w, h, d, ry, nativeSize) => {
     const fallback = () => {
       const m = new THREE.Mesh(boxGeo(w, h, d), fallbackMat);
       m.position.set(cx, h / 2, cz);
@@ -399,34 +400,13 @@ export function buildArena(scene) {
       new THREE.Vector3(w / nativeSize.x, h / nativeSize.y, d / nativeSize.z),
       fallback,
     );
-    addCollider(cx, 0, cz, hull ? hull[0] : w, hull ? hull[1] : h, hull ? hull[2] : d, ry);
+    addCollider(cx, 0, cz, w, h, d, ry);
   };
 
   // Native bounds include armor caps/feet, not only each asset's concrete core.
   const arenaBlockSize = new THREE.Vector3(7.95, 2.65, 1.057);
-  /**
-   * A sightline breaker. Its collider is thinner than its bounding box.
-   *
-   * The block is capped: a coping wider than the wall beneath it. Sampled from above
-   * it reads as a solid slab right out to its bounding box, which is how the collider
-   * came to be sized that way — but a shot passing at chest height goes *under* the
-   * cap and meets the body 18 cm further in. Shots aimed along one of these stopped in
-   * clear air a hand's width off the wall, and at the centre of the map that is most
-   * of the fights on it.
-   *
-   * 0.86 is a measured compromise rather than the body depth. The block also carries
-   * pilasters standing proud of recessed panels, so no single box fits both: matching
-   * the panel (0.775) clears every phantom wall but lets a grazing shot clip a
-   * pilaster, while matching the pilaster puts the invisible wall back. Sweeping both
-   * faults across every block on the map, 0.86 is the widest hull that still measures
-   * zero phantom blocking, and it costs fewer grazing leaks than the panel fit does.
-   *
-   * Only the depth is corrected. The cap overhangs the ends too, but the ends are a
-   * sixth of the length and nobody grazes a wall along its short axis.
-   */
   const addArenaBlock = (cx, cz, w, h, d, ry = 0) =>
-    addAuthoredBox('arena_block', M.concrete, cx, cz, w, h, d, ry, arenaBlockSize,
-      [w, h, d * 0.86]);
+    addAuthoredBox('arena_block', M.concrete, cx, cz, w, h, d, ry, arenaBlockSize);
 
   // central raised slab + pillars
   addBox(M.concrete, 0, 0, 5, 0.55, 5);
@@ -447,18 +427,11 @@ export function buildArena(scene) {
   addAuthoredBox('weapons_crate', M.wood, -13, 6, 1.9, 1.1, 1.6, 0.3, crateSize);
 
   // low sandbag-style walls (shoot over standing, hide crouched)
-  //
-  // A Jersey barrier is a tapered slab: measured across one of these, the full height
-  // only holds over the middle 70% of its depth and the outer flanks fall away to
-  // ankle level, and the crown sits at 0.93 of the bounding height. Colliding the
-  // whole box put half a metre of nothing along both flanks — 27% of shots aimed past
-  // one stopped in mid-air. The hull is the slab, not the silhouette.
   const barrierSize = new THREE.Vector3(4.15, 1.18, 0.92);
-  const barrierHull = (w, h, d) => [w, h * 0.93, d * 0.70];
-  addAuthoredBox('concrete_barricade', M.painted, -6, -3.5, 4.2, 1.05, 0.6, 0, barrierSize, barrierHull(4.2, 1.05, 0.6));
-  addAuthoredBox('concrete_barricade', M.painted, 6, 3.5, 4.2, 1.05, 0.6, 0, barrierSize, barrierHull(4.2, 1.05, 0.6));
-  addAuthoredBox('concrete_barricade', M.painted, -13, 1, 3.4, 1.05, 0.7, 0.5, barrierSize, barrierHull(3.4, 1.05, 0.7));
-  addAuthoredBox('concrete_barricade', M.painted, 13, -1, 3.4, 1.05, 0.7, 0.5, barrierSize, barrierHull(3.4, 1.05, 0.7));
+  addAuthoredBox('concrete_barricade', M.painted, -6, -3.5, 4.2, 1.05, 0.6, 0, barrierSize);
+  addAuthoredBox('concrete_barricade', M.painted, 6, 3.5, 4.2, 1.05, 0.6, 0, barrierSize);
+  addAuthoredBox('concrete_barricade', M.painted, -13, 1, 3.4, 1.05, 0.7, 0.5, barrierSize);
+  addAuthoredBox('concrete_barricade', M.painted, 13, -1, 3.4, 1.05, 0.7, 0.5, barrierSize);
 
   // ---- sightline breakers: no spawn-to-spawn LOS ----
   // gate screens: a full-height wall shields each spawn; you exit around its edges
@@ -767,9 +740,46 @@ export function buildArena(scene) {
     ],
   };
 
+  /**
+   * What actually stops a bullet.
+   *
+   * Deliberately a rule about the scene rather than a list built alongside it: the
+   * arena is assembled in thirty places and a parallel list would rot the first time
+   * someone added a prop without remembering it. The exclusions are the whole of the
+   * judgement, and there are only four kinds.
+   */
+  const isSolid = (o) => {
+    if (o.userData.noCollide) return false;        // ring paint, crowd
+    if (o.isSkinnedMesh) return false;             // fighters carry their own hitboxes
+    if (o.layers.mask !== 1) return false;         // fx pools: light and haze
+    const ms = Array.isArray(o.material) ? o.material : [o.material];
+    // Chain-link is drawn as a blended sheet whose alpha is most of the image; treating
+    // it as a wall would make the cage bulletproof.
+    return !ms.some((m) => m && m.transparent);
+  };
+
+  // A live handle, so `world.solids` can be wired up before the geometry exists. Until
+  // the props land it is empty, and an empty collider stops nothing — during those few
+  // hundred milliseconds the box colliders are still the fallback for rays.
+  const solids = {
+    mesh: new MeshCollider(new Float32Array(0)),
+    raycast(o, d, maxDist) { return this.mesh.raycast(o, d, maxDist); },
+    blocked(a, b2) { return this.mesh.blocked(a, b2); },
+    get ready() { return this.mesh.count > 0; },
+    get triangles() { return this.mesh.count; },
+  };
+
+  // Built once the authored props have landed — before that the scene is fallback
+  // primitives and the instanced batches are empty.
+  const solidsReady = props.resolve(scene).then(() => {
+    solids.mesh = new MeshCollider(collectTriangles(scene, isSolid));
+    return solids;
+  });
+
   return {
     colliders, lights, crowd, dynamic, spawns, strobe, oddsSign: odds,
-    propsReady: props.resolve(scene),
+    solids,
+    propsReady: solidsReady,
 
     /** Shadow resolution follows the quality tier. */
     setShadowMapSize(size) {

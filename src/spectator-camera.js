@@ -27,9 +27,11 @@ function nearestOpponent(target, combatants) {
 }
 
 export class SpectatorCamera {
-  constructor(camera, colliders = [], bounds = null) {
+  constructor(camera, world = [], bounds = null) {
     this.camera = camera;
-    this.colliders = colliders;
+    // Either the arena/world (which routes camera probes through the real geometry,
+    // same as shots) or a bare collider array, which is what the tests hand it.
+    this.colliders = world;
     this.bounds = bounds;
     this.target = null;
     this.smoothedTarget = new THREE.Vector3();

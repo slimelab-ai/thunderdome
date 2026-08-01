@@ -34,9 +34,10 @@ const URL = process.env.GAME_URL || 'http://localhost:5173';
 // A prop may not stop a shot more than this far short of its visible surface.
 const PHANTOM_GAP = 0.25;      // metres along the ray
 const PHANTOM_PCT = 3;         // percent of shots, per prop
-// Props that leak at all. Measured at 20 with the arena as it stands; the headroom is
-// for a prop or two, not for a new class of see-through cover.
-const LEAK_BUDGET = 26;
+// Props that leak at all. Zero, now that rays run against the real triangles rather
+// than boxes drawn round them: there is no longer anything for a shot to pass through
+// that you can see, in either direction. The headroom is one prop, not a class of them.
+const LEAK_BUDGET = 1;
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -91,7 +92,7 @@ const result = await page.evaluate(async () => {
         tgt.set(col.cx, h, col.cz);
         dir.copy(tgt).sub(origin).normalize();
 
-        const hit = combat.wallHit(g.world.colliders, origin, dir, R + 2);
+        const hit = combat.wallHit(g.world, origin, dir, R + 2);
         ray.set(origin, dir);
         ray.far = R + 2;
         const seen = ray.intersectObjects(visible, false).find((q) => q.point.y > 0.02);
