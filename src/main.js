@@ -2812,6 +2812,17 @@ function makeLaneTest(shooter, options = {}) {
     swing: true, swingAccuracy: 0.12, swingRange: 30, swingHold: 1.2,
     /** How long he stays cross about being shot from somewhere. */
     swingGrudge: 2.5,
+    /**
+     * How long it takes him to *notice* something worth turning for, and how long
+     * he must hold his lane again before he will break off a second time.
+     *
+     * Attention is the whole point. Without these he held the lane and picked men
+     * off the far side in the same breath — one man, two jobs, no window ever. He
+     * has to notice, commit, and re-settle now, which is what makes drawing him off
+     * the lane a thing a squad can actually do rather than a thing that silently
+     * costs the enemy nothing.
+     */
+    swingNotice: 0.45, swingSettle: 1.1,
     /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
     ceaseFireAfter: 0, lullSeconds: 0,
     ...options,
@@ -2832,6 +2843,7 @@ function makeLaneTest(shooter, options = {}) {
     track: [], sampleT: 0, holderDownAt: null, swingShots: 0,
     swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
     lastAttacker: null, hurtAt: -99,
+    noticing: null, noticedAt: 0, settleUntil: 0, laneOpenFor: 0,
   };
 
   const firingNow = () => {
@@ -2872,8 +2884,12 @@ function makeLaneTest(shooter, options = {}) {
     else if (cfg.swing) {
       if (state.swingTarget && (!state.swingTarget.alive || state.elapsed > state.swingUntil)) {
         state.swingTarget = null;
+        state.settleUntil = state.elapsed + cfg.swingSettle;
+        state.noticedAt = 0;
       }
-      if (!state.swingTarget) {
+      // He has to notice first, and having just come back to his lane he has to
+      // hold it a moment before he will leave it again.
+      if (!state.swingTarget && state.elapsed >= state.settleUntil) {
         const canSee = (c) => {
           if (!c || !c.alive || c.team !== 'enemy') return false;
           if (Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z) > cfg.swingRange) return false;
@@ -2897,7 +2913,16 @@ function makeLaneTest(shooter, options = {}) {
             if (d < bestD) { bestD = d; best = c; }
           }
         }
-        if (best) { state.swingTarget = best; state.swingUntil = state.elapsed + cfg.swingHold; }
+        if (best) {
+          if (state.noticing !== best) { state.noticing = best; state.noticedAt = state.elapsed; }
+          if (state.elapsed - state.noticedAt >= cfg.swingNotice) {
+            state.swingTarget = best;
+            state.swingUntil = state.elapsed + cfg.swingHold;
+            state.noticing = null;
+          }
+        } else {
+          state.noticing = null;
+        }
       }
       if (state.swingTarget) { engaging = state.swingTarget; hitChance = cfg.swingAccuracy; }
     }
@@ -2956,6 +2981,10 @@ function makeLaneTest(shooter, options = {}) {
       }
     }
 
+    // How much of the fight the lane was genuinely unattended: the window a squad
+    // is meant to be fishing for, and the number that says whether it got one.
+    if (state.swingTarget) state.laneOpenFor += dt;
+
     state.sampleT -= dt;
     const sampling = state.sampleT <= 0;
     if (sampling) state.sampleT = 0.25;
@@ -3012,6 +3041,7 @@ function laneTestReport(state, squad, seed) {
     pushedTrapsDuringLull: state.pushedInLull,
     holderDownAt: state.holderDownAt,
     swingShots: state.swingShots,
+    laneOpenSeconds: +state.laneOpenFor.toFixed(1),
     damageOnShooter: Math.round(state.cfg.holderHp - state.shooterHp),
     roundsFired: state.fired, reloads: state.reloads,
     seconds: +state.elapsed.toFixed(1),
@@ -3095,6 +3125,7 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
     meanAtSafeGround: mean('atSafeGround'),
     pushedTrapsDuringLull: total('pushedTrapsDuringLull'),
     holderKilled: runs.filter(r => r.holderDownAt !== null).length + ' / ' + runs.length,
+    laneOpenSeconds: +runs.reduce((a, r) => a + r.laneOpenSeconds, 0).toFixed(1),
     damageOnShooter: total('damageOnShooter'),
   };
 }

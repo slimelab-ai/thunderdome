@@ -7,7 +7,7 @@ import { FighterRig } from './fighter-rig.js';
 import { surface } from './materials.js';
 import {
   coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
-  shouldSprintAtTarget, searchProbe, SEARCH_PROBES,
+  shouldSprintAtTarget, searchProbe, SEARCH_PROBES, electOverwatch, isCovered,
 } from './tactics.js';
 import {
   ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
@@ -295,6 +295,10 @@ export class Combatant {
     this.breachGoal = new THREE.Vector3();
     this.breachLane = 0;
     this.breachStaging = false;
+    this.breachCost = 0;
+    /** Holding the angle for the squad, or moving behind somebody who is. */
+    this.onOverwatch = false;
+    this.covered = false;
     this.cooldown = 0.5 + Math.random();
     this.burstLeft = this._burstSize();
     this.reactionLeft = 0;
@@ -830,6 +834,27 @@ export class Combatant {
       if (!this.contact) this.target = null;
     }
 
+    // ---- bounding ----
+    // Somebody holds the angle; everybody else moves behind it. Elected rather than
+    // assigned so it survives men dying, and re-elected on the think cadence so the
+    // job passes to whoever still has eyes on.
+    if (this.target) {
+      const squad = world.combatants.filter(c => c.alive && c.team === this.team);
+      const setter = electOverwatch(squad, this.target);
+      const wasSetter = this.onOverwatch;
+      this.onOverwatch = setter === this;
+      this.covered = isCovered(setter, this, now);
+      if (this.onOverwatch && !wasSetter) {
+        world.onCombatEvent?.('overwatch_set', this, {
+          target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+          squad: squad.length,
+        });
+      }
+    } else {
+      this.onOverwatch = false;
+      this.covered = false;
+    }
+
     const speedMult = 1 - this.legDmg * 0.45;
     let moving = false;
     const move = new THREE.Vector3();
@@ -1058,6 +1083,7 @@ export class Combatant {
         // the centre lane — otherwise lane 0 falls through to "go straight at him"
         // and the whole point of staging is thrown away.
         this.breachStaging = !!choice.staging;
+        this.breachCost = choice.cost ?? 0;
         this._breachAt = now;
         // A lane taken to get away from incoming fire is committed to for longer than
         // a routine one. Re-deciding on the usual six-second cadence sent a fighter
@@ -1098,7 +1124,20 @@ export class Combatant {
 
       // One fighter establishes the direct sightline. Side lanes remain committed
       // through momentary contact so the squad creates an actual crossfire.
-      const needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
+      let needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
+
+      // The man on overwatch does not advance. His job is the enemy's attention, and
+      // he cannot hold it while walking — a lowered weapon covers nobody.
+      if (this.onOverwatch && !assist && sight) needTravel = false;
+      // And nobody crosses worked ground unescorted. This is the whole mechanism:
+      // the crossings that kill people are the ones taken while every squadmate is
+      // also moving, so the enemy is free to watch the one lane that matters. If the
+      // route is clean he goes regardless — bounding is for contested ground.
+      if (!this.onOverwatch && !assist && !this.covered &&
+          this.breachT > 0 && this.breachCost > 0 && this.holdSpent < HOLD_BUDGET) {
+        needTravel = false;
+        this._strafing = true;
+      }
       // Standing in a lane somebody is working: getting out of it outranks
       // everything below, including the breach he is committed to.
       //
@@ -1307,7 +1346,11 @@ export class Combatant {
                  this.reactionLeft <= 0 && this.contact && !this.contact.visible &&
                  worthSuppressing({
                    radius: uncertainty, age: now - this.contact.t,
-                   rounds: this._poolFor(this.weaponId), role: this.role, auto: !!w.auto,
+                   rounds: this._poolFor(this.weaponId),
+                   // On overwatch he is the reason anyone else can move, so he
+                   // shoots at ground on the same terms a support gunner does.
+                   role: this.onOverwatch ? 'support' : this.role,
+                   auto: this.onOverwatch || !!w.auto,
                  })) {
         // Area fire at a place, not a person.
         //
@@ -1790,6 +1833,9 @@ export class Combatant {
     const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
     if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
     this.shotsFired = (this.shotsFired || 0) + 1;
+    // When he last put a round out, which is what 'covering' means to the
+    // rest of the squad — an elected setter holding his fire covers nobody.
+    this.lastShotAt = world.simTime ?? 0;
   }
 
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */

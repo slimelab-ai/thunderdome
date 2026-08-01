@@ -179,3 +179,48 @@ export function searchProbe(lastKnown, searcher, radius, index, {
     z: Math.max(-zLimit, Math.min(zLimit, z)),
   };
 }
+
+/**
+ * Who holds the angle while the rest of the squad moves.
+ *
+ * Bounding, in one function. The squad's entire answer to a held lane has been "shoot
+ * back from wherever I happen to be standing", and against anybody who reacts that
+ * loses every time — measured on the lane test at five hundred damage put on a man
+ * who was putting out tens of thousands. What was missing is not footwork. It is that
+ * nobody was ever *covering* anybody.
+ *
+ * One fighter sets: he stops advancing, keeps his angle, and puts rounds on the
+ * threat whether or not he can see a body — his job is to own the enemy's attention.
+ * Everyone else bounds, and may only cross covered ground while he is doing it.
+ *
+ * Elected rather than assigned, and deterministic: the man who can actually see the
+ * target, preferring the ones built to sit still. A rusher is never the setter; he
+ * is the reason the setter exists.
+ */
+export function electOverwatch(squad, target) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const fighter of squad) {
+    if (!fighter.alive || fighter.target !== target) continue;
+    if (!fighter.contact?.visible) continue;
+    if (fighter.archetype === 'rusher') continue;
+    const score = (fighter.role === 'support' ? 3 : 0)
+      + (fighter.archetype === 'marksman' ? 3 : 0)
+      + (fighter.archetype === 'medic' ? -2 : 0)
+      // Deterministic tie-break, so the job does not hop between men every think.
+      - ((fighter.navSeed || 0) % 1000) / 1000;
+    if (score > bestScore) { bestScore = score; best = fighter; }
+  }
+  return best;
+}
+
+/**
+ * Is somebody actually covering this fighter right now?
+ *
+ * Not "is a setter elected" — is one shooting. A man holding an angle in silence
+ * suppresses nobody, and a bound taken on the strength of a nominal overwatch is the
+ * same unescorted crossing it always was.
+ */
+export function isCovered(setter, self, now, within = 1.5) {
+  return !!setter && setter !== self && setter.alive && now - (setter.lastShotAt ?? -99) < within;
+}
