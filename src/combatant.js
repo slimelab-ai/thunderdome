@@ -754,19 +754,28 @@ export class Combatant {
         // cover, which looks worse than never having taken cover at all.
         this.holdT = Math.max(this.holdT, 1.2 + Math.random() * 1.2);
       }
-      // Getting a fighter to use the cover on his own side: three attempts, three
+      // Getting a fighter to use the cover on his own side: four attempts, four
       // losses, so the record is here instead of the code.
       //
       //   walk him to a coverStep spot ......... deaths 14->18/30, damage 80.7k->68.1k
       //   bias his jink toward the unswept side  deaths 18->22/30, damage 71k->55.7k
       //   the same, gated so only the rusher and
       //   shieldman accept being exposed ....... damage 11.5k->8.4k, deaths unchanged
+      //   the overwatch setter only, who has
+      //   stopped advancing anyway ............. damage 1,744->981, +7% survival
       //
-      // The third was run against a holder who *swings* onto whatever shows, built
+      // The third ran against a holder who *swings* onto whatever shows, built
       // precisely because the first two might only have measured badly for want of a
-      // scenario that punishes exposure. It did punish it — and cover-seeking still
-      // lost. Every version trades a firing solution for a better place to stand, and
-      // the exposure saved has never once covered the loss.
+      // scenario that punishes exposure. It did punish it, and cover-seeking still
+      // lost. The fourth removed the last excuse — the setter has already stopped
+      // advancing, so the steps cost him no firing time in principle — and lost too.
+      //
+      // Four mechanisms, one result, so it is the premise that is wrong rather than
+      // the implementations. Movement and fire are exclusive here: a fighter who is
+      // walking is not shooting, and against an opponent who cannot be killed,
+      // surviving longer while shooting less is not winning. Cover will only start
+      // paying when a fighter can relocate without going quiet — which is a firing
+      // -while-moving mechanism, not another way of choosing where to stand.
       //
       // The finding underneath is larger than the positioning. Against a holder who
       // turns, the squad loses all thirty of thirty however they stand, at every

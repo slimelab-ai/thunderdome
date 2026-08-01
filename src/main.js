@@ -2849,6 +2849,7 @@ function makeLaneTest(shooter, options = {}) {
     swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
     lastAttacker: null, hurtAt: -99, swingKills: 0, swingEngagements: 0,
     noticing: null, noticedAt: 0, settleUntil: 0, laneOpenFor: 0, swingCap: 0,
+    chaining: false,
   };
 
   const firingNow = () => {
@@ -2905,14 +2906,23 @@ function makeLaneTest(shooter, options = {}) {
         }
         if (visible) state.swingUntil = state.elapsed + cfg.swingHold;
         if (!t.alive || state.elapsed > state.swingUntil || state.elapsed > state.swingCap) {
+          // Dropping a man is not a reason to stand down — it is a reason to look for
+          // the next one. He used to settle back onto the lane the instant his target
+          // died, which left him staring down an empty corridor while a shotgun
+          // circled him, because the man who provoked him was no longer there to.
+          // Standing down is for when there is nobody left in the open.
+          state.chaining = !t.alive;
           state.swingTarget = null;
-          state.settleUntil = state.elapsed + cfg.swingSettle;
-          state.noticedAt = 0;
+          if (!state.chaining) {
+            state.settleUntil = state.elapsed + cfg.swingSettle;
+            state.noticedAt = 0;
+          }
         }
       }
-      // He has to notice first, and having just come back to his lane he has to
-      // hold it a moment before he will leave it again.
-      if (!state.swingTarget && state.elapsed >= state.settleUntil) {
+      // He has to notice first, and having just come back to his lane he has to hold
+      // it a moment before he will leave it again — unless he is already turned and
+      // working, in which case he is alert and the next man costs him no delay.
+      if (!state.swingTarget && (state.chaining || state.elapsed >= state.settleUntil)) {
         const canSee = (c) => {
           if (!c || !c.alive || c.team !== 'enemy') return false;
           if (Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z) > cfg.swingRange) return false;
@@ -2938,16 +2948,22 @@ function makeLaneTest(shooter, options = {}) {
         }
         if (best) {
           if (state.noticing !== best) { state.noticing = best; state.noticedAt = state.elapsed; }
-          if (state.elapsed - state.noticedAt >= cfg.swingNotice) {
+          if (state.chaining || state.elapsed - state.noticedAt >= cfg.swingNotice) {
             state.swingTarget = best;
             state.swingUntil = state.elapsed + cfg.swingHold;
             // However well it is going, the lane is still his job eventually.
             state.swingCap = state.elapsed + cfg.swingMaxEngage;
             state.swingEngagements++;
             state.noticing = null;
+            state.chaining = false;
           }
         } else {
+          // Nobody left showing: now he goes back to the lane.
           state.noticing = null;
+          if (state.chaining) {
+            state.chaining = false;
+            state.settleUntil = state.elapsed + cfg.swingSettle;
+          }
         }
       }
       if (state.swingTarget) { engaging = state.swingTarget; hitChance = cfg.swingAccuracy; }
