@@ -2523,221 +2523,12 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
   return { done: headlessSimulation.done, result: headlessSimulation.result, events: headlessSimulation.events };
 }
 
-// ============================================================ held-corner trap
-//
-// The scenario the AI work is judged against, as something you can run rather than
-// something you have to take my word for.
-//
-// A man posts up on the left of the player's spawn and empties an inventory of AK
-// ammunition, mag after mag, down one lane: past the outside edge of the pillar at
-// (-9, 6). He does not track targets. He holds that line, and anything that steps
-// into it gets shot. It is the cheapest trap in the game and it should be the
-// easiest to avoid — the squad should go round it, or take him while he reloads, or
-// both, and a squad that walks into it repeatedly is a squad with a bug in it.
-//
-// `__game.holdTrap()` runs it across seeds and reports; `__game.holdTrapWatch()`
-// sets it up and hands it to the normal loop so you can watch it happen.
-
-const TRAP = {
-  post: { x: -6, z: 12.5 },   // left of the player's spawn
-  aim: { x: -9.9, z: 6.0 },   // the outside edge of the pillar
-  ammo: 240,                  // eight mags: a whole inventory
-  mag: 30,
-  reload: 1.9,
-  interval: 0.1,              // 600 rpm, trigger held
-  accuracy: 0.8,
-  laneHalfWidth: 0.75,        // how near the held line counts as standing in it
-  overrun: 14,                // the line keeps killing past the aim point
-  seconds: 60,
-};
-
-function makeTrap(options = {}) {
-  const cfg = { lockPlayer: true, ...TRAP, ...options };
-  const muzzle = new THREE.Vector3();
-  const ray = new THREE.Vector3();
-  const probe = new THREE.Vector3();
-  const rel = new THREE.Vector3();
-  const end = new THREE.Vector3();
-  let reach = 0;
-
-  // He is holding a *rifle*, so he had better be carrying one: the trap used to fire
-  // rifle rounds out of whatever the career happened to have equipped, which meant
-  // watching it showed a man with a pistol in his hands making no noise at all.
-  player.slots = ['rifle'];
-  player.slotIdx = 0;
-  player.knifeOut = false;
-  player._mountViewmodel();
-
-  const state = {
-    cfg, muzzle, mag: cfg.mag, ammo: cfg.ammo - cfg.mag,
-    reload: 0, acc: 0, fired: 0, reloads: 0, deaths: 0, laneEntries: 0,
-    closest: Infinity, inLane: new Map(), elapsed: 0, done: false,
-  };
-
-  // The held line, from wherever he is standing now. Recomputed rather than fixed so
-  // that a watcher who walks off the post takes his lane with him instead of leaving
-  // a ghost one behind.
-  const aimLine = () => {
-    muzzle.set(player.pos.x, 1.5, player.pos.z);
-    ray.set(cfg.aim.x - player.pos.x, 1.15 - 1.5, cfg.aim.z - player.pos.z);
-    reach = ray.length() + cfg.overrun;
-    ray.normalize();
-  };
-
-  // Standing in the lane he is holding — near the line, and actually visible from it.
-  state.standingInLane = (c) => {
-    probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
-    rel.subVectors(probe, muzzle);
-    const along = rel.dot(ray);
-    if (along < 1 || along > reach) return false;
-    const off = Math.hypot(rel.x - ray.x * along, rel.z - ray.z * along);
-    return off < cfg.laneHalfWidth && hasLoS(world.colliders, muzzle, probe);
-  };
-
-  state.step = (dt) => {
-    if (state.done) return state;
-    state.elapsed += dt;
-    if (cfg.lockPlayer) {
-      // Pinned to the post, and unkillable: the question is what they do about him,
-      // not whether he can be killed. Only for scoring — a watcher keeps his feet.
-      player.pos.set(cfg.post.x, 0, cfg.post.z);
-      world.playerProxy.pos.copy(player.pos);
-      world.playerProxy.eye = null;
-      // Unkillable only while scoring. A watcher is a real participant who can be
-      // killed — forcing `alive` on him while letting his health fall leaves him
-      // upright at zero, which is neither one thing nor the other.
-      player.hp = 1e6;
-      world.playerProxy.alive = true;
-      player.alive = true;
-    }
-    // Standing still for forty seconds is exactly what the crowd punishes, and a
-    // fire zone dropped on the post both cooks the man holding it and pushes the
-    // squad off the routes being measured. The scenario owns the anti-camp timer
-    // while it runs.
-    match.campT = 0;
-    match.campWarned = false;
-    aimLine();
-
-    if (state.reload > 0) { state.reload -= dt; state.acc = 0; }
-    else {
-      state.acc += dt;
-      while (state.acc >= cfg.interval) {
-        state.acc -= cfg.interval;
-        if (state.mag <= 0) {
-          if (state.ammo <= 0) { state.done = true; break; }
-          const take = Math.min(cfg.mag, state.ammo);
-          state.mag = take; state.ammo -= take;
-          state.reload = cfg.reload; state.reloads++;
-          audio.reload(0);
-          break;
-        }
-        state.mag--; state.fired++;
-        world.emitNoise?.(world.playerProxy, muzzle, 'gunshot', WEAPONS.rifle.suppression ?? 1, ray);
-        // Seen and heard, not just simulated — without this the scenario ran in
-        // total silence and looked like nothing was happening.
-        end.copy(muzzle).addScaledVector(ray, reach);
-        fx.tracer(muzzle, end);
-        fx.muzzleFlash(muzzle, ray);
-        audio.shot(WEAPONS.rifle.sound, 1);
-        const caught = world.combatants.find(c => c.alive && c.team === 'enemy' && state.standingInLane(c));
-        if (caught && Math.random() < cfg.accuracy) {
-          probe.set(caught.pos.x, caught.pos.y + 1.15, caught.pos.z);
-          caught.applyDamage(world, 'torso', WEAPONS.rifle.dmg, world.playerShooter, probe);
-        }
-      }
-    }
-    player.mag = state.mag;              // so the HUD tells the truth about the trap
-    player.reloading = state.reload;
-
-    for (const c of world.combatants) {
-      if (!c.alive || c.team !== 'enemy') continue;
-      const now = state.standingInLane(c);
-      if (now && !state.inLane.get(c)) state.laneEntries++;
-      state.inLane.set(c, now);
-      state.closest = Math.min(state.closest, Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z));
-    }
-    if (state.elapsed > cfg.seconds) state.done = true;
-    if (!world.combatants.some(c => c.alive && c.team === 'enemy')) state.done = true;
-    return state;
-  };
-
-  return state;
-}
-
-function trapReport(state, squad, seed) {
-  return {
-    seed, squad, deaths: state.deaths, survivors: squad - state.deaths,
-    roundsFired: state.fired, reloads: state.reloads,
-    laneEntries: state.laneEntries,
-    closestApproach: Number.isFinite(state.closest) ? +state.closest.toFixed(1) : null,
-    seconds: +state.elapsed.toFixed(1),
-  };
-}
-
-async function runHoldTrap({ seeds = [101, 202, 303, 404, 505, 606], rank = 5, ...options } = {}) {
-  const runs = [];
-  for (const seed of seeds) {
-    let s = seed >>> 0;
-    const realRandom = Math.random;
-    Math.random = () => {
-      s += 0x6d2b79f5; let t = s;
-      t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-    try {
-      await window.__game.fight('circuits', rank);
-      const squad = world.combatants.filter(c => c.team === 'enemy').length;
-      const trap = makeTrap(options);
-      const originalKill = world.onKill;
-      world.onKill = (killer, victim, part) => {
-        if (victim?.team === 'enemy') trap.deaths++;
-        originalKill?.(killer, victim, part);
-      };
-      while (!trap.done) { world.simTime += 1 / 60; stepMatch(1 / 60); trap.step(1 / 60); }
-      world.onKill = originalKill;
-      runs.push(trapReport(trap, squad, seed));
-    } finally {
-      Math.random = realRandom;
-    }
-  }
-  const total = (k) => runs.reduce((sum, r) => sum + r[k], 0);
-  return {
-    runs,
-    botLives: total('squad'),
-    deaths: total('deaths'),
-    laneEntries: total('laneEntries'),
-    deathRate: `${total('deaths')} / ${total('squad')}`,
-    closestApproach: Math.min(...runs.map(r => r.closestApproach)),
-  };
-}
-
-/**
- * The same scenario, driven by the real loop, so it can be watched.
- *
- * The player is put on the post and pointed down the lane, and then left alone —
- * `lockPlayer` is off, so you keep your feet and can walk off and watch from
- * somewhere else if you would rather see it from the side. The lane follows you if
- * you do; stand still and it is the scored scenario exactly.
- */
-async function watchHoldTrap(options = {}) {
-  await window.__game.fight('circuits', options.rank ?? 5);
-  const cfg = { ...TRAP, ...options };
-  player.pos.set(cfg.post.x, 0, cfg.post.z);
-  player.yaw = Math.atan2(cfg.post.x - cfg.aim.x, cfg.aim.z - cfg.post.z);
-  world.playerProxy.pos.copy(player.pos);
-  const trap = makeTrap({ lockPlayer: false, ...options });
-  const originalKill = world.onKill;
-  world.onKill = (killer, victim, part) => {
-    if (victim?.team === 'enemy') trap.deaths++;
-    originalKill?.(killer, victim, part);
-  };
-  world.scenario = (dt) => {
-    trap.step(dt);
-    if (trap.done) { world.scenario = null; world.onKill = originalKill; }
-  };
-  return trap;
-}
-
+// The held-corner trap that used to live here has been deleted, and the reason is
+// worth keeping: it could not fail. It ran in the real arena, where a squad that
+// avoids a lane and a squad that never had reason to approach it produce the same
+// number — so it reported nought deaths in thirty and I reported that as a pass. The
+// same question asked on a map built for it came back thirty for thirty. A test that
+// cannot fail is worse than no test, because it is quoted. See the lane test below.
 // ============================================================ the lane test
 //
 // The held-corner question asked on a map built for asking it. See src/lane-test.js
@@ -2888,7 +2679,7 @@ function makeLaneTest(shooter, options = {}) {
     swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
     lastAttacker: null, hurtAt: -99, swingKills: 0, swingEngagements: 0,
     noticing: null, noticedAt: 0, settleUntil: 0, laneOpenFor: 0, swingCap: 0,
-    chaining: false,
+    chaining: false, lastRoundAt: -99,
   };
 
   const firingNow = () => {
@@ -3054,6 +2845,7 @@ function makeLaneTest(shooter, options = {}) {
         fx.muzzleFlash(muzzle, _trapDir);
         audio.shot(WEAPONS.rifle.sound, 1);
 
+        state.lastRoundAt = state.elapsed;
         if (state.engaging === state.swingTarget && state.swingTarget) state.swingShots++;
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
@@ -3087,10 +2879,16 @@ function makeLaneTest(shooter, options = {}) {
         hp: Math.round(Math.max(0, c.hp)),
         range: +Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z).toFixed(1),
         inLane: now, pinned: !!c.pinnedBy, sprint: !!c.sprintNow, peek: c.peekSide,
-        sight: !!c.contact?.visible, hold: +c.holdT.toFixed(1),
+        sight: !!c.contact?.visible, hold: +c.holdT.toFixed(1), waiting: !!c.waitingForGap,
         lane: c.breachLane, staging: !!c.breachStaging,
         goal: [+c.breachGoal.x.toFixed(1), +c.breachGoal.z.toFixed(1)],
         firing: shooting,
+        // Whether rounds were actually coming out, which is not the same as whether
+        // he was nominally shooting: reloads and turns are gaps inside a burst
+        // schedule that never stops. The first version of this recorded the schedule
+        // and therefore reported that nobody ever crossed in a gap, which was a fact
+        // about the metric rather than about the squad.
+        quiet: +(state.elapsed - state.lastRoundAt).toFixed(2),
       });
       if (spotAt(c.pos, LANE_TEST.deathTraps)) {
         state.trapFrames++;
@@ -3147,7 +2945,16 @@ function placeLaneTestSquad() {
   return enemies;
 }
 
-async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } = {}) {
+/**
+ * Twelve seeds by default, not six.
+ *
+ * This map's numbers swing about twenty percent run to run on identical code — the
+ * same baseline measured 88 degrees of spread and 2,075 damage one hour and 62 and
+ * 2,414 the next. At three or six seeds that is wide enough to swallow any change
+ * worth arguing about, and several calls made during this work were taken inside
+ * that band. Twelve is slower and honest; pass fewer explicitly when iterating.
+ */
+async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], rank = 5, ...options } = {}) {
   const runs = [];
   for (const seed of seeds) {
     let s = seed >>> 0;
@@ -3348,10 +3155,6 @@ window.__game = {
   step(dt = 1 / 60, n = 1) { for (let i = 0; i < n && phase === 'match'; i++) stepMatch(dt); },
   startHeadlessBotMatch,
   stepHeadlessBotMatch,
-  // The held-corner trap. `holdTrap()` scores it across seeds; `holdTrapWatch()`
-  // sets the same thing up and lets the normal loop run it so you can watch.
-  holdTrap: (opts) => runHoldTrap(opts),
-  holdTrapWatch: (opts) => watchHoldTrap(opts),
   // The purpose-built version: one way out, a short lethal route and a long safe
   // one. `laneTest()` scores it; `laneTestWatch()` plays it in front of you.
   laneTest: (opts) => runLaneTest(opts),
