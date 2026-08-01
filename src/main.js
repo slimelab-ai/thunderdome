@@ -141,6 +141,19 @@ arena.propsReady.then(() => pipeline.bakeEnvironment());
 const assetsReady = Promise.all([
   arena.propsReady, preloadFighter(), preloadWeapons(), preloadViewmodel(),
 ]);
+// A core asset failing to load used to be swallowed by the loaders, and the game
+// carried on with invisible weapons or bare hands — the failure only surfaced as a
+// gameplay bug report. The loaders now rethrow, and this is the one place the
+// rejection is made impossible to miss. (Arena props are absent on purpose: they
+// have designed primitive fallbacks and a match without a fancy crate is fine.)
+assetsReady.catch((err) => {
+  console.error('[assets] a core asset failed to load; the game cannot start a match', err);
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;'
+    + 'background:#7a1010;color:#fff;font:13px monospace;padding:10px 14px;';
+  el.textContent = `ASSET LOAD FAILED: ${err?.message || err} — see the console.`;
+  document.body.appendChild(el);
+});
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
@@ -693,7 +706,9 @@ function startMatch() {
   // is in memory. In practice it loads during the menu; this only ever fires if a
   // player clicks FIGHT within the first second on a cold cache.
   if (!fighterReady()) {
-    preloadFighter().then(() => startMatch());
+    // If the load failed, do not start a match with no fighters in it — the banner
+    // from the `assetsReady` catch is already up and says why.
+    preloadFighter().then(() => startMatch(), () => {});
     return;
   }
   if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {

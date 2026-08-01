@@ -166,8 +166,10 @@ export function preloadViewmodel() {
       asset = { scene: gltf.scene, clips };
       return asset;
     }).catch((err) => {
+      // Rethrow so `assetsReady` rejects. Returning null left `this.ready` false
+      // forever — bare hands, no weapon, and nothing that said why.
       console.error('[viewmodel] could not load the first-person arms', err);
-      return null;
+      throw err;
     });
   }
   return loadPromise;
@@ -182,7 +184,10 @@ export class ViewModel {
     this.ready = false;
     this.pendingWeapon = null;
     this.uniformColor = uniformColor;
-    preloadViewmodel().then(() => this._build());
+    // Fill in when the asset lands. The rejection handler is deliberately silent:
+    // the loader already logged it and `assetsReady` rejects loudly in main — a
+    // second unhandled rejection here would only bury that one in noise.
+    preloadViewmodel().then(() => this._build(), () => {});
   }
 
   _build() {
