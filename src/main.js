@@ -2363,10 +2363,15 @@ function startHeadlessBotMatch(config = {}) {
   }
   clearCombatants();
   match = makeMatch();
+  // Grenades and medkits included, because career fighters carry them. The old
+  // defaults carried neither, which quietly made every headless regression a
+  // different game from the one on screen — grenade behaviour in particular was
+  // untestable here while being very visible there, and conclusions drawn from
+  // this harness silently excluded it.
   const defaults = [
-    { w: 'rifle', hp: 100, sp: 1.2, re: 0.55, arch: 'marksman', ammo: 120 },
-    { w: 'smg', hp: 100, sp: 1.35, re: 0.58, arch: 'rusher', ammo: 180 },
-    { w: 'pistol', hp: 100, sp: 1.3, re: 0.6, arch: 'medic', ammo: 90 },
+    { w: 'rifle', hp: 100, sp: 1.2, re: 0.55, arch: 'marksman', ammo: 120, grenade: 2, medkit: 1 },
+    { w: 'smg', hp: 100, sp: 1.35, re: 0.58, arch: 'rusher', ammo: 180, grenade: 1, medkit: 1 },
+    { w: 'pistol', hp: 100, sp: 1.3, re: 0.6, arch: 'medic', ammo: 90, grenade: 1, medkit: 4 },
   ];
   const alpha = config.alpha || defaults;
   const bravo = config.bravo || defaults;
@@ -2849,7 +2854,14 @@ function makeLaneTest(shooter, options = {}) {
         if (state.engaging === state.swingTarget && state.swingTarget) state.swingShots++;
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
-          state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
+          // The round still has to get there. Retention deliberately keeps him on a
+          // man who has just ducked behind something — the *hold* is right, and the
+          // kill through the wall was not: acquisition checked line of sight but
+          // firing never did, so a flanker who reached cover during the grace period
+          // died through it. Walls stop bullets, including his.
+          if (hasLoS(world.colliders, muzzle, probe)) {
+            state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
+          }
         }
       }
     }
@@ -2941,6 +2953,10 @@ function placeLaneTestSquad() {
     c.spawnPos = c.pos.clone();
     c.openingT = 0;
     for (const k of Object.keys(c.ammoPools)) c.ammoPools[k] = 400;
+    // Everyone carries a medkit; the medic carries the bag. Supplies came from the
+    // rank roll before, which meant most of the squad had nothing to use and the
+    // medic nothing worth watching.
+    c.healKits = c.archetype === 'medic' ? 6 : 1;
   });
   return enemies;
 }
