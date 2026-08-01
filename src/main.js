@@ -2804,7 +2804,14 @@ function makeLaneTest(shooter, options = {}) {
     // and lead him. At 0.35 he landed three and a half rounds a second across the
     // pit, which is not a player, it is an aimbot: every squad died wherever it stood
     // and the scenario could not tell good positioning from bad.
-    swing: false, swingAccuracy: 0.12, swingRange: 30, swingHold: 1.2,
+    // On by default. It was opt-in, which meant the obvious thing — calling
+    // `laneTestWatch()` and watching — got you a holder who never turned, standing
+    // there taking rounds from men in the open because nobody had passed a flag. The
+    // realistic opponent is the default; `swing: false` is the special case, kept
+    // because scoring the pure lane cheese needs a man who only ever holds the lane.
+    swing: true, swingAccuracy: 0.12, swingRange: 30, swingHold: 1.2,
+    /** How long he stays cross about being shot from somewhere. */
+    swingGrudge: 2.5,
     /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
     ceaseFireAfter: 0, lullSeconds: 0,
     ...options,
@@ -2824,6 +2831,7 @@ function makeLaneTest(shooter, options = {}) {
     pushedInLull: 0, shooterHp: shooter.hp,
     track: [], sampleT: 0, holderDownAt: null, swingShots: 0,
     swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
+    lastAttacker: null, hurtAt: -99,
   };
 
   const firingNow = () => {
@@ -2866,14 +2874,28 @@ function makeLaneTest(shooter, options = {}) {
         state.swingTarget = null;
       }
       if (!state.swingTarget) {
-        let best = null, bestD = Infinity;
-        for (const c of world.combatants) {
-          if (!c.alive || c.team !== 'enemy') continue;
-          const d = Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z);
-          if (d >= bestD || d > cfg.swingRange) continue;
+        const canSee = (c) => {
+          if (!c || !c.alive || c.team !== 'enemy') return false;
+          if (Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z) > cfg.swingRange) return false;
           probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
-          if (!hasLoS(world.colliders, muzzle, probe)) continue;
-          best = c; bestD = d;
+          return hasLoS(world.colliders, muzzle, probe);
+        };
+        // Whoever is hitting him, first.
+        //
+        // Nearest-visible was the wrong rule and it showed: he fixated on whichever
+        // man happened to be closest, engaged exactly one of them all run, and stood
+        // there absorbing fire from the flank the entire time. Anybody would turn on
+        // the person shooting them. The nearest man is only the answer when nobody is.
+        let best = null;
+        if (state.elapsed - state.hurtAt < cfg.swingGrudge && canSee(state.lastAttacker)) {
+          best = state.lastAttacker;
+        } else {
+          let bestD = Infinity;
+          for (const c of world.combatants) {
+            if (!canSee(c)) continue;
+            const d = Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z);
+            if (d < bestD) { bestD = d; best = c; }
+          }
         }
         if (best) { state.swingTarget = best; state.swingUntil = state.elapsed + cfg.swingHold; }
       }
@@ -2889,7 +2911,6 @@ function makeLaneTest(shooter, options = {}) {
     // somewhere else. A gunshot has to report the truth about itself.
     if (engaging === state.swingTarget && state.swingTarget) {
       _trapDir.set(engaging.pos.x - muzzle.x, 0, engaging.pos.z - muzzle.z).normalize();
-      state.swingShots++;
     } else {
       _trapDir.copy(ray);
       _trapDir.y = 0;
@@ -2927,6 +2948,7 @@ function makeLaneTest(shooter, options = {}) {
         fx.muzzleFlash(muzzle, _trapDir);
         audio.shot(WEAPONS.rifle.sound, 1);
 
+        if (state.engaging === state.swingTarget && state.swingTarget) state.swingShots++;
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
           state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
@@ -3031,12 +3053,18 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
       const shooter = spawnLaneTestShooter(options.holderHp ?? 1e6);
       const test = makeLaneTest(shooter, options);
       const originalKill = world.onKill;
+      const originalDamage = world.onDamage;
       world.onKill = (killer, victim, part) => {
         if (victim?.team === 'enemy') test.deaths++;
         originalKill?.(killer, victim, part);
       };
+      world.onDamage = (attacker, victim, amount) => {
+        if (victim === shooter && attacker) { test.lastAttacker = attacker; test.hurtAt = test.elapsed; }
+        originalDamage?.(attacker, victim, amount);
+      };
       while (!test.done) { world.simTime += 1 / 60; stepMatch(1 / 60); test.step(1 / 60); }
       world.onKill = originalKill;
+      world.onDamage = originalDamage;
       const report = laneTestReport(test, enemies.length, seed);
       report.track = test.track;
       runs.push(report);
@@ -3088,13 +3116,19 @@ async function watchLaneTest(options = {}) {
   const shooter = spawnLaneTestShooter(options.holderHp ?? 1e6);
   const test = makeLaneTest(shooter, options);
   const originalKill = world.onKill;
+  const originalDamage = world.onDamage;
   world.onKill = (killer, victim, part) => {
     if (victim?.team === 'enemy') test.deaths++;
     originalKill?.(killer, victim, part);
   };
+  world.onDamage = (attacker, victim, amount) => {
+    if (victim === shooter && attacker) { test.lastAttacker = attacker; test.hurtAt = test.elapsed; }
+    originalDamage?.(attacker, victim, amount);
+  };
   const finish = () => {
     world.scenario = null;
     world.onKill = originalKill;
+    world.onDamage = originalDamage;
     clearMarkers();
     restoreMap();
     player.vmRoot.visible = true;
