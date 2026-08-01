@@ -305,7 +305,7 @@ export class InputHub {
       this._to.normalize();
       const ang = this._to.angleTo(this._fwd);
       if (ang >= bestAng) continue;
-      if (!hasLoS(this.world.colliders, cam.position, this._aim)) continue;
+      if (!hasLoS(this.world, cam.position, this._aim)) continue;
       this._best.copy(this._aim);
       best = { ang, dist, point: this._best };
       bestAng = ang;

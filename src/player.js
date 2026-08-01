@@ -615,7 +615,7 @@ export class Player {
       // don't lean through walls
       const eyeBase = new THREE.Vector3(this.pos.x, this.pos.y + this.eyeHeight, this.pos.z);
       const leanDir = new THREE.Vector3(rX * Math.sign(this.lean), 0, rZ * Math.sign(this.lean));
-      const w = wallHit(this.world.colliders, eyeBase, leanDir, 1.2);
+      const w = wallHit(this.world, eyeBase, leanDir, 1.2);
       leanDist = Math.min(leanDist, Math.max(0, w.dist - 0.18));
     } else leanDist = 0;
     this.leanAmount = leanDist * Math.sign(this.lean);

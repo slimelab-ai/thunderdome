@@ -194,6 +194,20 @@ def shotgun():
 
 
 def rifle():
+    """AK pattern.
+
+    The parts here used to be an assembly of the *recognisable* bits — receiver,
+    barrel, magazine, stock — with nothing between them. Held at arm's length in first
+    person that reads exactly as what it is: a handful of blocks floating in
+    formation. Two of the gaps were literal, a centimetre under the magazine and five
+    centimetres between the stock and the receiver.
+
+    What follows is the connective tissue. None of it is interesting on its own, which
+    is why it was missing, and all of it is what makes the silhouette read as one
+    object: a magazine well the magazine actually seats into, a lower receiver tying
+    the grip to it, a trigger guard, and the gas tube and upper handguard that give an
+    AK its distinctive double-barrelled profile from the side.
+    """
     reset()
     cube("receiver", (0, 0.06, 0.035), (0.042, 0.26, 0.070), METAL, 0.009, uv_scale=UV)
     bolt = cube("bolt", (0.026, 0.10, 0.058), (0.018, 0.10, 0.026), DARK, 0.004, uv_scale=UV)
@@ -202,15 +216,34 @@ def rifle():
     tube("barrel", (0, 0.44, 0.038), 0.0085, 0.20, METAL, vertices=8,
          rotation=(math.radians(90), 0, 0), uv_scale=UV)
     cube("muzzle device", (0, 0.545, 0.038), (0.024, 0.055, 0.024), DARK, 0.005, uv_scale=UV)
+    # Gas tube and upper handguard. The second horizontal line above the barrel is most
+    # of what makes an AK read as an AK in silhouette, and without it the gun was a
+    # barrel with a block on it. Both stay under the 0.090 sight line.
+    tube("gas tube", (0, 0.275, 0.066), 0.009, 0.17, METAL, vertices=8,
+         rotation=(math.radians(90), 0, 0), uv_scale=UV)
+    cube("upper handguard", (0, 0.265, 0.070), (0.036, 0.13, 0.020), WOOD, 0.006, uv_scale=UV)
     # curved magazine, faked with two segments — a real curve costs geometry nobody sees
     mag = cube("mag", (0, 0.00, -0.075), (0.030, 0.062, 0.13), DARK, 0.007,
                rotation=(math.radians(10), 0, 0), uv_scale=UV)
     cube("mag lower", (0, -0.035, -0.175), (0.030, 0.060, 0.075), DARK, 0.007,
          rotation=(math.radians(26), 0, 0), uv_scale=UV)
+    # The magazine well: the magazine's top sat a centimetre below the receiver's
+    # underside with nothing in between, which is the single most obvious of the gaps.
+    cube("mag well", (0, 0.005, -0.022), (0.036, 0.076, 0.050), METAL, 0.005, uv_scale=UV)
+    # Lower receiver. Runs from behind the grip to the front of the magazine well, so
+    # the grip, the well and the receiver are one piece rather than three neighbours.
+    cube("lower receiver", (0, -0.03, -0.008), (0.038, 0.16, 0.030), METAL, 0.006, uv_scale=UV)
+    cube("trigger guard", (0, -0.055, -0.038), (0.026, 0.052, 0.012), DARK, 0.004, uv_scale=UV)
     cube("grip", (0, -0.09, -0.055), (0.032, 0.050, 0.115), GRIP, 0.012,
          rotation=(math.radians(-14), 0, 0), uv_scale=UV)
     cube("stock", (0, -0.22, 0.010), (0.042, 0.20, 0.085), WOOD, 0.016,
          rotation=(math.radians(-5), 0, 0), uv_scale=UV)
+    # Stock tang. The stock stopped 5 cm short of the receiver and simply hung there.
+    cube("stock tang", (0, -0.105, 0.022), (0.036, 0.090, 0.052), WOOD, 0.008,
+         rotation=(math.radians(-5), 0, 0), uv_scale=UV)
+    # Rear sight block: the notch sits at 0.090, the receiver top at 0.070, and there
+    # was nothing holding the one above the other.
+    cube("rear sight block", (0, -0.060, 0.076), (0.030, 0.050, 0.016), DARK, 0.004, uv_scale=UV)
     # AK pattern: a tangent notch back on the receiver, a hooded post out on the gas
     # block. Sight line just clear of the gas block so nothing crosses it.
     notch(-0.06, 0.090, gap=0.008, blade=0.011, depth=0.014, tall=0.015)

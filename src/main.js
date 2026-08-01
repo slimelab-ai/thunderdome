@@ -162,7 +162,13 @@ const announcer = new Announcer();
 // ============================================================ world
 const world = {
   scene,
+  // Two collision representations, on purpose. `colliders` are the simplified boxes
+  // that movement, navigation and ground height run against — the right tool for
+  // sweeping a capsule. `solids` is the arena's real triangles, which every *ray*
+  // uses: shots, sightlines, grenade occlusion, and how far you can lean out past a
+  // corner. See src/meshcollider.js.
   colliders: arena.colliders,
+  solids: arena.solids,
   combatants: [],
   hitMeshes: [],
   zones: [],
@@ -251,7 +257,7 @@ const player = new Player(camera, world);
 // Keep its position live so shot and damage events include the actual firing
 // coordinate instead of a null placeholder.
 world.playerShooter.pos = player.pos;
-const spectatorCamera = new SpectatorCamera(camera, arena.colliders, {
+const spectatorCamera = new SpectatorCamera(camera, arena, {
   halfWidth: ARENA.W / 2 - 1,
   halfDepth: ARENA.D / 2 - 1,
 });
@@ -1113,7 +1119,7 @@ function explode(pos, thrower) {
     const chest = new THREE.Vector3(player.pos.x, player.pos.y + 1.1, player.pos.z);
     const d = chest.distanceTo(blast);
     if (d < R) {
-      const occ = !hasLoS(world.colliders, blast, chest);
+      const occ = !hasLoS(world, blast, chest);
       const pdmg = dmgAt(d, occ);
       if (pdmg > 0) handlePlayerDamaged(pdmg / 0.8, 'torso', pos); // undo grit for env-scale
       // shrapnel chews limbs
@@ -1132,7 +1138,7 @@ function explode(pos, thrower) {
     const chest = c.aimPoint();
     const d = chest.distanceTo(blast);
     if (d < R) {
-      const occ = !hasLoS(world.colliders, blast, chest);
+      const occ = !hasLoS(world, blast, chest);
       const dmg = dmgAt(d, occ);
       if (dmg > 1) {
         if (!occ && d < R * 0.6) { c.armDmg = Math.min(1, c.armDmg + 0.35); c.legDmg = Math.min(1, c.legDmg + 0.35); }
@@ -2706,7 +2712,7 @@ function makeLaneTest(shooter, options = {}) {
     const along = rel.dot(ray);
     if (along < 1 || along > reach) return false;
     const off = Math.hypot(rel.x - ray.x * along, rel.z - ray.z * along);
-    return off < cfg.laneHalfWidth && hasLoS(world.colliders, muzzle, probe);
+    return off < cfg.laneHalfWidth && hasLoS(world, muzzle, probe);
   };
 
   const inLane = new Map();
@@ -2737,7 +2743,7 @@ function makeLaneTest(shooter, options = {}) {
         if (visible) {
           probe.set(t.pos.x, t.pos.y + 1.15, t.pos.z);
           visible = Math.hypot(t.pos.x - shooter.pos.x, t.pos.z - shooter.pos.z) <= cfg.swingRange
-            && hasLoS(world.colliders, muzzle, probe);
+            && hasLoS(world, muzzle, probe);
         }
         if (visible) state.swingUntil = state.elapsed + cfg.swingHold;
         if (!t.alive || state.elapsed > state.swingUntil || state.elapsed > state.swingCap) {
@@ -2762,7 +2768,7 @@ function makeLaneTest(shooter, options = {}) {
           if (!c || !c.alive || c.team !== 'enemy') return false;
           if (Math.hypot(c.pos.x - shooter.pos.x, c.pos.z - shooter.pos.z) > cfg.swingRange) return false;
           probe.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
-          return hasLoS(world.colliders, muzzle, probe);
+          return hasLoS(world, muzzle, probe);
         };
         // Whoever is hitting him, first.
         //
@@ -2859,7 +2865,7 @@ function makeLaneTest(shooter, options = {}) {
           // kill through the wall was not: acquisition checked line of sight but
           // firing never did, so a flanker who reached cover during the grace period
           // died through it. Walls stop bullets, including his.
-          if (hasLoS(world.colliders, muzzle, probe)) {
+          if (hasLoS(world, muzzle, probe)) {
             state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
           }
         }

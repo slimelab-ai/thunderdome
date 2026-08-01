@@ -17,10 +17,35 @@ const _aimAlt = new THREE.Vector3();
 const _eye = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
 
+/**
+ * Where a ray meets the world.
+ *
+ * Accepts either the world or a bare array of colliders. Given the world, and once
+ * its triangle collider has been built, rays run against the *real geometry* and the
+ * box colliders sit this out entirely — they have to, because a box is always at
+ * least as big as the thing inside it, so testing both would just reinstate the box.
+ *
+ * The boxes remain the answer for movement, and remain the answer for rays until the
+ * props have streamed in. See src/meshcollider.js for why the split is drawn here.
+ */
+function raySolids(src) {
+  if (Array.isArray(src)) return null;
+  const s = src && src.solids;
+  return s && s.ready ? s : null;
+}
+function rayBoxes(src) {
+  return Array.isArray(src) ? src : (src && src.colliders) || [];
+}
+
 // Distance to nearest wall/obstacle along ray (also floor plane y=0). Returns {dist, point}.
-export function wallHit(colliders, origin, dir, maxDist = 200) {
+export function wallHit(src, origin, dir, maxDist = 200) {
   let best = maxDist;
-  for (const box of colliders) {
+  const solids = raySolids(src);
+  if (solids) {
+    const t = solids.raycast(origin, dir, maxDist);
+    if (t !== null && t < best) best = t;
+  }
+  for (const box of solids ? [] : rayBoxes(src)) {
     const t = box.raycast(origin, dir);
     if (t !== null && t < best) best = t;
   }
@@ -32,8 +57,11 @@ export function wallHit(colliders, origin, dir, maxDist = 200) {
   return { dist: best, point };
 }
 
-// Line of sight between two points (true if unobstructed by arena colliders).
-export function hasLoS(colliders, from, to) {
+// Line of sight between two points (true if unobstructed by arena geometry).
+export function hasLoS(src, from, to) {
+  const solids = raySolids(src);
+  if (solids) return !solids.blocked(from, to);
+  const colliders = rayBoxes(src);
   const dir = _v.copy(to).sub(from);
   const dist = dir.length();
   if (dist < 0.001) return true;
@@ -253,12 +281,12 @@ export function setPlayerFacing(v) { _playerFacing.copy(v); }
  * all, so a player peeking a corner was aimed at *through* the wall he was peeking
  * past, and his exposed head drew no fire whatsoever.
  */
-export function playerAimPoint(colliders, from, pp, out = new THREE.Vector3()) {
+export function playerAimPoint(src, from, pp, out = new THREE.Vector3()) {
   const s = pp.heightScale || 1;
   playerAxisPoint(pp, 1.15 * s, out);
-  if (hasLoS(colliders, from, out)) return out;
+  if (hasLoS(src, from, out)) return out;
   playerEye(pp, _aimAlt);
-  if (hasLoS(colliders, from, _aimAlt)) return out.copy(_aimAlt);
+  if (hasLoS(src, from, _aimAlt)) return out.copy(_aimAlt);
   return playerAxisPoint(pp, 1.15 * s, out);
 }
 
@@ -284,7 +312,7 @@ export function applySpread(dir, spreadDeg) {
  * Returns { type: 'wall'|'flesh'|'player'|'miss', point, part?, combatant?, dist }
  */
 export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1, maxDist = 200) {
-  const wall = wallHit(world.colliders, origin, dir, maxDist);
+  const wall = wallHit(world, origin, dir, maxDist);
 
   // combatant part meshes
   _raycaster.set(origin, dir);

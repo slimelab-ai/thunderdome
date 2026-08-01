@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+
+import { NO_OCCLUDE_LAYER } from './layers.js';
 import { WEAPONS, buildHeldGun } from './weapons.js';
 import {
   fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH,
@@ -199,6 +201,12 @@ function nameTagSprite(name, color) {
   tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true }));
   sp.scale.set(1.5, 0.375, 1);
+  // A label is not a surface. Left on the default layer, the occlusion pass treats the
+  // quad as geometry and darkens it — and because that pass re-renders with an override
+  // material, which does not billboard, the dark patch lands at whatever angle the raw
+  // quad happens to face. That is the black rectangle sitting askew behind the name.
+  // See src/layers.js.
+  sp.layers.set(NO_OCCLUDE_LAYER);
   return sp;
 }
 
@@ -960,12 +968,12 @@ export class Combatant {
       // geometric sightline to target — with no sight, range means nothing: keep hunting
       const eye = this.eyePos();
       const aim = this.target.isPlayer
-        ? playerAimPoint(world.colliders, eye, world.playerProxy, _aimTmp).clone()
+        ? playerAimPoint(world, eye, world.playerProxy, _aimTmp).clone()
         : this.target.aimPoint();
       // Re-checked every frame for the fighter he is actually engaging, because the
       // moment sight breaks is the moment the belief freezes, and a scan-cadence
       // answer would leave him tracking a live transform for a fifth of a second.
-      const sight = hasLoS(world.colliders, eye, aim) &&
+      const sight = hasLoS(world, eye, aim) &&
         withinVision(this.pos, this.yaw, this.target.pos);
       if (sight) {
         // How wide the search had grown at the moment he re-found them. Captured
@@ -1035,7 +1043,7 @@ export class Combatant {
       if (this.peekSide === 0 && this.peekCd <= 0 && !sight && dist < engage * 1.8) {
         for (const side of [this.strafeDir, -this.strafeDir]) {
           _peekEye.set(eye.x + -fz * PEEK_REACH * side, eye.y, eye.z + fx * PEEK_REACH * side);
-          if (!hasLoS(world.colliders, _peekEye, aim)) continue;
+          if (!hasLoS(world, _peekEye, aim)) continue;
           // An angle that exists is not the same as an angle worth taking. Without
           // this the whole suppression model stopped at the edge of cover: a fighter
           // would sit out a hot lane correctly, work the safe corner a few times, and
@@ -1436,7 +1444,7 @@ export class Combatant {
       // from behind yet.
       const muzzle = this.muzzleWorld(_muzzle);
       const muzzleSight = (sight || this.peekSide !== 0)
-        && hasLoS(world.colliders, muzzle, aim)
+        && hasLoS(world, muzzle, aim)
         && !this._friendlyInLine(world, muzzle, aim);
       // Everything above navigates on the belief; everything from here down is about
       // a target the weapon can genuinely see, so it measures the real gap. Using the
@@ -1553,7 +1561,7 @@ export class Combatant {
         // that matters, and only along a line the muzzle can genuinely send them —
         // otherwise he is shooting the wall in front of his own face.
         _suppressAt.set(this.contact.x, (this.contact.y || 0) + 1.05, this.contact.z);
-        if (hasLoS(world.colliders, muzzle, _suppressAt)) {
+        if (hasLoS(world, muzzle, _suppressAt)) {
           const fireEye = muzzle.clone();
           const dir = _suppressAt.clone().sub(fireEye).normalize();
           const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
@@ -2124,9 +2132,9 @@ export class Combatant {
         return;
       }
       const aim = hostile.isPlayer
-        ? playerAimPoint(world.colliders, eye, world.playerProxy, _scanAim)
+        ? playerAimPoint(world, eye, world.playerProxy, _scanAim)
         : hostile.aimPoint(_scanAim);
-      if (hasLoS(world.colliders, eye, aim)) this.perception.see(hostile, hostile.pos, now);
+      if (hasLoS(world, eye, aim)) this.perception.see(hostile, hostile.pos, now);
       else this.perception.markUnseen(hostile, now);
     };
     if (this.team === 'enemy') look(world.playerProxy);
@@ -2194,7 +2202,7 @@ export class Combatant {
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
   _laneSees(world, from, to) {
     return hasLoS(
-      world.colliders,
+      world,
       _laneFrom.set(from.x, from.y, from.z),
       _laneTo.set(to.x, to.y, to.z),
     );
