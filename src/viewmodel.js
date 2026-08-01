@@ -410,8 +410,32 @@ export class ViewModel {
    * the target across the weapon in a single frame.
    */
   _solveSupportHand() {
+    // Solve against *this* frame's transforms, not last frame's.
+    //
+    // The IK works in world space — it compares the left fist's world position to a
+    // point on the weapon — but the whole viewmodel hangs off the camera, and
+    // `matrixWorld` is only refreshed when three.js renders. Update runs before
+    // render, so without this the hand is solved against wherever the camera was on
+    // the previous frame. In the game that is a small, permanent lag that grows with
+    // how fast you are turning. In a bench, where `step` runs the simulation and
+    // never renders at all, the camera matrix is simply whatever the last render left
+    // — so the same test measured 0.007 m or 1.06 m depending on nothing the test
+    // controlled, which is what made `animcheck` flaky.
+    //
+    // `updateWorldMatrix(true, true)` walks up to the camera and back down through
+    // the arms, which is exactly the chain both sides of the comparison sit on.
+    this.vmRoot.updateWorldMatrix(true, true);
     const target = this._supportTarget();
     if (!target) return;
+    // Publish what was actually solved to.
+    //
+    // `_supportTarget` reads like a getter and is not one: it advances the smoothing
+    // filter in `_smoothedLocal` every call. Anything calling it to *observe* the
+    // target therefore changes it — and the bench measuring "how far is the support
+    // hand from where it should be" was calling it once per frame on top of this one,
+    // double-stepping the filter it was measuring against. That is where an
+    // intermittent 0.31 m error came from, out of nothing.
+    (this.lastSupportTarget ||= target.clone()).copy(target);
     const chain = this._ikChain;
     const hand = this.bones.get('hand_l');
     if (!chain || !hand) return;
