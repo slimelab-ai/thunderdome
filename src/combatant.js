@@ -328,6 +328,8 @@ export class Combatant {
     this.breachStaging = false;
     this.breachCost = 0;
     this.breachGoalSafe = true;
+    /** Frontal fire on the plate: get low and keep coming. */
+    this.shieldWall = false;
     /** What squadmates have told him they are doing. Never read off them. */
     this.knownLanes = new Map();
     /** Holding the angle for the squad, or moving behind somebody who is. */
@@ -770,7 +772,19 @@ export class Combatant {
     if (this.suppressT <= 0) {
       this.suppressT = SUPPRESSION_PERIOD * (0.85 + Math.random() * 0.3);
       const before = this.pinnedBy;
-      const sees = (from, to) => this._laneSees(world, from, to);
+      const sees = (from, to) => this._dangerSees(world, from, to);
+      // The shield wall: a frontal hot lane is his cue, not his problem. He gets
+      // low behind the plate and keeps coming — crouched, so his head drops below
+      // the shield's top edge in the actual hitbox geometry, weapon down because
+      // hip fire past the edge is what the carry pose is built for. This is the
+      // boldness the archetype promises, and it is conditional on facing: fire on
+      // his flank pins him like anybody else, because the shield is not there.
+      this.shieldWall = false;
+      if (this.archetype === 'shield' && this.suppression.anyHot(now)) {
+        for (const lane of this.suppression.lanes) {
+          if (lane.heat >= 3.5 && this._shieldFronts(lane)) { this.shieldWall = true; break; }
+        }
+      }
       this.pinnedBy = this.suppression.anyHot(now)
         ? this.suppression.covering(this.aimPoint(_routePoint), sees, now)
         : null;
@@ -1343,7 +1357,7 @@ export class Combatant {
         // A firearm user lowers out of sprint on visual contact, even while
         // continuing toward a committed breach goal. Distance alone used to
         // keep the gun down across a completely visible gap.
-        this.sprintNow = shouldSprintAtTarget({
+        this.sprintNow = this.shieldWall ? false : shouldSprintAtTarget({
           sight: sight || this.peekSide !== 0,
           melee: !!w.melee,
           distance: dist,
@@ -1422,7 +1436,8 @@ export class Combatant {
       // from behind yet.
       const muzzle = this.muzzleWorld(_muzzle);
       const muzzleSight = (sight || this.peekSide !== 0)
-        && hasLoS(world.colliders, muzzle, aim);
+        && hasLoS(world.colliders, muzzle, aim)
+        && !this._friendlyInLine(world, muzzle, aim);
       // Everything above navigates on the belief; everything from here down is about
       // a target the weapon can genuinely see, so it measures the real gap. Using the
       // remembered distance to time a shot would let a stale memory tighten or widen
@@ -1476,7 +1491,8 @@ export class Combatant {
       // recorded beaten zone still ADS-strolled into view. Moving is moving: the gun
       // comes up when the feet stop.
       const walkingExposed = this._traveling;
-      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed;
+      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed &&
+        !this.shieldWall;
       // Up in about a third of a second, down slower — a fighter who has just been
       // shot at keeps his weapon up for a moment.
       const adsRate = this.wantsAds ? 3.4 : 2.0;
@@ -1705,7 +1721,8 @@ export class Combatant {
     // crouchK stays the gameplay value that eyePos/aimPoint and the hit model read;
     // the visible squat comes from the authored crouch clips, which are keyed to
     // roughly the same head height.
-    const wantCrouch = this.healingT > 0 || this.mendT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
+    const wantCrouch = this.healingT > 0 || this.mendT > 0 || this.shieldWall ||
+      (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
     // peeking leans harder than plain strafing. Sign: positive is to his right, which
     // is exactly where the peek eye offsets for side=+1.
@@ -2184,6 +2201,79 @@ export class Combatant {
   }
 
   /**
+   * Is a friendly shieldman planted between `from` and `to`, facing the fire?
+   *
+   * A carried riot shield is a wall that walks, and the squad should treat it as
+   * one: ground behind it prices as covered, which is what makes the others stack
+   * up behind him instead of spreading into the open beside him. Facing matters —
+   * a shield pointed the wrong way is a man, not a wall.
+   */
+  _shieldBlocks(world, team, from, to) {
+    const dx = to.x - from.x, dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return false;
+    for (const c of world.combatants) {
+      if (!c.alive || c.team !== team || c.archetype !== 'shield') continue;
+      const t = ((c.pos.x - from.x) * dx + (c.pos.z - from.z) * dz) / (len * len);
+      if (t < 0.05 || t > 0.95) continue;
+      const px = from.x + dx * t, pz = from.z + dz * t;
+      if (Math.hypot(c.pos.x - px, c.pos.z - pz) > 0.7) continue;
+      // Shield toward the threat: his facing within ~70 degrees of the line back
+      // to the muzzle.
+      const md = Math.hypot(from.x - c.pos.x, from.z - c.pos.z) || 1;
+      const facingDot = ((from.x - c.pos.x) / md) * Math.sin(c.yaw)
+        + ((from.z - c.pos.z) / md) * Math.cos(c.yaw);
+      if (facingDot > 0.34) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Is any living squadmate standing in this fire line?
+   *
+   * Bodies are soft cover to the danger model — no one plans a route on the
+   * assumption a friend will keep standing there — but they are a hard reason not
+   * to pull the trigger. AI rounds pass through friendlies by design, and the
+   * visible result was a squad shooting through each other's backs; the round may
+   * not hurt the man in front, but firing it reads as absurd and the shot was
+   * never clean. Blocked shooters keep strafing, which is what clears the lane.
+   */
+  _friendlyInLine(world, from, to) {
+    const dx = to.x - from.x, dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return false;
+    for (const c of world.combatants) {
+      if (c === this || !c.alive || c.team !== this.team) continue;
+      const t = ((c.pos.x - from.x) * dx + (c.pos.z - from.z) * dz) / (len * len);
+      if (t < 0.04 || t > 0.96) continue;
+      const px = from.x + dx * t, pz = from.z + dz * t;
+      if (Math.hypot(c.pos.x - px, c.pos.z - pz) < 0.5) return true;
+    }
+    return false;
+  }
+
+  /** Is this lane coming at my shield? Only a shieldman ever asks. */
+  _shieldFronts(lane) {
+    if (this.archetype !== 'shield') return false;
+    const dx = lane.x - this.pos.x, dz = lane.z - this.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    return (dx / d) * Math.sin(this.yaw) + (dz / d) * Math.cos(this.yaw) > 0.5;
+  }
+
+  /**
+   * The sight callback the danger model runs on: walls, then the walking wall.
+   *
+   * His own shield first — fire from the front is his to ignore, which is the
+   * boldness the archetype is for — then any squadmate's shield planted across the
+   * line, which is what lets everyone else treat the man as cover.
+   */
+  _dangerSees(world, from, to) {
+    if (this._shieldFronts(from)) return false;
+    if (!this._laneSees(world, from, to)) return false;
+    return !this._shieldBlocks(world, this.team, from, to);
+  }
+
+  /**
    * Would leaning out this side put him in something's beaten zone?
    *
    * Checked at the lean itself and again a metre out, because a peek is not a lean —
@@ -2214,7 +2304,7 @@ export class Combatant {
    */
   _groundIsDangerous(world, point, now) {
     if (this.suppression.markedAt(point, now)) return true;
-    return !!this.suppression.covering(point, (from, to) => this._laneSees(world, from, to), now);
+    return !!this.suppression.covering(point, (from, to) => this._dangerSees(world, from, to), now);
   }
 
   /**
@@ -2230,7 +2320,7 @@ export class Combatant {
    */
   _routeCost(world, goal, now, side = this.flankSide) {
     if (!this.suppression.anyDanger(now)) return 0;
-    const sees = (from, to) => this._laneSees(world, from, to);
+    const sees = (from, to) => this._dangerSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
     const legs = this._routeLegs(world, goal, side);
     let walked = 0;
