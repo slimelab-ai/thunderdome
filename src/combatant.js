@@ -266,6 +266,9 @@ export class Combatant {
     /** ...and how much of the budget for doing so he has already spent. */
     this.holdSpent = 0;
     this.senseT = Math.random() * SCAN_PERIOD;
+    /** Seconds left of sweeping the head at a pause. */
+    this.scanningT = 0;
+    this.composed = false;
     this.sprintNoiseT = 0;
     /** Where to sweep when the picture is empty. */
     this.huntGoal = new THREE.Vector3();
@@ -324,6 +327,7 @@ export class Combatant {
     this.breachLane = 0;
     this.breachStaging = false;
     this.breachCost = 0;
+    this.breachGoalSafe = true;
     /** What squadmates have told him they are doing. Never read off them. */
     this.knownLanes = new Map();
     /** Holding the angle for the squad, or moving behind somebody who is. */
@@ -709,10 +713,15 @@ export class Combatant {
     if (this.pushT > 0) this.pushT -= dt;
     if (this.breachT > 0) this.breachT -= dt;
 
-    // stance cycling while engaged: pop up, drop down — heads at varied heights
+    // Stance cycling and jinking are for being shot at. A fighter who believes he
+    // is safe — nothing hot on his map, no enemy in view — used to run the full
+    // combat fidget anyway, bobbing and cutting between decisions like a man under
+    // fire, which reads as glitching rather than as caution. Composed until there
+    // is a reason not to be; the fidgets return the moment danger does.
+    this.composed = !this.suppression.anyDanger(world.simTime ?? 0) && !this.contact?.visible;
     this.stanceTimer -= dt;
     if (this.stanceTimer <= 0) {
-      this.stanceCrouch = !this.stanceCrouch && Math.random() < 0.45;
+      this.stanceCrouch = !this.composed && !this.stanceCrouch && Math.random() < 0.45;
       this.stanceTimer = this.stanceCrouch ? 0.9 + Math.random() * 1.1 : 1.1 + Math.random() * 1.9;
     }
 
@@ -839,7 +848,11 @@ export class Combatant {
       // second — before a shot has been fired, when every route costs nothing —
       // walks the centre and nothing re-examines it, which is the walking-straight-in
       // you see at the start of a fight.
-      if (this.breachT > 0 && this.breachTarget === this.target &&
+      // ...but never re-decided from *inside* the zone. Every option a man standing
+      // in the bullets can pick involves crossing more of them, and the one he keeps
+      // picking is the one he just came from — cross, flinch, dive straight back.
+      // Mid-zone, the decision was made; the only good move left is finishing it.
+      if (this.breachT > 0 && this.breachTarget === this.target && !this.pinnedBy &&
           now - (this._breachAt ?? -99) > 0.8 && this.suppression.anyDanger(now) &&
           this._routeCost(world, this.breachGoal, now) >= LANE_ABANDON) {
         this.breachT = 0;   // re-decide on the next think, with the fire as it is now
@@ -1159,6 +1172,8 @@ export class Combatant {
         // and the whole point of staging is thrown away.
         this.breachStaging = !!choice.staging;
         this.breachCost = choice.cost ?? 0;
+        _routePoint.set(choice.goal.x, this.pos.y + 1.15 * this.scale, choice.goal.z);
+        this.breachGoalSafe = !this._groundIsDangerous(world, _routePoint, now);
         // Say it out loud. Squadmates near enough to hear leave this lane alone,
         // which is what fans the squad across the angles — and the ones out of
         // earshot will not, which is the honest cost of being out of earshot.
@@ -1229,13 +1244,20 @@ export class Combatant {
         // was gated on a committed side-lane, so direct pursuit — dist > engage,
         // lane 0, no breach entry at all — walked straight into a working gun.
         _routePoint.set(this.pos.x + fx * 2.5, this.pos.y + 1.15 * this.scale, this.pos.z + fz * 2.5);
-        const intoFire = timeSinceFired(this.suppression, now) < GAP_SECONDS &&
+        // An edge is somewhere you are not yet in the fire. Standing IN the zone,
+        // this gate used to trigger anyway and stop him there to jink — mid-lane,
+        // under the gun, waiting for a gap in the thing currently hitting him.
+        const intoFire = !this.pinnedBy && timeSinceFired(this.suppression, now) < GAP_SECONDS &&
           ((breaching && this.breachCost > 0) || this._groundIsDangerous(world, _routePoint, now));
         if (midPeek || intoFire) {
           needTravel = false;
           this.waitingForGap = intoFire;
           this._strafing = true;
-          move.x += -fz * this.strafeDir * 0.5; move.z += fx * this.strafeDir * 0.5;
+          // Jink at the edge only while something is actually shooting; a composed
+          // man at a quiet corner stands and looks.
+          if (!this.composed) {
+            move.x += -fz * this.strafeDir * 0.5; move.z += fx * this.strafeDir * 0.5;
+          }
           this.holdSpent += dt;
         }
       }
@@ -1263,8 +1285,15 @@ export class Combatant {
       // fight from there, which the peek machinery below already knows how to do.
       //
       // Nowhere to go reads as carry on, never as stand still and die.
+      // A man mid-crossing with safe ground committed ahead FINISHES. Breaking for
+      // whatever cover is nearest used to outrank that, and the nearest cover from
+      // the middle of a lane is very often the piece he just left — so he crossed
+      // halfway, rethought, and dove back through the bullets he had already paid
+      // for. The far side was the plan and it is still there.
+      const finishingCrossing = !!this.pinnedBy && this.breachT > 0 &&
+        this.breachTarget === this.target && this.breachGoalSafe;
       const breakingCover = !!this.pinnedBy && !!this.coverGoal && !assist &&
-        this.archetype !== 'rusher';
+        !finishingCrossing && this.archetype !== 'rusher';
       if (breakingCover) {
         this._traveling = true;
         // Run, the whole way, until he is off the line.
@@ -1367,6 +1396,12 @@ export class Combatant {
       while (turn > Math.PI) turn -= Math.PI * 2;
       while (turn < -Math.PI) turn += Math.PI * 2;
       this.yaw += turn * Math.min(1, dt * 7);
+      // Paused at a probe point: the head sweeps. This is the looking-for-angles the
+      // pause exists for, and it is also what feeds the vision cone new ground.
+      if (this.scanningT > 0) {
+        this.scanningT -= dt;
+        this.yaw += Math.sin(now * 2.1 + this.animPhase) * dt * 1.6;
+      }
       // Aim error toward the *target*, which is what gates firing — a man looking
       // down his own route has a large one, and correctly cannot shoot behind
       // himself while running.
@@ -1792,6 +1827,19 @@ export class Combatant {
       if (!arrived(contact, reach)) return out.set(contact.x, contact.y, contact.z);
       contact.probeFrom = { x: this.pos.x, y: this.pos.y, z: this.pos.z };
     } else if (arrived(contact.probeGoal, 1.8)) {
+      // Arriving somewhere is a moment to look, not a trigger for the next order.
+      // Probes chained instantly, so a searcher snapped a new heading the frame he
+      // reached the old one — read from above as jittering between decisions. He
+      // stands a beat, sweeps his eyes, and then moves; the pause is where the
+      // looking happens, and it is also simply what a person does.
+      if (contact.pauseUntil === undefined) {
+        contact.pauseUntil = now + 0.7 + this.perception.rng() * 0.7;
+      }
+      if (now < contact.pauseUntil) {
+        this.scanningT = 0.2;
+        return out.set(contact.probeGoal.x, contact.probeGoal.y, contact.probeGoal.z);
+      }
+      contact.pauseUntil = undefined;
       contact.probes++;
       if (contact.probes >= SEARCH_PROBES) {
         // Swept every angle and found nothing. He has lost you, properly.
@@ -1844,6 +1892,15 @@ export class Combatant {
       this._traveling = true;
       this.sprintNow = this.legDmg < 0.6;
       this._steerToward(world, dt, this.coverGoal.x, this.pos.y, this.coverGoal.z, move);
+      // This early return used to skip every yaw update in the function, so the dash
+      // ran on whatever heading he last held — a full-speed sprint played sideways
+      // or backwards, which is the fast weird scuttling you can see from above. A
+      // sprinter faces his feet.
+      if (move.lengthSq() > 0.01) {
+        let turn = Math.atan2(move.x, move.z) - this.yaw;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        this.yaw += turn * Math.min(1, dt * 7);
+      }
       return;
     }
     const disturbance = this.perception.disturbance;
