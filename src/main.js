@@ -2823,8 +2823,11 @@ function makeLaneTest(shooter, options = {}) {
      * costs the enemy nothing.
      */
     swingNotice: 0.45, swingSettle: 1.1,
-    /** How much longer he stays on a man each time he lands a round on him. */
-    swingStay: 0.8,
+    /**
+     * How long he keeps hunting a man he has lost sight of, and the longest he will
+     * stay off his lane however the engagement is going.
+     */
+    swingMaxEngage: 6,
     /** Seconds of fire, then seconds of silence, repeated. 0 = never stops. */
     ceaseFireAfter: 0, lullSeconds: 0,
     ...options,
@@ -2844,8 +2847,8 @@ function makeLaneTest(shooter, options = {}) {
     pushedInLull: 0, shooterHp: shooter.hp,
     track: [], sampleT: 0, holderDownAt: null, swingShots: 0,
     swingTarget: null, swingUntil: 0, engaging: null, hitChance: 0, aligned: true,
-    lastAttacker: null, hurtAt: -99,
-    noticing: null, noticedAt: 0, settleUntil: 0, laneOpenFor: 0,
+    lastAttacker: null, hurtAt: -99, swingKills: 0, swingEngagements: 0,
+    noticing: null, noticedAt: 0, settleUntil: 0, laneOpenFor: 0, swingCap: 0,
   };
 
   const firingNow = () => {
@@ -2884,10 +2887,28 @@ function makeLaneTest(shooter, options = {}) {
     let hitChance = cfg.accuracy;
     if (engaging) { state.swingTarget = null; state.swingUntil = 0; }
     else if (cfg.swing) {
-      if (state.swingTarget && (!state.swingTarget.alive || state.elapsed > state.swingUntil)) {
-        state.swingTarget = null;
-        state.settleUntil = state.elapsed + cfg.swingSettle;
-        state.noticedAt = 0;
+      // He stays on a man while he can still see him.
+      //
+      // This was a countdown, and a countdown is not how anybody shoots. At the
+      // accuracy of a man who has had to turn and reacquire, a fixed hold expires
+      // long before a body drops — so he would put a burst into a flanker, lose
+      // interest on a timer, and go back to his lane while the wounded man walked on.
+      // He gives up when the target dies, when he loses sight of him for a moment,
+      // or when he has been off his lane too long to justify it. Not before.
+      if (state.swingTarget) {
+        const t = state.swingTarget;
+        let visible = t.alive;
+        if (visible) {
+          probe.set(t.pos.x, t.pos.y + 1.15, t.pos.z);
+          visible = Math.hypot(t.pos.x - shooter.pos.x, t.pos.z - shooter.pos.z) <= cfg.swingRange
+            && hasLoS(world.colliders, muzzle, probe);
+        }
+        if (visible) state.swingUntil = state.elapsed + cfg.swingHold;
+        if (!t.alive || state.elapsed > state.swingUntil || state.elapsed > state.swingCap) {
+          state.swingTarget = null;
+          state.settleUntil = state.elapsed + cfg.swingSettle;
+          state.noticedAt = 0;
+        }
       }
       // He has to notice first, and having just come back to his lane he has to
       // hold it a moment before he will leave it again.
@@ -2920,6 +2941,9 @@ function makeLaneTest(shooter, options = {}) {
           if (state.elapsed - state.noticedAt >= cfg.swingNotice) {
             state.swingTarget = best;
             state.swingUntil = state.elapsed + cfg.swingHold;
+            // However well it is going, the lane is still his job eventually.
+            state.swingCap = state.elapsed + cfg.swingMaxEngage;
+            state.swingEngagements++;
             state.noticing = null;
           }
         } else {
@@ -2979,12 +3003,6 @@ function makeLaneTest(shooter, options = {}) {
         if (state.engaging && Math.random() < state.hitChance) {
           probe.set(state.engaging.pos.x, state.engaging.pos.y + 1.15, state.engaging.pos.z);
           state.engaging.applyDamage(world, 'torso', WEAPONS.rifle.dmg, shooter, probe);
-          // He finishes what he starts. Landing rounds keeps him on the man rather
-          // than dropping him at the end of a fixed count — a burst and a shrug let
-          // wounded fighters walk away and advance, which nobody would do.
-          if (state.engaging === state.swingTarget) {
-            state.swingUntil = Math.max(state.swingUntil, state.elapsed + cfg.swingStay);
-          }
         }
       }
     }
@@ -3050,6 +3068,7 @@ function laneTestReport(state, squad, seed) {
     holderDownAt: state.holderDownAt,
     swingShots: state.swingShots,
     laneOpenSeconds: +state.laneOpenFor.toFixed(1),
+    swingKills: state.swingKills, swingEngagements: state.swingEngagements,
     damageOnShooter: Math.round(state.cfg.holderHp - state.shooterHp),
     roundsFired: state.fired, reloads: state.reloads,
     seconds: +state.elapsed.toFixed(1),
@@ -3094,6 +3113,7 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
       const originalDamage = world.onDamage;
       world.onKill = (killer, victim, part) => {
         if (victim?.team === 'enemy') test.deaths++;
+        if (victim === test.swingTarget) test.swingKills++;
         originalKill?.(killer, victim, part);
       };
       world.onDamage = (attacker, victim, amount) => {
@@ -3134,6 +3154,8 @@ async function runLaneTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } 
     pushedTrapsDuringLull: total('pushedTrapsDuringLull'),
     holderKilled: runs.filter(r => r.holderDownAt !== null).length + ' / ' + runs.length,
     laneOpenSeconds: +runs.reduce((a, r) => a + r.laneOpenSeconds, 0).toFixed(1),
+    swingKills: runs.reduce((a, r) => a + r.swingKills, 0),
+    swingEngagements: runs.reduce((a, r) => a + r.swingEngagements, 0),
     damageOnShooter: total('damageOnShooter'),
   };
 }
