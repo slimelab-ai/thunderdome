@@ -2363,10 +2363,15 @@ function startHeadlessBotMatch(config = {}) {
   }
   clearCombatants();
   match = makeMatch();
+  // Grenades and medkits included, because career fighters carry them. The old
+  // defaults carried neither, which quietly made every headless regression a
+  // different game from the one on screen — grenade behaviour in particular was
+  // untestable here while being very visible there, and conclusions drawn from
+  // this harness silently excluded it.
   const defaults = [
-    { w: 'rifle', hp: 100, sp: 1.2, re: 0.55, arch: 'marksman', ammo: 120 },
-    { w: 'smg', hp: 100, sp: 1.35, re: 0.58, arch: 'rusher', ammo: 180 },
-    { w: 'pistol', hp: 100, sp: 1.3, re: 0.6, arch: 'medic', ammo: 90 },
+    { w: 'rifle', hp: 100, sp: 1.2, re: 0.55, arch: 'marksman', ammo: 120, grenade: 2, medkit: 1 },
+    { w: 'smg', hp: 100, sp: 1.35, re: 0.58, arch: 'rusher', ammo: 180, grenade: 1, medkit: 1 },
+    { w: 'pistol', hp: 100, sp: 1.3, re: 0.6, arch: 'medic', ammo: 90, grenade: 1, medkit: 4 },
   ];
   const alpha = config.alpha || defaults;
   const bravo = config.bravo || defaults;

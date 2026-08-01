@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { WEAPONS, buildHeldGun } from './weapons.js';
 import {
-  fireRay, applySpread, hasLoS, wallHit, resolveCircle, groundHeight, STEP_REACH,
+  fireRay, applySpread, hasLoS, resolveCircle, groundHeight, STEP_REACH,
   playerAimPoint,
 } from './combat.js';
 import { ITEM_TYPES } from './items.js';
@@ -32,7 +32,8 @@ const _laneFrom = new THREE.Vector3();
 const _laneTo = new THREE.Vector3();
 const _routePoint = new THREE.Vector3();
 const _suppressAt = new THREE.Vector3();
-const _nadeDir = new THREE.Vector3();
+const _nadeVel = new THREE.Vector3();
+const _nadeLand = new THREE.Vector3();
 
 /** How often a fighter sweeps every hostile for line of sight, in seconds. */
 const SCAN_PERIOD = 0.18;
@@ -1051,36 +1052,49 @@ export class Combatant {
       const fraggable = worthGrenading(this.contact, now);
       if (this.healingT <= 0 && this.nades > 0 && this.nadeCd <= 0 && !sight && fraggable &&
         dist > 6 && dist < 18 && world.throwGrenade && Math.random() < dt * 0.55) {
-        let friendlyInBlast = false;
-        for (const c of world.combatants) {
-          if (c === this || !c.alive || c.team !== this.team) continue;
-          const bdx = c.pos.x - tp.x, bdz = c.pos.z - tp.z;
-          if (bdx * bdx + bdz * bdz < 8 * 8) { friendlyInBlast = true; break; }
-        }
-        if (!friendlyInBlast && this.team === 'player' && world.playerProxy.alive) {
-          const bdx = world.playerProxy.pos.x - tp.x, bdz = world.playerProxy.pos.z - tp.z;
-          if (bdx * bdx + bdz * bdz < 8 * 8) friendlyInBlast = true;
-        }
         const ndx = tp.x - this.pos.x, ndz = tp.z - this.pos.z;
         const nd = Math.hypot(ndx, ndz) || 1;
         const nspd = Math.min(12.5, Math.max(7, nd * 0.78));
-        // The throw has to clear whatever he is standing behind. Nothing ever
-        // checked, so a man tucked against a wall lobbed his grenade into it, took
-        // the bounce at his own feet, and did this repeatedly — the check is the
-        // first few metres of the actual arc, and a blocked throw is kept for a
-        // better spot rather than spent on the wall.
-        _nadeDir.set((ndx / nd) * nspd, 4.3, (ndz / nd) * nspd).normalize();
         const eye = this.eyePos();
-        const clearance = wallHit(world.colliders, eye, _nadeDir, 6).dist;
-        if (clearance < Math.min(5, nd * 0.6)) {
-          this.nadeCd = 2.5;   // wrong spot, not wrong idea — try again shortly
+        // Where the grenade will actually come down, walked along the real arc.
+        //
+        // The first version of this check sniffed the opening metres of the throw
+        // and called it clear — but a wall seven metres out on a fifteen metre arc
+        // bounces the grenade back just as surely as one at arm's length, and that
+        // is exactly what kept happening: grenades pinballing off mid-range walls
+        // into their own squad. The judgement everyone makes before throwing is not
+        // "is my arm clear", it is "where does this land" — so that is what is
+        // computed, and every acceptance test runs against the predicted landing
+        // rather than against the point he wishes it would reach.
+        _nadeVel.set((ndx / nd) * nspd, 4.3, (ndz / nd) * nspd);
+        const landing = this._predictGrenadeLanding(world, eye, _nadeVel, _nadeLand);
+        // Within most of the blast of the belief. The throw formula lands short at
+        // range — it always has, the seven metre blast simply forgave it — so the
+        // acceptance is blast-sized rather than pinpoint.
+        const onTarget = Math.hypot(landing.x - tp.x, landing.z - tp.z) < 5.5;
+        const clearOfSelf = Math.hypot(landing.x - this.pos.x, landing.z - this.pos.z) > 6;
+        let friendlyInBlast = false;
+        for (const c of world.combatants) {
+          if (c === this || !c.alive || c.team !== this.team) continue;
+          const bdx = c.pos.x - landing.x, bdz = c.pos.z - landing.z;
+          if (bdx * bdx + bdz * bdz < 8 * 8) { friendlyInBlast = true; break; }
+        }
+        if (!friendlyInBlast && this.team === 'player' && world.playerProxy.alive) {
+          const bdx = world.playerProxy.pos.x - landing.x, bdz = world.playerProxy.pos.z - landing.z;
+          if (bdx * bdx + bdz * bdz < 8 * 8) friendlyInBlast = true;
+        }
+        if (!onTarget || !clearOfSelf) {
+          this.nadeCd = 2.5;   // wrong spot, not wrong idea — try again from a better one
         } else if (!friendlyInBlast) {
           this.nades--;
           this.nadeCd = 13 + Math.random() * 8;
           const jit = () => 1 + (Math.random() - 0.5) * 0.14;
           this.rig.trigger('throw');
-          world.throwGrenade(eye, new THREE.Vector3((ndx / nd) * nspd * jit(), 4.3, (ndz / nd) * nspd * jit()), this);
-          world.onCombatEvent?.('grenade_throw', this, { target: this.target?.name || null, range: dist });
+          world.throwGrenade(eye, new THREE.Vector3(_nadeVel.x * jit(), 4.3, _nadeVel.z * jit()), this);
+          world.onCombatEvent?.('grenade_throw', this, {
+            target: this.target?.name || null, range: dist,
+            landing: [landing.x, landing.z].map(v => +v.toFixed(1)),
+          });
         } else {
           this.nadeCd = 2; // re-evaluate shortly
         }
@@ -1912,6 +1926,60 @@ export class Combatant {
       if (!this._groundIsDangerous(world, _routePoint, now)) { safest = side; break; }
     }
     if (safest) this.strafeDir = safest;
+  }
+
+  /**
+   * Where a grenade thrown from `eye` at `vel` first comes down, approximately.
+   *
+   * The same ballistics `updateGrenades` runs — gravity 13, fuse 2.8 — walked in
+   * coarse steps until the arc meets a wall or the floor. Bounces damp the
+   * horizontal velocity by half against walls and a quarter on the floor, so the
+   * first contact is where the grenade effectively stays; simulating the pinball
+   * after it buys accuracy nobody needs at the cost everyone pays.
+   */
+  _predictGrenadeLanding(world, eye, vel, out) {
+    // A mirror of updateGrenades, not an approximation of it. Two earlier attempts
+    // guessed — first that the grenade stays where it first lands, then that it
+    // skitters and stops — and both were wrong in ways that mattered: real grenades
+    // keep their horizontal speed except at a bounce, so they slide like pucks to
+    // roughly where they were aimed, and a wall mid-arc *reflects* one back the way
+    // it came, which is the entire self-bombing mechanism this exists to predict.
+    // Same gravity, same floor and wall bounces, same fuse, coarser steps.
+    let px = eye.x, py = eye.y, pz = eye.z;
+    let vx = vel.x, vy = vel.y, vz = vel.z;
+    const dt = 1 / 30;
+    for (let i = 0; i < 84; i++) {
+      vy -= 13 * dt;
+      const prevX = px, prevZ = pz;
+      px += vx * dt; py += vy * dt; pz += vz * dt;
+      let floorY = 0;
+      for (const box of world.colliders) {
+        if (box.max.y <= 3 && box.containsXZ(px, pz, 0.09) && py > box.max.y - 0.2) {
+          floorY = Math.max(floorY, box.max.y);
+        }
+      }
+      if (py < floorY + 0.09 && vy < 0) {
+        py = floorY + 0.09;
+        vy *= -0.36;
+        vx *= 0.72; vz *= 0.72;
+        if (Math.abs(vy) < 0.6) vy = 0;
+      }
+      for (const box of world.colliders) {
+        if (py > box.max.y || py < box.min.y) continue;
+        if (box.containsXZ(px, pz, 0.09) && !box.containsXZ(prevX, prevZ, 0.09)) {
+          const p = { x: px, z: pz };
+          box.pushCircleXZ(p, 0.12);
+          const nx = p.x - px, nz = p.z - pz;
+          const nl = Math.hypot(nx, nz) || 1;
+          const dot = (vx * nx + vz * nz) / nl;
+          vx -= 2 * dot * (nx / nl); vz -= 2 * dot * (nz / nl);
+          vx *= 0.5; vz *= 0.5;
+          px = p.x; pz = p.z;
+          break;
+        }
+      }
+    }
+    return out.set(px, py, pz);
   }
 
   // would moving 0.9m in (dx,dz) walk us off a >0.8m ledge?
