@@ -169,9 +169,10 @@ assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already r
  * the frustum and the menu camera never sees it — compiled in the driver's own
  * threads where KHR_parallel_shader_compile allows, then removed.
  *
- * The fx pools are built invisible and compile() skips invisible objects, so they
- * are flipped visible for the duration, and the decal materials get their map slot
- * filled first so the program compiled is the USE_MAP variant they actually run.
+ * The muzzle-flash sprites are built invisible and compile() skips invisible
+ * objects, so they are flipped visible for the duration. The tracer, decal and
+ * casing pools need nothing: they are always-visible instanced batches whose
+ * retired slots are zero-scale matrices, so compile() always sees them.
  *
  * Nothing staged here is disposed afterwards: disposing a material drops the
  * cached program's refcount and can delete the very program this exists to keep.
@@ -202,12 +203,7 @@ async function warmShaderCache() {
 
   const restore = [];
   const show = (o) => { restore.push([o, o.visible]); o.visible = true; };
-  for (const t of fx.tracers) show(t.mesh);
   for (const f of fx.flashes) show(f.sprite);
-  for (const d of fx.decals) {
-    if (!d.mesh.material.map) { d.mesh.material.map = fx.decalTextures.hole; d.mesh.material.needsUpdate = true; }
-    show(d.mesh);
-  }
 
   try {
     await renderer.compileAsync(scene, camera);

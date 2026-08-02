@@ -147,6 +147,21 @@ export class RenderPipeline {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
+    // GPU frame timing, where the hardware admits to it.
+    //
+    // The adaptive scaler's CPU measurement only sees command *submission*; a
+    // GPU-bound machine submits quickly and then misses vsync, which read as
+    // headroom and pushed the resolution the wrong way. Timer queries measure the
+    // GPU's actual elapsed time for the frame's commands, asynchronously — results
+    // arrive a few frames late, which an EMA does not mind. The rAF delta is NOT
+    // used for this on purpose: at a steady 60 fps it equals the frame budget
+    // exactly, so the "scale back up" condition could never fire on a 60 Hz display.
+    // Chrome exposes the extension; elsewhere the CPU measure stands alone.
+    const gl = this.renderer.getContext();
+    this._timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    this._gpuQueries = [];
+    this._gpuMs = 0;
+
     // Anisotropic filtering, at whatever the hardware actually offers.
     //
     // The material library defaulted to 8 and nothing ever called the setter, so this
@@ -370,10 +385,36 @@ export class RenderPipeline {
     }
     const t0 = performance.now();
     this.gradePass.uniforms.uTime.value = elapsed;
+    const gl = this.renderer.getContext();
+    const ext = this._timerExt;
+    let query = null;
+    if (ext && this._gpuQueries.length < 8 && !gl.isContextLost()) {
+      query = gl.createQuery();
+      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+    }
     this.composer.render();
+    if (query) {
+      gl.endQuery(ext.TIME_ELAPSED_EXT);
+      this._gpuQueries.push(query);
+    }
+    // Harvest whatever queries have resolved; a disjoint event (GPU reset, power
+    // transition) invalidates every timing in flight.
+    while (this._gpuQueries.length) {
+      if (gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+        for (const q of this._gpuQueries) gl.deleteQuery(q);
+        this._gpuQueries.length = 0;
+        break;
+      }
+      const oldest = this._gpuQueries[0];
+      if (!gl.getQueryParameter(oldest, gl.QUERY_RESULT_AVAILABLE)) break;
+      this._gpuMs = gl.getQueryParameter(oldest, gl.QUERY_RESULT) / 1e6;
+      gl.deleteQuery(oldest);
+      this._gpuQueries.shift();
+    }
     // Measured around the composer only, so the number reflects rendering rather
-    // than whatever the game simulation did this frame.
-    this._adapt(performance.now() - t0);
+    // than whatever the game simulation did this frame. The frame's cost is
+    // whichever side is the bottleneck.
+    this._adapt(Math.max(performance.now() - t0, this._gpuMs));
   }
 
   /** Live numbers for the debug handle: what the pipeline is actually doing. */
@@ -384,6 +425,7 @@ export class RenderPipeline {
       renderScale: +this.renderScale.toFixed(2),
       pixelRatio: +this.renderer.getPixelRatio().toFixed(2),
       renderMs: +(this._frameAvg ?? 0).toFixed(2),
+      gpuMs: this._timerExt ? +this._gpuMs.toFixed(2) : null,
       calls: info.calls,
       triangles: info.triangles,
       programs: this.renderer.info.programs?.length ?? 0,
