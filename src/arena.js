@@ -796,20 +796,40 @@ export function buildArena(scene) {
      * room with no landmarks is unplayable rather than tense.
      */
     setLightFactor(f) {
+      // Called every frame while the dimmer eases; once it has settled (a steady 1.0
+      // for almost the entire match) rewriting ~14 light intensities and every lamp
+      // lens per frame buys nothing.
+      if (this._lightFactorApplied !== undefined && Math.abs(f - this._lightFactorApplied) < 1e-3) return;
+      this._lightFactorApplied = f;
       for (const l of lights) l.light.intensity = l.base * f;
       for (const p of housePractical) p.material.emissiveIntensity = p.base * f;
     },
   };
 }
 
+// Scratch for the crowd sway, hoisted so the ambience update allocates nothing.
+const _crowdM = new THREE.Matrix4();
+const _crowdQ = new THREE.Quaternion();
+const _crowdE = new THREE.Euler();
+const _crowdPos = new THREE.Vector3();
+const _crowdScl = new THREE.Vector3();
+let _crowdTick = 0;
+
 export function updateArenaAmbience(arena, t) {
+  for (const d of arena.dynamic) d.update(t);
+  // The crowd refreshes at 20 Hz, not 60. Every sway pose is a pure function of `t`,
+  // and the motion it drives is a 0.35 Hz bob on background silhouettes behind the
+  // cage — resampling that per frame meant ~200 matrix composes and two full
+  // instance-buffer uploads per frame for scenery. A third of the rate is
+  // indistinguishable and costs a third as much.
+  if (++_crowdTick % 3 !== 0) return;
   // The crowd is instanced, so the sway is a matrix write per person rather than a
   // scene-graph update. Standing, bobbing, occasionally surging.
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const e = new THREE.Euler();
-  const pos = new THREE.Vector3();
-  const scl = new THREE.Vector3();
+  const m = _crowdM;
+  const q = _crowdQ;
+  const e = _crowdE;
+  const pos = _crowdPos;
+  const scl = _crowdScl;
   for (const group of arena.crowd) {
     const { bodyMesh, headMesh, people } = group;
     for (let i = 0; i < people.length; i++) {
@@ -830,5 +850,4 @@ export function updateArenaAmbience(arena, t) {
     bodyMesh.instanceMatrix.needsUpdate = true;
     headMesh.instanceMatrix.needsUpdate = true;
   }
-  for (const d of arena.dynamic) d.update(t);
 }

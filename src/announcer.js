@@ -263,7 +263,10 @@ export class Announcer {
       // Off the frame. `speak()`/`cancel()` talk to the speech process and have
       // stalled the rAF for hundreds of ms; a macrotask also lets any input events
       // already queued behind this frame dispatch before the engine gets the mic.
-      setTimeout(() => this._speak(text, force), 0);
+      // The generation check keeps a line queued just before `clear()` (match end,
+      // screen change) from speaking into the silence afterwards.
+      const gen = this._gen || 0;
+      setTimeout(() => { if ((this._gen || 0) === gen) this._speak(text, force); }, 0);
     }
   }
 
@@ -278,7 +281,8 @@ export class Announcer {
         // cancel-then-speak in one task is a long-standing Chrome stall (and on
         // some engines the new utterance is silently dropped); give the engine a
         // beat to actually stop before handing it the next line.
-        setTimeout(() => this._utter(text), 40);
+        const gen = this._gen || 0;
+        setTimeout(() => { if ((this._gen || 0) === gen) this._utter(text); }, 40);
         return;
       }
       this._utter(text);
@@ -298,6 +302,7 @@ export class Announcer {
   }
 
   clear() {
+    this._gen = (this._gen || 0) + 1;   // invalidates any deferred _speak in flight
     this.queue.length = 0;
     this.showing = 0;
     this.wrap.classList.remove('show');

@@ -104,20 +104,29 @@ export class UI {
 
   // ---------- HUD ----------
   updateHUD(player, career, match) {
+    // Every write below is diffed against what is already on the page. The HUD runs
+    // once per frame, and most frames nothing in it has changed; an unguarded
+    // textContent or style write still costs style/layout work in the browser. The
+    // `_last` fields on the elements are the same pattern the tags/slots/squad
+    // blocks below always used — now applied consistently.
     const hpF = Math.max(0, player.hp / player.maxHp);
-    this.el.hpNum.textContent = Math.ceil(player.hp);
-    this.el.hpFill.style.width = `${hpF * 100}%`;
-    this.el.hpFill.style.background = healthColor(hpF);
-    this.el.lowhp.style.opacity = hpF < 0.35 ? String(0.5 + (0.35 - hpF)) : '0';
+    const hpKey = `${Math.ceil(player.hp)}|${hpF.toFixed(3)}|${player.armDmg.toFixed(2)}|${player.legDmg.toFixed(2)}`;
+    if (this.el.hpNum._last !== hpKey) {
+      this.el.hpNum._last = hpKey;
+      this.el.hpNum.textContent = Math.ceil(player.hp);
+      this.el.hpFill.style.width = `${hpF * 100}%`;
+      this.el.hpFill.style.background = healthColor(hpF);
+      this.el.lowhp.style.opacity = hpF < 0.35 ? String(0.5 + (0.35 - hpF)) : '0';
 
-    // body diagram
-    const bodyF = healthColor(hpF);
-    this.el.bp.head.style.fill = bodyF;
-    this.el.bp.torso.style.fill = bodyF;
-    this.el.bp.armL.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
-    this.el.bp.armR.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
-    this.el.bp.legL.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
-    this.el.bp.legR.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
+      // body diagram
+      const bodyF = healthColor(hpF);
+      this.el.bp.head.style.fill = bodyF;
+      this.el.bp.torso.style.fill = bodyF;
+      this.el.bp.armL.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
+      this.el.bp.armR.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
+      this.el.bp.legL.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
+      this.el.bp.legR.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
+    }
 
     // status tags
     let tags = '';
@@ -127,15 +136,23 @@ export class UI {
 
     // ammo / weapon — reserve is real rounds in the backpack now
     const melee = !!player.weapon.melee;
-    this.el.ammoMag.textContent = melee ? '—' : player.mag;
+    const magTxt = melee ? '—' : String(player.mag);
+    if (this.el.ammoMag._last !== magTxt) {
+      this.el.ammoMag._last = magTxt;
+      this.el.ammoMag.textContent = magTxt;
+    }
     const res = player.reserve();
-    const resEl = $('ammo-reserve');
+    this.el.ammoReserve = this.el.ammoReserve || $('ammo-reserve');
+    const resEl = this.el.ammoReserve;
     const resTxt = melee ? '—' : String(res);
     if (resEl.textContent !== resTxt) {
       resEl.textContent = resTxt;
       resEl.style.color = !melee && res <= player.weapon.mag ? 'var(--blood)' : '';
     }
-    this.el.weaponName.textContent = player.weapon.name;
+    if (this.el.weaponName._last !== player.weapon.name) {
+      this.el.weaponName._last = player.weapon.name;
+      this.el.weaponName.textContent = player.weapon.name;
+    }
     this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
 
     // weapon slots: guns on 1/2, the knife pinned on 3
@@ -147,8 +164,12 @@ export class UI {
         `<span class="wslot ${player.knifeOut ? 'active' : ''}">3·SHANK</span>`;
     }
 
-    this.el.rank.textContent = career.rank;
-    this.el.money.textContent = career.money.toLocaleString();
+    const rankMoneyKey = `${career.rank}|${career.money}`;
+    if (this.el.rank._last !== rankMoneyKey) {
+      this.el.rank._last = rankMoneyKey;
+      this.el.rank.textContent = career.rank;
+      this.el.money.textContent = career.money.toLocaleString();
+    }
     this.el.frenzy.classList.toggle('hidden', !match.frenzy);
 
     // consumables (straight out of the backpack)
@@ -174,19 +195,29 @@ export class UI {
     }
 
     // crosshair spread
-    const spreadPx = 6 + player.currentSpread() * 14;
-    this.el.crosshair.style.setProperty('--sp', `${spreadPx.toFixed(1)}px`);
+    const spread = `${(6 + player.currentSpread() * 14).toFixed(1)}px`;
+    if (this.el.crosshair._lastSp !== spread) {
+      this.el.crosshair._lastSp = spread;
+      this.el.crosshair.style.setProperty('--sp', spread);
+    }
     // Fade the crosshair out as the weapon comes up.
     //
     // Every weapon has real sights now, and the point of aiming is to use them; a
     // painted dot sitting on top of the front post is two aiming references arguing.
     // Gone by the time the weapon is 60% up, so the handover happens while the sights
     // are still travelling and there is never a moment with both.
-    this.el.crosshair.style.opacity = Math.max(0, 1 - player.ads * 1.7).toFixed(2);
+    const chOpacity = Math.max(0, 1 - player.ads * 1.7).toFixed(2);
+    if (this.el.crosshair._lastOp !== chOpacity) {
+      this.el.crosshair._lastOp = chOpacity;
+      this.el.crosshair.style.opacity = chOpacity;
+    }
 
     // objective
     const alive = match.enemiesAlive;
-    this.el.objective.textContent = alive > 0 ? `${alive} HOSTILE${alive > 1 ? 'S' : ''} REMAINING` : '';
+    if (this.el.objective._last !== alive) {
+      this.el.objective._last = alive;
+      this.el.objective.textContent = alive > 0 ? `${alive} HOSTILE${alive > 1 ? 'S' : ''} REMAINING` : '';
+    }
 
     // squad panel
     const key = match.crew.map(c => `${c.name}:${c.alive ? Math.ceil(c.hp) : 'X'}`).join('|');

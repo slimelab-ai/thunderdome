@@ -16,6 +16,12 @@ const _playerFacing = new THREE.Vector3(0, 0, -1);
 const _aimAlt = new THREE.Vector3();
 const _eye = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
+const _toBody = new THREE.Vector3();
+const _wallPoint = new THREE.Vector3();
+const _broadCandidates = [];
+// Sphere at chest height covering a whole fighter — head, boots, outstretched arms,
+// a carried shield — with slack. Generosity here only costs a narrow-phase test.
+const _BROAD_R = 2.0;
 
 /**
  * Where a ray meets the world.
@@ -38,7 +44,10 @@ function rayBoxes(src) {
 }
 
 // Distance to nearest wall/obstacle along ray (also floor plane y=0). Returns {dist, point}.
-export function wallHit(src, origin, dir, maxDist = 200) {
+// `outPoint` receives the impact point when given; callers probing many directions a
+// frame (the spectator orbit, per-pellet fire) pass a scratch vector instead of
+// paying an allocation per probe.
+export function wallHit(src, origin, dir, maxDist = 200, outPoint = null) {
   let best = maxDist;
   const solids = raySolids(src);
   if (solids) {
@@ -53,7 +62,7 @@ export function wallHit(src, origin, dir, maxDist = 200) {
     const t = -origin.y / dir.y;
     if (t > 0 && t < best) best = t;
   }
-  const point = new THREE.Vector3().copy(origin).addScaledVector(dir, best);
+  const point = (outPoint || new THREE.Vector3()).copy(origin).addScaledVector(dir, best);
   return { dist: best, point };
 }
 
@@ -290,19 +299,21 @@ export function playerAimPoint(src, from, pp, out = new THREE.Vector3()) {
   return playerAxisPoint(pp, 1.15 * s, out);
 }
 
-// Apply angular spread (degrees) to a direction.
-export function applySpread(dir, spreadDeg) {
+// Apply angular spread (degrees) to a direction. Writes into `out` when given —
+// this runs once per pellet, so a shotgun blast used to allocate 24 vectors.
+const _spreadP1 = new THREE.Vector3();
+const _spreadP2 = new THREE.Vector3();
+export function applySpread(dir, spreadDeg, out = new THREE.Vector3()) {
   const spread = THREE.MathUtils.degToRad(spreadDeg);
-  const out = dir.clone();
+  out.copy(dir);
   // random offset in disc perpendicular to dir
-  const perp1 = new THREE.Vector3(0, 1, 0).cross(dir);
-  if (perp1.lengthSq() < 0.001) perp1.set(1, 0, 0);
-  perp1.normalize();
-  const perp2 = new THREE.Vector3().crossVectors(dir, perp1).normalize();
+  _spreadP1.set(0, 1, 0).cross(dir);
+  if (_spreadP1.lengthSq() < 0.001) _spreadP1.set(1, 0, 0);
+  _spreadP1.normalize();
+  _spreadP2.crossVectors(dir, _spreadP1).normalize();
   const ang = Math.random() * Math.PI * 2;
   const r = (Math.random() + Math.random()) * 0.5 * spread; // triangular distribution, denser center
-  out.addScaledVector(perp1, Math.cos(ang) * r).addScaledVector(perp2, Math.sin(ang) * r).normalize();
-  return out;
+  return out.addScaledVector(_spreadP1, Math.cos(ang) * r).addScaledVector(_spreadP2, Math.sin(ang) * r).normalize();
 }
 
 /**
@@ -312,13 +323,36 @@ export function applySpread(dir, spreadDeg) {
  * Returns { type: 'wall'|'flesh'|'player'|'miss', point, part?, combatant?, dist }
  */
 export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1, maxDist = 200) {
-  const wall = wallHit(world, origin, dir, maxDist);
+  // The wall point rides in a shared scratch: every caller consumes `res.point`
+  // (a tracer endpoint, a spark burst) before firing the next ray.
+  const wall = wallHit(world, origin, dir, maxDist, _wallPoint);
 
   // combatant part meshes
   _raycaster.set(origin, dir);
   _raycaster.far = wall.dist;
   let fleshHit = null;
-  const hits = _raycaster.intersectObjects(world.hitMeshes, false);
+  // Broad-phase first: a fighter is a roughly man-sized target, so any fighter whose
+  // chest passes further than _BROAD_R from the ray line cannot be hit, and his 16
+  // part meshes (each a matrix inversion plus a triangle pass inside the raycaster)
+  // are never tested. Ten fighters put ~160 meshes in `hitMeshes`; a typical shot
+  // threads near one or two of them. Worlds without a combatants list (some test
+  // harnesses) keep the exhaustive path.
+  let meshes = world.hitMeshes;
+  if (world.combatants) {
+    _broadCandidates.length = 0;
+    for (const c of world.combatants) {
+      if (!c.alive || !c.parts) continue;
+      if (c.team === shooter.team && !shooter.isPlayer) continue;
+      _toBody.set(c.pos.x - origin.x, c.pos.y + 1.0 - origin.y, c.pos.z - origin.z);
+      const along = _toBody.dot(dir);
+      const reach = _BROAD_R * (c.scale || 1);
+      if (along < -reach || along > wall.dist + reach) continue;
+      if (_toBody.lengthSq() - along * along > reach * reach) continue;
+      for (const p of c.parts) _broadCandidates.push(p);
+    }
+    meshes = _broadCandidates;
+  }
+  const hits = _raycaster.intersectObjects(meshes, false);
   for (const h of hits) {
     const c = h.object.userData.combatant;
     if (!c || !c.alive) continue;
