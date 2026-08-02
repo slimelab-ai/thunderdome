@@ -527,7 +527,10 @@ export class FX {
         color: [0.42, 0.40, 0.37], size0: 0.08, size1: 0.34, fade: 0.24,
       });
     }
-    if (dir) this.decal('hole', pos, dir, 0.12 + Math.random() * 0.06, 26, 0.85);
+    // growTime 0: a bullet hole is stamped at full size the frame it lands. It was
+    // 26 — matching its 26 visible seconds — which inflated every hole 5× in slow
+    // motion, the blood-pool spread applied to a thing that should not spread.
+    if (dir) this.decal('hole', pos, dir, 0.12 + Math.random() * 0.06, 0, 0.85);
   }
 
   gasPuff(pos) {
