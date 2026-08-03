@@ -763,7 +763,10 @@ export function buildArena(scene) {
   // hundred milliseconds the box colliders are still the fallback for rays.
   const solids = {
     mesh: new MeshCollider(new Float32Array(0)),
-    raycast(o, d, maxDist) { return this.mesh.raycast(o, d, maxDist); },
+    // Forward the whole signature. This facade once swallowed `outNormal`, so the
+    // caller's scratch stayed a zero vector and every bullet-hole decal fell back
+    // to facing straight up.
+    raycast(o, d, maxDist, outNormal) { return this.mesh.raycast(o, d, maxDist, outNormal); },
     blocked(a, b2) { return this.mesh.blocked(a, b2); },
     get ready() { return this.mesh.count > 0; },
     get triangles() { return this.mesh.count; },

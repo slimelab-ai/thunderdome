@@ -58,8 +58,17 @@ export function wallHit(src, origin, dir, maxDist = 200, outPoint = null) {
   let normal = null;
   const solids = raySolids(src);
   if (solids) {
+    // Zeroed first, and only believed if the raycast actually wrote it: anything
+    // standing in for the mesh collider (the arena facade did exactly this) can
+    // silently ignore `outNormal`, and a stale or zero scratch must degrade to
+    // "no normal" — callers fall back to shot-direction orientation — rather than
+    // orient every decal off garbage.
+    _wallNormal.set(0, 0, 0);
     const t = solids.raycast(origin, dir, maxDist, _wallNormal);
-    if (t !== null && t < best) { best = t; normal = _wallNormal; }
+    if (t !== null && t < best) {
+      best = t;
+      normal = _wallNormal.lengthSq() > 0.5 ? _wallNormal : null;
+    }
   }
   for (const box of solids ? [] : rayBoxes(src)) {
     const t = box.raycast(origin, dir);
