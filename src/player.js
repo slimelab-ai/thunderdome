@@ -904,7 +904,7 @@ export class Player {
       if (Number.isFinite(res.dist)) nearest = Math.min(nearest, res.dist);
       this.world.fx.tracer(muzzle, res.point);
       if (res.type === 'wall') {
-        this.world.fx.sparks(res.point, dir);
+        this.world.fx.sparks(res.point, dir, res.normal);
         if (Math.random() < 0.35) audio.ricochet();
       }
     }

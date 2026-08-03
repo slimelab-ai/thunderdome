@@ -578,7 +578,7 @@ export class Combatant {
 
   applyDamage(world, part, dmg, shooter, point, dir = null) {
     if (!this.alive) return;
-    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point, dir); audio.ricochet(); }
+    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point, dir, null, false); audio.ricochet(); }
     // Crack and thump: being hit gives up roughly where it came from, and only
     // roughly. Gated on `sinceHit` so a burst — or a shotgun — is one noise rather
     // than one per round that lands.
@@ -2227,7 +2227,7 @@ export class Combatant {
       const res = fireRay(world, this, from, sdir, w,
         this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
       world.fx.tracer(from, res.point);
-      if (res.type === 'wall') { world.fx.sparks(res.point, sdir); if (Math.random() < 0.3) audio.ricochet(); }
+      if (res.type === 'wall') { world.fx.sparks(res.point, sdir, res.normal); if (Math.random() < 0.3) audio.ricochet(); }
     }
     audio.shot(w.sound, 1.2 / (1 + from.distanceTo(world.cameraPos) * 0.09));
     world.fx.muzzleFlash(from, dir, { source: this });

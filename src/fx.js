@@ -510,8 +510,20 @@ export class FX {
     }
   }
 
-  /** Wall impact: hot spall, a dust puff, and a hole. `dir` orients all three. */
-  sparks(pos, dir = null) {
+  /**
+   * Wall impact: hot spall, a dust puff, and a hole. `dir` orients the particles.
+   *
+   * `surfaceNormal` — the actual face the round hit, oriented back toward the
+   * shooter — is what the hole lies flat against. Without it the shot direction
+   * stands in, which is only right for a head-on hit: at 45° incidence half the
+   * quad hangs off the wall in mid-air. The fallback survives for the box-collider
+   * path before the props land.
+   *
+   * `hole = false` for impacts on things that are not standing surfaces — a riot
+   * shield takes sparks, but a decal stamped where the shield *was* is a bullet
+   * hole hanging in mid-air once the carrier walks on.
+   */
+  sparks(pos, dir = null, surfaceNormal = null, hole = true) {
     for (let i = 0; i < 9; i++) {
       _v.set((Math.random() - 0.5) * 3.4, Math.random() * 2.2 + 0.4, (Math.random() - 0.5) * 3.4);
       if (dir) _v.addScaledVector(dir, -(2 + Math.random() * 4));   // spall comes back at the shooter
@@ -530,7 +542,11 @@ export class FX {
     // growTime 0: a bullet hole is stamped at full size the frame it lands. It was
     // 26 — matching its 26 visible seconds — which inflated every hole 5× in slow
     // motion, the blood-pool spread applied to a thing that should not spread.
-    if (dir) this.decal('hole', pos, dir, 0.12 + Math.random() * 0.06, 0, 0.85);
+    if (dir && hole) {
+      if (surfaceNormal) _decalNormal.copy(surfaceNormal);
+      else _decalNormal.copy(dir).negate();   // face back along the shot
+      this.decal('hole', pos, _decalNormal, 0.12 + Math.random() * 0.06, 0, 0.85);
+    }
   }
 
   gasPuff(pos) {
@@ -694,10 +710,10 @@ export class FX {
   /**
    * Place a decal on a surface.
    *
-   * `normal` is the surface it lies on. For bullet impacts the true face normal would
-   * need the collider to report which face it hit; the shot direction is used instead,
-   * which is within a few degrees for anything but a grazing hit and needs no changes
-   * to the ballistics path. `polygonOffset` on the material keeps it off the wall.
+   * `normal` is the surface it lies on, pointing *out* of it — every caller is
+   * responsible for orientation now that the triangle collider reports the real face
+   * (see `wallHit`); the old shot-direction stand-in only held for head-on hits.
+   * `polygonOffset` on the material keeps it off the wall.
    */
   decal(kind, pos, normal, size, growTime, opacity) {
     const state = this.decalState[kind];
@@ -706,8 +722,6 @@ export class FX {
     const d = state[i];
     _n.copy(normal).normalize();
     if (_n.lengthSq() < 0.5) _n.set(0, 1, 0);
-    // Decals face *out* of the surface, so flip an inbound shot direction.
-    if (kind === 'hole') _n.negate();
     _q.setFromUnitVectors(FORWARD, _n);
     _qRoll.setFromAxisAngle(FORWARD, Math.random() * Math.PI * 2);
     d.quat.copy(_q).multiply(_qRoll);

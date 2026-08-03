@@ -18,6 +18,7 @@ const _eye = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
 const _toBody = new THREE.Vector3();
 const _wallPoint = new THREE.Vector3();
+const _wallNormal = new THREE.Vector3();
 const _broadCandidates = [];
 // Sphere at chest height covering a whole fighter — head, boots, outstretched arms,
 // a carried shield — with slack. Generosity here only costs a narrow-phase test.
@@ -43,16 +44,22 @@ function rayBoxes(src) {
   return Array.isArray(src) ? src : (src && src.colliders) || [];
 }
 
-// Distance to nearest wall/obstacle along ray (also floor plane y=0). Returns {dist, point}.
+// Distance to nearest wall/obstacle along ray (also floor plane y=0).
+// Returns {dist, point, normal}.
 // `outPoint` receives the impact point when given; callers probing many directions a
 // frame (the spectator orbit, per-pellet fire) pass a scratch vector instead of
 // paying an allocation per probe.
+// `normal` is the hit surface's normal, oriented back toward the shooter — what a
+// decal should lie flat against. It rides in a shared scratch (consume it before
+// the next wallHit call) and is null on the box-collider path, which reports only
+// a distance: props still streaming in, and the few seconds of a fresh page load.
 export function wallHit(src, origin, dir, maxDist = 200, outPoint = null) {
   let best = maxDist;
+  let normal = null;
   const solids = raySolids(src);
   if (solids) {
-    const t = solids.raycast(origin, dir, maxDist);
-    if (t !== null && t < best) best = t;
+    const t = solids.raycast(origin, dir, maxDist, _wallNormal);
+    if (t !== null && t < best) { best = t; normal = _wallNormal; }
   }
   for (const box of solids ? [] : rayBoxes(src)) {
     const t = box.raycast(origin, dir);
@@ -60,10 +67,13 @@ export function wallHit(src, origin, dir, maxDist = 200, outPoint = null) {
   }
   if (dir.y < -1e-6) {
     const t = -origin.y / dir.y;
-    if (t > 0 && t < best) best = t;
+    if (t > 0 && t < best) { best = t; normal = _wallNormal.set(0, 1, 0); }
   }
+  // The BVH tests double-sided, so the triangle's winding is meaningless; the side
+  // facing the shooter is by definition the side the ray came from.
+  if (normal && normal.dot(dir) > 0) normal.negate();
   const point = (outPoint || new THREE.Vector3()).copy(origin).addScaledVector(dir, best);
-  return { dist: best, point };
+  return { dist: best, point, normal };
 }
 
 // Line of sight between two points (true if unobstructed by arena geometry).
@@ -385,7 +395,7 @@ export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1, maxDi
     fleshHit.combatant.applyDamage(world, fleshHit.part, dmg, shooter, fleshHit.point, dir);
     return { type: 'flesh', ...fleshHit };
   }
-  if (wall.dist < 199) return { type: 'wall', point: wall.point, dist: wall.dist };
+  if (wall.dist < 199) return { type: 'wall', point: wall.point, dist: wall.dist, normal: wall.normal };
   return { type: 'miss', point: wall.point, dist: wall.dist };
 }
 
