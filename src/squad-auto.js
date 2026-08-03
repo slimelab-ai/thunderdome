@@ -194,7 +194,7 @@ export function planSquadAmmo(
     }
   }
 
-  return { ...planner.finish(), returns, transfers, steps };
+  return { ...planner.finish(), returns, transfers, steps, actionable: steps.length > 0 };
 }
 
 export function planSquadTraining(fighters) {

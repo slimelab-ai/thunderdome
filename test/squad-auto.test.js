@@ -191,6 +191,21 @@ test('auto-ammo stashes compatible ammo above the per-weapon target', () => {
   ]);
   assert.equal(plan.purchases.length, 0);
   assert.equal(plan.transfers.length, 0);
+  assert.equal(plan.actionable, true, 'surplus-only cleanup keeps the auto-ammo button enabled');
+});
+
+test('two weapons sharing an ammo type keep four stacks and stash only the fifth', () => {
+  const fighter = {
+    who: 'player',
+    ch: character({
+      gun1: 'pistol',
+      gun2: 'smg',
+      pack: Array.from({ length: 5 }, () => ({ type: 'ammo_9mm', rounds: 90 })),
+    }),
+  };
+  const plan = planSquadAmmo([fighter], 0, flatQuote({}));
+  assert.deepEqual(plan.returns.map(step => [step.reason, step.rounds]), [['excess', 90]]);
+  assert.equal(plan.actionable, true);
 });
 
 test('auto-ammo redistributes one fighter’s compatible surplus before buying more', () => {

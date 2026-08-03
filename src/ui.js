@@ -415,7 +415,7 @@ export class UI {
     $('btn-next-fight').disabled = draftTurn.mustEndTurn;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
     const autoButton = (action, label, description, plan, unit = '$') => `
-      <button class="btn squad-auto-btn" data-auto-squad="${action}" ${draftTurn.locked || (plan.cost <= 0 && !plan.steps?.length) ? 'disabled' : ''}>
+      <button class="btn squad-auto-btn" data-auto-squad="${action}" ${draftTurn.locked || !(plan.actionable ?? (plan.cost > 0)) ? 'disabled' : ''}>
         <span><b>${label}</b><small>${description}</small></span>
         <strong>${unit === '$' ? '$' : ''}${plan.cost.toLocaleString()}${unit === '$' ? '' : ` ${unit}`}</strong>
       </button>`;
