@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  nextShopCharacter, orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
+  AUTO_AMMO_STACKS, nextShopCharacter, orderedSquad, planSquadAmmo, planSquadHealing,
+  planSquadTraining,
 } from '../src/squad-auto.js';
 
 const character = ({
@@ -26,6 +27,16 @@ const character = ({
 });
 
 const flatQuote = (prices) => (type, quantity) => (prices[type] ?? 100) * quantity;
+
+const stash = (items = []) => ({
+  cols: 10,
+  rows: 0,
+  items: items.map((item, index) => ({
+    it: { uid: `stash-${index}`, ...item },
+    x: index,
+    y: 0,
+  })),
+});
 
 test('shop character cycling wraps in either direction', () => {
   const roster = ['player', 0, 2];
@@ -81,6 +92,54 @@ test('auto-ammo preserves strict roster priority when the next stack is unafford
   const plan = planSquadAmmo(fighters, 25, flatQuote({ ammo_9mm: 20 }));
   assert.deepEqual(plan.purchases.map(purchase => purchase.who), ['player']);
   assert.equal(plan.cost, 20);
+});
+
+test('auto-ammo fills a partial stack even when the backpack has no empty cells', () => {
+  const pack = [
+    { type: 'ammo_9mm', rounds: 45 },
+    ...Array.from({ length: 11 }, () => ({ type: 'medkit' })),
+  ];
+  const plan = planSquadAmmo(
+    [{ who: 'player', ch: character({ pack }) }],
+    1000,
+    flatQuote({ ammo_9mm: 25 }),
+  );
+  assert.equal(plan.purchases.length, 1);
+  assert.equal(plan.purchases[0].rounds, 45);
+});
+
+test('auto-ammo pulls exact round deficits from the stash before buying boxes', () => {
+  const fighter = {
+    who: 'player',
+    ch: character({ pack: [{ type: 'ammo_9mm', rounds: 45 }] }),
+  };
+  const plan = planSquadAmmo(
+    [fighter],
+    1000,
+    flatQuote({ ammo_9mm: 25 }),
+    AUTO_AMMO_STACKS,
+    stash([{ type: 'ammo_9mm', rounds: 90 }]),
+  );
+  assert.deepEqual(plan.steps.map(step => [step.source, step.rounds]), [
+    ['stash', 90],
+    ['market', 45],
+  ]);
+  assert.equal(plan.cost, 25);
+});
+
+test('auto-ammo remains actionable at zero cost when the stash covers the refill', () => {
+  const fighter = { who: 'player', ch: character({ pack: [] }) };
+  const plan = planSquadAmmo(
+    [fighter],
+    0,
+    flatQuote({ ammo_9mm: 25 }),
+    AUTO_AMMO_STACKS,
+    stash([{ type: 'ammo_9mm', rounds: 180 }]),
+  );
+  assert.equal(plan.cost, 0);
+  assert.equal(plan.purchases.length, 0);
+  assert.deepEqual(plan.transfers.map(step => step.rounds), [180]);
+  assert.equal(plan.steps.length, 1);
 });
 
 test('auto-upgrade spends each fighter’s XP on balanced stat tiers without touching gear', () => {

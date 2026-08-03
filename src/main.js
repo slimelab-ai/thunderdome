@@ -20,7 +20,8 @@ import { preloadViewmodel } from './viewmodel.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
-  ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
+  ammoInGrid, ammoInPack, addAmmoToPack, takeAmmoFromGrid, consumeAmmo,
+  bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
 import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
@@ -45,7 +46,7 @@ import {
   normalizeCrewDeployment, shouldBenchNewHire,
 } from './roster.js';
 import {
-  orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
+  AUTO_AMMO_STACKS, orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
 } from './squad-auto.js';
 
 // ============================================================ sandbox
@@ -1717,7 +1718,7 @@ function autoShopPlans() {
       type: fighter.who === 'player' ? PLAYER_TYPE : fighter.member.type,
       progress: fighter.who === 'player' ? career.playerProgress : fighter.member.progress,
     }))),
-    ammo: planSquadAmmo(fighters, career.money, autoQuote),
+    ammo: planSquadAmmo(fighters, career.money, autoQuote, AUTO_AMMO_STACKS, career.stash),
   };
 }
 
@@ -1796,20 +1797,35 @@ function executeAutoAmmo(earnings) {
   if (draftShopState().locked) return;
   const plan = autoShopPlans().ammo;
   let changed = false;
-  for (const purchase of plan.purchases) {
-    const cost = market.quoteBuy(purchase.type, 1, priceMult());
-    if (!Number.isFinite(cost) || cost > career.money) break;
-    const fighter = shopSquad().find(entry => String(entry.who) === String(purchase.who));
+  let spent = false;
+  for (const step of plan.steps) {
+    const fighter = shopSquad().find(entry => String(entry.who) === String(step.who));
     if (!fighter) continue;
-    const item = makeItem(purchase.type);
-    if (!autoPlace(fighter.ch.pack, item)) break;
-    market.buy(purchase.type);
+
+    const ammoType = ITEM_TYPES[step.type].ammoType;
+    if (step.source === 'stash') {
+      const available = ammoInGrid(career.stash, ammoType);
+      const added = addAmmoToPack(fighter.ch, ammoType, Math.min(step.rounds, available));
+      if (added <= 0) continue;
+      takeAmmoFromGrid(career.stash, ammoType, added);
+      changed = true;
+      continue;
+    }
+
+    const cost = market.quoteBuy(step.type, 1, priceMult());
+    if (!Number.isFinite(cost) || cost > career.money) break;
+    const item = makeItem(step.type);
+    const added = addAmmoToPack(fighter.ch, ammoType, Math.min(step.rounds, item.rounds));
+    item.rounds -= added;
+    if (item.rounds > 0) autoPlace(career.stash, item);
+    market.buy(step.type);
     career.money -= cost;
-    if (career.mode === 'liquidation') recordPlayerMarket('buy', purchase.type, cost);
+    if (career.mode === 'liquidation') recordPlayerMarket('buy', step.type, cost);
     changed = true;
+    spent = true;
   }
   if (!changed) return;
-  audio.cashRegister();
+  if (spent) audio.cashRegister();
   save();
   renderShop(earnings);
 }

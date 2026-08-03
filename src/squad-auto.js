@@ -1,4 +1,4 @@
-import { AMMO_TYPES, ITEM_TYPES, ammoInPack } from './items.js';
+import { AMMO_TYPES, ITEM_TYPES, ammoInGrid, ammoInPack } from './items.js';
 import { trainingCost, trainingTrees } from './progression.js';
 
 export const AUTO_AMMO_STACKS = 2;
@@ -58,9 +58,10 @@ function purchasePlanner(budget, quoteSeries) {
       return false;
     }
     quantities.set(purchase.type, quantity + 1);
-    purchases.push({ ...purchase, cost: itemCost });
+    const planned = { ...purchase, cost: itemCost };
+    purchases.push(planned);
     cost += itemCost;
-    return true;
+    return planned;
   };
 
   return {
@@ -70,8 +71,16 @@ function purchasePlanner(budget, quoteSeries) {
   };
 }
 
-export function planSquadAmmo(fighters, budget, quoteSeries, stacksPerWeapon = AUTO_AMMO_STACKS) {
+export function planSquadAmmo(
+  fighters, budget, quoteSeries, stacksPerWeapon = AUTO_AMMO_STACKS, stash = null,
+) {
   const planner = purchasePlanner(Math.max(0, budget), quoteSeries);
+  const steps = [];
+  const transfers = [];
+  const stashRounds = new Map(Object.keys(AMMO_TYPES).map(ammoType => [
+    ammoType,
+    stash ? ammoInGrid(stash, ammoType) : 0,
+  ]));
 
   for (const fighter of fighters) {
     if (planner.stopped) break;
@@ -81,20 +90,60 @@ export function planSquadAmmo(fighters, budget, quoteSeries, stacksPerWeapon = A
       const ammoType = gun && ITEM_TYPES[gun.type]?.ammo;
       if (ammoType) weaponCounts.set(ammoType, (weaponCounts.get(ammoType) || 0) + 1);
     }
-    let freeCells = Math.max(0, fighter.ch.pack.cols * fighter.ch.pack.rows - fighter.ch.pack.items.length);
+    const usedCells = fighter.ch.pack.items.reduce((total, entry) => {
+      const def = ITEM_TYPES[entry.it.type];
+      return total + (def?.w || 1) * (def?.h || 1);
+    }, 0);
+    let freeCells = Math.max(0, fighter.ch.pack.cols * fighter.ch.pack.rows - usedCells);
     for (const [ammoType, weaponCount] of weaponCounts) {
       const roundsPerStack = AMMO_TYPES[ammoType].box;
       const targetRounds = roundsPerStack * stacksPerWeapon * weaponCount;
-      const missing = Math.max(0, Math.ceil((targetRounds - ammoInPack(fighter.ch, ammoType)) / roundsPerStack));
-      for (let i = 0; i < missing && freeCells > 0; i++) {
-        if (!planner.add({ who: fighter.who, type: `ammo_${ammoType}` })) break;
-        freeCells--;
+      let carriedRounds = ammoInPack(fighter.ch, ammoType);
+      let carriedStacks = fighter.ch.pack.items.filter(entry => {
+        const def = ITEM_TYPES[entry.it.type];
+        return def?.kind === 'ammo' && def.ammoType === ammoType;
+      }).length;
+      const carryCapacity = (carriedStacks + freeCells) * roundsPerStack;
+      let missingRounds = Math.max(0, Math.min(targetRounds, carryCapacity) - carriedRounds);
+
+      const reserveRounds = Math.min(missingRounds, stashRounds.get(ammoType) || 0);
+      if (reserveRounds > 0) {
+        const transfer = { source: 'stash', who: fighter.who, type: `ammo_${ammoType}`, rounds: reserveRounds };
+        transfers.push(transfer);
+        steps.push(transfer);
+        stashRounds.set(ammoType, (stashRounds.get(ammoType) || 0) - reserveRounds);
+        const partialCapacity = Math.max(0, carriedStacks * roundsPerStack - carriedRounds);
+        const newStacks = Math.ceil(Math.max(0, reserveRounds - partialCapacity) / roundsPerStack);
+        carriedStacks += newStacks;
+        freeCells -= newStacks;
+        carriedRounds += reserveRounds;
+        missingRounds -= reserveRounds;
+      }
+
+      while (missingRounds > 0) {
+        const rounds = Math.min(roundsPerStack, missingRounds);
+        const purchase = planner.add({
+          source: 'market', who: fighter.who, type: `ammo_${ammoType}`, rounds,
+        });
+        if (!purchase) break;
+        steps.push(purchase);
+
+        const partialCapacity = Math.max(0, carriedStacks * roundsPerStack - carriedRounds);
+        const newStacks = Math.ceil(Math.max(0, rounds - partialCapacity) / roundsPerStack);
+        carriedStacks += newStacks;
+        freeCells -= newStacks;
+        carriedRounds += rounds;
+        missingRounds -= rounds;
+
+        // A market unit is always a full box. Any rounds not needed by this fighter
+        // go into the stash and become available to the next fighter in roster order.
+        stashRounds.set(ammoType, (stashRounds.get(ammoType) || 0) + roundsPerStack - rounds);
       }
       if (planner.stopped) break;
     }
   }
 
-  return planner.finish();
+  return { ...planner.finish(), transfers, steps };
 }
 
 export function planSquadTraining(fighters) {
