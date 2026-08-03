@@ -441,9 +441,15 @@ export class FX {
       const geo = new THREE.PlaneGeometry(1, 1);
       geo.setAttribute('instanceOpacity',
         new THREE.InstancedBufferAttribute(new Float32Array(count), 1).setUsage(THREE.DynamicDrawUsage));
-      const mat = new THREE.MeshBasicMaterial({
+      // Lit, not basic: a decal is a stain on a wall, and it has to sit in whatever
+      // light that wall is sitting in — full-bright bullet holes glowed in shadowed
+      // corners and stayed lit through LIGHTS OUT. Matte standard so it shades like
+      // the (standard-material) surfaces it lands on; the quads carry real surface
+      // normals, so the lighting matches the wall's own.
+      const mat = new THREE.MeshStandardMaterial({
         map: this.decalTextures[kind],
         color: kind === 'scorch' ? 0x0e0d0c : 0xffffff,
+        roughness: 1, metalness: 0,
         transparent: true, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
       });
@@ -451,6 +457,7 @@ export class FX {
       mat.customProgramCacheKey = () => 'td-decal-instanced';
       const mesh = new THREE.InstancedMesh(geo, mat, count);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.receiveShadow = true;   // the wall's shadow is the decal's shadow
       mesh.frustumCulled = false;
       mesh.layers.set(NO_OCCLUDE_LAYER);
       for (let i = 0; i < count; i++) mesh.setMatrixAt(i, _m);
