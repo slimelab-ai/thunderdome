@@ -336,7 +336,12 @@ export class UI {
     tapeWrap.classList.toggle('hidden', !liquidation);
     if (liquidation) {
       const tape = $('market-tape');
-      tape.innerHTML = (career.liquidation.marketLog || []).map(entry => {
+      const log = career.liquidation.marketLog || [];
+      const previousCount = Number(tape.dataset.entryCount || 0);
+      const previousTop = tape.scrollTop;
+      const wasFollowing = previousCount === 0 ||
+        tape.scrollHeight - tape.clientHeight - tape.scrollTop <= 12;
+      tape.innerHTML = log.map(entry => {
         if (entry.kind === 'round') {
           return `<div class="tape-round"><span>ROUND ${entry.round}</span></div>`;
         }
@@ -352,7 +357,13 @@ export class UI {
           `<span class="tape-action">${verb} ${item}</span>` +
           `<b class="${credit ? 'tape-credit' : 'tape-debit'}">${credit ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
       }).join('');
-      tape.scrollTop = tape.scrollHeight;
+      tape.dataset.entryCount = String(log.length);
+      const logReplaced = log.length < previousCount;
+      if (logReplaced || (log.length > previousCount && wasFollowing)) {
+        tape.scrollTop = tape.scrollHeight;
+      } else {
+        tape.scrollTop = previousTop;
+      }
     }
 
     const turnStatus = $('shop-turn-status');

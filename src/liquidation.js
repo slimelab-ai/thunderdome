@@ -29,7 +29,17 @@ export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), r
 
 export function recordMarketRound(state, round = state.round) {
   state.marketLog ||= [];
-  if (!state.marketLog.some(entry => entry.kind === 'round' && entry.round === round)) {
+  let latestRound = null;
+  for (let i = state.marketLog.length - 1; i >= 0; i--) {
+    if (state.marketLog[i].kind === 'round') {
+      latestRound = state.marketLog[i];
+      break;
+    }
+  }
+  // The tape is append-only. If a restored or delayed action arrives for a round
+  // already present earlier in history, give it a fresh header at the tail instead
+  // of making it look as though it was inserted beneath the old header.
+  if (latestRound?.round !== round) {
     state.marketLog.push({ kind: 'round', round });
   }
   return state.marketLog;
