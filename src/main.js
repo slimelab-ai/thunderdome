@@ -14,6 +14,7 @@ import {
   LANE_TEST, laneTestColliders, buildLaneTestMeshes, buildLaneTestMarkers, spotAt,
 } from './lane-test.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
+import { NO_OCCLUDE_LAYER } from './layers.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
 import { preloadViewmodel } from './viewmodel.js';
@@ -155,6 +156,68 @@ assetsReady.catch((err) => {
   el.textContent = `ASSET LOAD FAILED: ${err?.message || err} — see the console.`;
   document.body.appendChild(el);
 });
+// Warm the shader cache while the menu is up.
+assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already reported */ });
+
+/**
+ * Compile every program the first match will need, behind the menu.
+ *
+ * Nothing else ever calls renderer.compile(), so before this the first frame of the
+ * first match compiled every fighter, gun and effect program at once — a stall of
+ * hundreds of ms that also drove the adaptive scaler through a staircase of
+ * resolution steps (each of which used to paint a black frame; see render.js). One
+ * of everything a match can show is parked far below the pit — compile() ignores
+ * the frustum and the menu camera never sees it — compiled in the driver's own
+ * threads where KHR_parallel_shader_compile allows, then removed.
+ *
+ * The muzzle-flash sprites are built invisible and compile() skips invisible
+ * objects, so they are flipped visible for the duration. The tracer, decal and
+ * casing pools need nothing: they are always-visible instanced batches whose
+ * retired slots are zero-scale matrices, so compile() always sees them.
+ *
+ * Nothing staged here is disposed afterwards: disposing a material drops the
+ * cached program's refcount and can delete the very program this exists to keep.
+ * The stage is simply removed and the JS objects go to the collector, which leaves
+ * the program cache alone.
+ *
+ * Out of reach: shadow-depth and GTAO-override variants only compile when their
+ * pass first draws a fighter, so the first match frame still pays for two or three
+ * skinned variants — small, and the deferred resize keeps it invisible — against
+ * the dozens removed here.
+ */
+async function warmShaderCache() {
+  const stage = new THREE.Group();
+  stage.position.set(0, -80, 0);
+
+  stage.add(new FighterRig({ uniformColor: 0x3a4a5f }).group);
+  for (const id of WEAPON_ORDER) stage.add(buildHeldGun(id));
+  stage.add(new THREE.Mesh(ZONE_GEO, ZONE_MATS.fire));
+  stage.add(new THREE.Mesh(ZONE_GEO, ZONE_MATS.gas));
+  const bounty = makeBountyMarker();
+  bounty.visible = true;
+  stage.add(bounty);
+  // The airdrop crate's and grenade's material combinations.
+  stage.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0x8a6d2f, roughness: 0.8, metalness: 0.1 })));
+  stage.add(new THREE.Mesh(NADE_GEO, NADE_MAT));
+  scene.add(stage);
+
+  const restore = [];
+  const show = (o) => { restore.push([o, o.visible]); o.visible = true; };
+  for (const f of fx.flashes) show(f.sprite);
+
+  try {
+    await renderer.compileAsync(scene, camera);
+  } catch {
+    // No async path (or a lost context): the synchronous fallback still front-loads
+    // the work behind the menu rather than into the first match frame.
+    try { renderer.compile(scene, camera); } catch { /* lazy compile remains the backstop */ }
+  } finally {
+    for (const [o, v] of restore) o.visible = v;
+    scene.remove(stage);
+  }
+}
+
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
@@ -1248,8 +1311,25 @@ function acquireZoneLight(zone, color, intensity) {
   zone.lightSlot = slot;
 }
 
+// One unit cylinder for every zone haze, scaled per zone; the materials are cloned
+// off these templates so each zone keeps its own opacity fade while every clone
+// shares the template's compiled program. The templates also give the shader
+// warm-up (see warmShaderCache) something to compile before the first event fires —
+// this material combination appears nowhere else in the scene, so without it the
+// first molotov of a session paid a mid-match compile.
+const ZONE_GEO = new THREE.CylinderGeometry(1, 1, 1, 20, 1, true);
+const ZONE_MATS = {
+  fire: new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+  gas: new THREE.MeshBasicMaterial({ color: 0x39b32a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+};
+
 function removeZoneVisual(z) {
-  if (z.mesh) scene.remove(z.mesh);
+  if (z.mesh) {
+    scene.remove(z.mesh);
+    // The geometry is shared and stays; the material is this zone's clone.
+    z.mesh.material.dispose();
+    z.mesh = null;
+  }
   // The light goes back to the pool rather than out of the scene: removing it would
   // change the light count and recompile every shader, exactly as adding it does.
   if (z.lightSlot) {
@@ -1262,10 +1342,11 @@ function removeZoneVisual(z) {
 function spawnZone(type, x, z, r, ttl, dps) {
   const isGas = type === 'gas';
   const color = isGas ? 0x39b32a : 0xff6a1a;
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(r, r, isGas ? 2.6 : 0.5, 20, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false })
-  );
+  const mesh = new THREE.Mesh(ZONE_GEO, ZONE_MATS[isGas ? 'gas' : 'fire'].clone());
+  mesh.scale.set(r, isGas ? 2.6 : 0.5, r);
+  // A translucent haze has no business in GTAO's prepass: the override material
+  // renders it as solid geometry and the cylinder occludes its own interior.
+  mesh.layers.set(NO_OCCLUDE_LAYER);
   mesh.position.set(x, isGas ? 1.3 : 0.25, z);
   scene.add(mesh);
   const zone = { type, x, z, r, ttl, dps, mesh, lightSlot: null };
@@ -2208,8 +2289,15 @@ function showIntro() {
 }
 
 // ============================================================ input
+// One mousemove can arrive carrying a whole stall's worth of motion: when a frame
+// hangs (a shader compile, speech synthesis blocking), the browser sums every
+// pointer-lock delta it queued into a single event on resume. At base sensitivity
+// ~750 px is a 90° snap and ~1500 px is 180° — the "view teleported" bug. No human
+// flick delivers 200 px in one 8 ms event, so past that it is clipped, not believed.
+const MAX_MOUSE_STEP = 200;
+const clampMouseStep = (v) => Math.max(-MAX_MOUSE_STEP, Math.min(MAX_MOUSE_STEP, v || 0));
 document.addEventListener('mousemove', (e) => {
-  if (locked && phase === 'match') player.onMouseMove(e.movementX, e.movementY);
+  if (locked && phase === 'match') player.onMouseMove(clampMouseStep(e.movementX), clampMouseStep(e.movementY));
 });
 document.addEventListener('mousedown', (e) => {
   if (locked && phase === 'match') player.onMouseDown(e.button);

@@ -48,6 +48,12 @@ export const RECOIL_TUNING = {
   drawbackSpeed: 1,        // degrees per second of drawback, before clamping
   drawbackMinDuration: 0.05,
   drawbackMaxDuration: 0.6,
+  // Degrees, either axis. No real pattern climbs anywhere near this; what does is a
+  // coalesced mouse event after a frame stall, which `applyLook` would otherwise
+  // absorb wholesale — the offset lands at 90-180°, the camera pitches over the
+  // pole, and the drawback then "returns" the view from somewhere the player never
+  // aimed. Input past the cap moves the aim instead, where the pitch clamp holds it.
+  maxOffset: 15,
 };
 
 export class Recoil {
@@ -89,10 +95,23 @@ export class Recoil {
     if (dx === 0 && dy === 0) return { x: 0, y: 0 };
     // Any deliberate input means the player has taken over; stop easing home.
     this.drawback = false;
-    if (dx !== 0 || dy !== 0) this.stable = false;
+    this.stable = false;
+    // DogEater spends the *whole* opposing input on the offset while the signs
+    // oppose, and that feel is kept — up to `maxOffset`. Past the cap the remainder
+    // goes to the aim, so a pathological input (a hitch's worth of coalesced mouse
+    // deltas in one event) cannot ride the offset past the pitch clamp.
+    const cap = this.t.maxOffset ?? 15;
     let aimX = dx, aimY = dy;
-    if (dy * this.posY < 0) { this.posY += dy; aimY = 0; }
-    if (dx * this.posX < 0) { this.posX += dx; aimX = 0; }
+    if (dy * this.posY < 0) {
+      const next = this.posY + dy;
+      this.posY = Math.max(-cap, Math.min(cap, next));
+      aimY = next - this.posY;
+    }
+    if (dx * this.posX < 0) {
+      const next = this.posX + dx;
+      this.posX = Math.max(-cap, Math.min(cap, next));
+      aimX = next - this.posX;
+    }
     return { x: aimX, y: aimY };
   }
 

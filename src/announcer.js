@@ -198,6 +198,30 @@ export class Announcer {
     this.cooldowns = {};
     this.lastLineAt = -99;
     this._used = {};   // per-category lines already played this session (no repeats until exhausted)
+    this._voice = null;
+    this._resolveVoice();
+  }
+
+  /**
+   * Pick VULTURE's voice once, up front. `getVoices()` is a synchronous round-trip
+   * to the browser's speech process (on Linux, an IPC to speech-dispatcher), and it
+   * used to run lazily inside `_speak` — which meant inside a match frame, and,
+   * because a not-yet-populated list left `_voice` null, on *every* line for the
+   * rest of the session. Chrome fills the list asynchronously, so ask once now and
+   * once more when the browser says it changed, and never on the frame path.
+   */
+  _resolveVoice() {
+    try {
+      if (!window.speechSynthesis) return;
+      const pickVoice = () => {
+        const vs = speechSynthesis.getVoices();
+        if (!vs.length) return;
+        this._voice = vs.find(v => /^en/i.test(v.lang) && /male|david|mark|daniel|guy|george/i.test(v.name))
+          || vs.find(v => /^en/i.test(v.lang)) || null;
+      };
+      pickVoice();
+      if (!this._voice) speechSynthesis.addEventListener?.('voiceschanged', pickVoice, { once: true });
+    } catch { /* no voice, no problem */ }
   }
 
   _pickFresh(category) {
@@ -236,7 +260,13 @@ export class Announcer {
       this.wrap.classList.add('show');
       this.showing = 2.2 + text.length * 0.03;
       this.lastLineAt = performance.now() / 1000;
-      this._speak(text, force);
+      // Off the frame. `speak()`/`cancel()` talk to the speech process and have
+      // stalled the rAF for hundreds of ms; a macrotask also lets any input events
+      // already queued behind this frame dispatch before the engine gets the mic.
+      // The generation check keeps a line queued just before `clear()` (match end,
+      // screen change) from speaking into the silence afterwards.
+      const gen = this._gen || 0;
+      setTimeout(() => { if ((this._gen || 0) === gen) this._speak(text, force); }, 0);
     }
   }
 
@@ -248,12 +278,19 @@ export class Announcer {
       if (speechSynthesis.speaking) {
         if (!force) return;
         speechSynthesis.cancel();
+        // cancel-then-speak in one task is a long-standing Chrome stall (and on
+        // some engines the new utterance is silently dropped); give the engine a
+        // beat to actually stop before handing it the next line.
+        const gen = this._gen || 0;
+        setTimeout(() => { if ((this._gen || 0) === gen) this._utter(text); }, 40);
+        return;
       }
-      if (!this._voice) {
-        const vs = speechSynthesis.getVoices();
-        this._voice = vs.find(v => /^en/i.test(v.lang) && /male|david|mark|daniel|guy|george/i.test(v.name))
-          || vs.find(v => /^en/i.test(v.lang)) || null;
-      }
+      this._utter(text);
+    } catch { /* no voice, no problem */ }
+  }
+
+  _utter(text) {
+    try {
       const u = new SpeechSynthesisUtterance(text.replace(/[“”"]/g, ''));
       u.rate = 1.2;
       u.pitch = 0.55;
@@ -265,6 +302,7 @@ export class Announcer {
   }
 
   clear() {
+    this._gen = (this._gen || 0) + 1;   // invalidates any deferred _speak in flight
     this.queue.length = 0;
     this.showing = 0;
     this.wrap.classList.remove('show');

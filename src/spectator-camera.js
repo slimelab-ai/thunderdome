@@ -11,6 +11,9 @@ const CAMERA_PROBE_HEIGHT = 1.1;
 const CAMERA_WALL_MARGIN = 0.55;
 const CAMERA_BOUNDARY_MARGIN = 0.35;
 const ORBIT_ANGLES = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI];
+// Only the probe *distances* matter here; the impact point lands in this scratch so
+// twelve probes a frame stop allocating twelve vectors.
+const _probePoint = new THREE.Vector3();
 
 function nearestOpponent(target, combatants) {
   let nearest = null;
@@ -116,6 +119,7 @@ export class SpectatorCamera {
         this.probeOrigin,
         this.candidateOffset,
         orbitDistance,
+        _probePoint,
       );
       const hitBoundary = boundary.dist < orbitDistance - 0.01;
       const safeOrbitDistance = hitBoundary
@@ -141,7 +145,7 @@ export class SpectatorCamera {
       this.ray.copy(this.candidatePosition).sub(this.focus);
       const shotDistance = this.ray.length();
       this.ray.normalize();
-      const obstruction = wallHit(this.colliders, this.focus, this.ray, shotDistance);
+      const obstruction = wallHit(this.colliders, this.focus, this.ray, shotDistance, _probePoint);
       const hitCover = obstruction.dist < shotDistance - 0.01;
       const safeShotDistance = hitCover
         ? Math.max(0.08, obstruction.dist - CAMERA_WALL_MARGIN)

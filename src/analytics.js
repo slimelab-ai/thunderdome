@@ -3,6 +3,14 @@ const SCHEMA_VERSION = 1;
 const OUTBOX_KEY = 'thunderdome_analytics_outbox_v1';
 const FLUSH_MS = 5000;
 const HEARTBEAT_MS = 30000;
+// How long ordinary telemetry may sit in memory before the outbox is rewritten to
+// localStorage. It used to coalesce onto the next *microtask* — but a microtask
+// checkpoint lands at the end of every rAF callback, so a firefight emitting
+// combat_shot/sight/suppression events rewrote the whole outbox with a synchronous
+// setItem once per frame, for the entire fight. One second bounds what a hard crash
+// can lose from storage (the in-memory queue and pagehide persist cover the rest)
+// without putting storage I/O on the frame.
+const PERSIST_COALESCE_MS = 1000;
 const MAX_BATCH_EVENTS = 100;
 // Browser keepalive/sendBeacon bodies have a roughly 64 KiB transport budget.
 // Stay below it so lifecycle delivery cannot fail before a request reaches nginx.
@@ -99,8 +107,10 @@ export class Analytics {
     navigatorImpl = globalThis.navigator,
     now = () => new Date(),
     autoStart = true,
+    persistDelayMs = PERSIST_COALESCE_MS,
   } = {}) {
     this.storage = storage;
+    this.persistDelayMs = persistDelayMs;
     this.randomUUID = randomUUID;
     this.fetchImpl = fetchImpl;
     this.navigator = navigatorImpl;
@@ -222,10 +232,12 @@ export class Analytics {
     this.setQueue(this.queue.filter((_, index) => !dropped.has(index)));
   }
 
-  // Lifecycle events reach storage before emit() returns. Ordinary telemetry coalesces
-  // onto the next microtask: rewriting the whole outbox per event is quadratic, and a
-  // headless match emitting thousands of frames in one synchronous burst spent minutes
-  // of wall clock re-serialising records that had not changed.
+  // Lifecycle events reach storage before emit() returns. Ordinary telemetry
+  // coalesces onto a timer (see PERSIST_COALESCE_MS): rewriting the whole outbox per
+  // event is quadratic, and per *frame* it is a synchronous setItem in the middle of
+  // every firefight. `persistPending` remains the settle point — anything that needs
+  // storage current (isDurablyQueued, pagehide) calls it and the timer becomes a
+  // no-op.
   schedulePersist(event) {
     if (protectedLifecycleEvent(event)) {
       this.persist();
@@ -233,7 +245,7 @@ export class Analytics {
     }
     if (this.persistScheduled) return;
     this.persistScheduled = true;
-    queueMicrotask(() => this.persistPending());
+    setTimeout(() => this.persistPending(), this.persistDelayMs);
   }
 
   persistPending() {

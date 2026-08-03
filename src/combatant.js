@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import * as THREE from 'three';
+
 import { NO_OCCLUDE_LAYER } from './layers.js';
 import { WEAPONS, buildHeldGun } from './weapons.js';
 import {
@@ -35,6 +36,35 @@ const _routePoint = new THREE.Vector3();
 const _suppressAt = new THREE.Vector3();
 const _nadeVel = new THREE.Vector3();
 const _nadeLand = new THREE.Vector3();
+const _eyeSelf = new THREE.Vector3();
+const _aimHold = new THREE.Vector3();
+const _moveAcc = new THREE.Vector3();
+const _rotTmp = new THREE.Vector3();
+const _fireDir = new THREE.Vector3();
+const _sdirTmp = new THREE.Vector3();
+const _shareMates = [];
+const EMPTY_SQUAD = [];
+
+/**
+ * The living members of one team, computed at most once per team per simulated
+ * frame. Three separate places in the update used to re-filter the full combatant
+ * list per fighter per frame (overwatch election, intel sharing, breach surveys) —
+ * thirty-odd array allocations a frame for an answer that only changes when someone
+ * dies, which is why `die()` drops the cache.
+ */
+function aliveSquad(world, team) {
+  let cache = world._squadCache;
+  const stamp = world.simTime ?? 0;
+  if (!cache || cache.stamp !== stamp) {
+    cache = world._squadCache = { stamp, teams: new Map() };
+  }
+  let list = cache.teams.get(team);
+  if (!list) {
+    list = world.combatants.filter(c => c.alive && c.team === team);
+    cache.teams.set(team, list);
+  }
+  return list;
+}
 
 /** How often a fighter sweeps every hostile for line of sight, in seconds. */
 const SCAN_PERIOD = 0.18;
@@ -335,6 +365,8 @@ export class Combatant {
     this.breachStaging = false;
     this.breachCost = 0;
     this.breachGoalSafe = true;
+    /** Frontal fire on the plate: get low and keep coming. */
+    this.shieldWall = false;
     /** What squadmates have told him they are doing. Never read off them. */
     this.knownLanes = new Map();
     /** Holding the angle for the squad, or moving behind somebody who is. */
@@ -546,7 +578,7 @@ export class Combatant {
 
   applyDamage(world, part, dmg, shooter, point, dir = null) {
     if (!this.alive) return;
-    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point, dir); audio.ricochet(); }
+    if (part === 'shield') { dmg *= 0.06; world.fx.sparks(point, dir, null, false); audio.ricochet(); }
     // Crack and thump: being hit gives up roughly where it came from, and only
     // roughly. Gated on `sinceHit` so a burst — or a shotgun — is one noise rather
     // than one per round that lands.
@@ -605,6 +637,9 @@ export class Combatant {
       fromFront = toKiller.x * Math.sin(this.yaw) + toKiller.z * Math.cos(this.yaw);
     }
     this.rig.die(fromFront, part === 'head');
+    // The squad rosters changed mid-frame; whoever updates after this fighter died
+    // must not elect him to overwatch or hand him intel.
+    world._squadCache = null;
     if (this.laser) this.laser.visible = false;
     if (this.bountyMarker) { this.group.remove(this.bountyMarker); this.bountyMarker = null; }
     this.bountyRevealed = false;
@@ -777,7 +812,19 @@ export class Combatant {
     if (this.suppressT <= 0) {
       this.suppressT = SUPPRESSION_PERIOD * (0.85 + Math.random() * 0.3);
       const before = this.pinnedBy;
-      const sees = (from, to) => this._laneSees(world, from, to);
+      const sees = (from, to) => this._dangerSees(world, from, to);
+      // The shield wall: a frontal hot lane is his cue, not his problem. He gets
+      // low behind the plate and keeps coming — crouched, so his head drops below
+      // the shield's top edge in the actual hitbox geometry, weapon down because
+      // hip fire past the edge is what the carry pose is built for. This is the
+      // boldness the archetype promises, and it is conditional on facing: fire on
+      // his flank pins him like anybody else, because the shield is not there.
+      this.shieldWall = false;
+      if (this.archetype === 'shield' && this.suppression.anyHot(now)) {
+        for (const lane of this.suppression.lanes) {
+          if (lane.heat >= 3.5 && this._shieldFronts(lane)) { this.shieldWall = true; break; }
+        }
+      }
       this.pinnedBy = this.suppression.anyHot(now)
         ? this.suppression.covering(this.aimPoint(_routePoint), sees, now)
         : null;
@@ -903,7 +950,7 @@ export class Combatant {
     // assigned so it survives men dying, and re-elected on the think cadence so the
     // job passes to whoever still has eyes on.
     if (this.target) {
-      const squad = world.combatants.filter(c => c.alive && c.team === this.team);
+      const squad = aliveSquad(world, this.team);
       const setter = electOverwatch(squad, this.target);
       const wasSetter = this.onOverwatch;
       this.onOverwatch = setter === this;
@@ -921,7 +968,7 @@ export class Combatant {
 
     const speedMult = 1 - this.legDmg * 0.45;
     let moving = false;
-    const move = new THREE.Vector3();
+    const move = _moveAcc.set(0, 0, 0);
 
     // ---- hazard avoidance ----
     let fleeing = false;
@@ -951,10 +998,10 @@ export class Combatant {
 
     if (this.target && !fleeing && this.healingT <= 0 && this.mendT <= 0) {
       // geometric sightline to target — with no sight, range means nothing: keep hunting
-      const eye = this.eyePos();
+      const eye = this.eyePos(_eyeSelf);
       const aim = this.target.isPlayer
-        ? playerAimPoint(world, eye, world.playerProxy, _aimTmp).clone()
-        : this.target.aimPoint();
+        ? _aimHold.copy(playerAimPoint(world, eye, world.playerProxy, _aimTmp))
+        : this.target.aimPoint(_aimHold);
       // Re-checked every frame for the fighter he is actually engaging, because the
       // moment sight breaks is the moment the belief freezes, and a scan-cadence
       // answer would leave him tracking a live transform for a fifth of a second.
@@ -969,8 +1016,9 @@ export class Combatant {
             : contactRadius(this.contact, now);
         this.contact = this.perception.see(this.target, this.target.pos, now);
         // Call it in. The squad converges on where *he* saw them, a beat later.
-        this.perception.share(this.target, now, world.combatants.filter(
-          c => c.alive && c !== this && c.team === this.team));
+        _shareMates.length = 0;
+        for (const c of aliveSquad(world, this.team)) if (c !== this) _shareMates.push(c);
+        this.perception.share(this.target, now, _shareMates);
       } else if (this.contact?.visible) {
         this.perception.markUnseen(this.target, now);
         world.onCombatEvent?.('contact_broken', this, {
@@ -1142,9 +1190,16 @@ export class Combatant {
 
       const blindPush = !sight && !this.peekSide;
       if (blindPush && dist > 5 &&
-          (this.breachT <= 0 || this.breachTarget !== this.target)) {
-        const squad = world.combatants.filter(candidate =>
-          candidate.alive && candidate.team === this.team);
+          (this.breachT <= 0 || this.breachTarget !== this.target) &&
+          // One lane survey per simulated frame, squad-wide. The survey below prices
+          // up to 22 lanes, each with BVH sightline samples and often an A* search —
+          // fine alone, but breach timers are seeded together at match start, so
+          // several fighters used to run it in the *same* frame and land a visible
+          // hitch. A fighter who defers keeps walking his old heading and re-asks
+          // next frame; nothing observable changes but the spacing.
+          world._laneSurveyAt !== now) {
+        world._laneSurveyAt = now;
+        const squad = aliveSquad(world, this.team);
         const assigned = coordinatedBreachLane(squad, this);
         // The squad's assignment still comes first — a crossfire is only a crossfire
         // if the lanes stay spread. It gets overruled only by ground that is being
@@ -1350,7 +1405,7 @@ export class Combatant {
         // A firearm user lowers out of sprint on visual contact, even while
         // continuing toward a committed breach goal. Distance alone used to
         // keep the gun down across a completely visible gap.
-        this.sprintNow = shouldSprintAtTarget({
+        this.sprintNow = this.shieldWall ? false : shouldSprintAtTarget({
           sight: sight || this.peekSide !== 0,
           melee: !!w.melee,
           distance: dist,
@@ -1429,7 +1484,8 @@ export class Combatant {
       // from behind yet.
       const muzzle = this.muzzleWorld(_muzzle);
       const muzzleSight = (sight || this.peekSide !== 0)
-        && hasLoS(world, muzzle, aim);
+        && hasLoS(world, muzzle, aim)
+        && !this._friendlyInLine(world, muzzle, aim);
       // Everything above navigates on the belief; everything from here down is about
       // a target the weapon can genuinely see, so it measures the real gap. Using the
       // remembered distance to time a shot would let a stale memory tighten or widen
@@ -1483,7 +1539,8 @@ export class Combatant {
       // recorded beaten zone still ADS-strolled into view. Moving is moving: the gun
       // comes up when the feet stop.
       const walkingExposed = this._traveling;
-      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed;
+      this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed &&
+        !this.shieldWall;
       // Up in about a third of a second, down slower — a fighter who has just been
       // shot at keeps his weapon up for a moment.
       const adsRate = this.wantsAds ? 3.4 : 2.0;
@@ -1503,8 +1560,8 @@ export class Combatant {
         // The round leaves the barrel, wherever the barrel happens to be. Leaning
         // around a corner moves it because the animation moves it, not because the
         // shot gets a private offset the fighter's body never took.
-        const fireEye = muzzle.clone();
-        const dir = aim.clone().sub(fireEye).normalize();
+        const fireEye = muzzle;
+        const dir = _fireDir.copy(aim).sub(fireEye).normalize();
         const distFactor = 0.7 + fireDist / 30;
         // A shouldered weapon groups roughly twice as tight as a hip-fired one. This
         // is the mechanical half of the ADS state: without it, taking the time to aim
@@ -1545,8 +1602,8 @@ export class Combatant {
         // otherwise he is shooting the wall in front of his own face.
         _suppressAt.set(this.contact.x, (this.contact.y || 0) + 1.05, this.contact.z);
         if (hasLoS(world, muzzle, _suppressAt)) {
-          const fireEye = muzzle.clone();
-          const dir = _suppressAt.clone().sub(fireEye).normalize();
+          const fireEye = muzzle;
+          const dir = _fireDir.copy(_suppressAt).sub(fireEye).normalize();
           const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
             * (0.7 + dist / 30) + SUPPRESSING.spread;
           this._sendRounds(world, w, fireEye, dir, spreadDeg);
@@ -1636,7 +1693,11 @@ export class Combatant {
         }
         return false;
       };
-      const rot = (v, a) => v.clone().applyAxisAngle(UP, a);
+      // One shared scratch: every candidate is either rejected by isBlocked or
+      // becomes `chosen` and ends the search, so the next call never clobbers a
+      // direction still in use. The closure it replaces allocated a vector per
+      // probe — up to nine per fighter per frame while wall-following.
+      const rot = (v, a) => _rotTmp.copy(v).applyAxisAngle(UP, a);
 
       // stuck detector: wanting to move but going nowhere → burst in a random direction
       this.progressT = (this.progressT ?? 1.2) - dt;
@@ -1645,9 +1706,9 @@ export class Combatant {
         if (moved < 0.5) {
           this.jiggleT = 0.7 + Math.random() * 0.7;
           const a = Math.random() * Math.PI * 2;
-          this.jiggleDir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+          (this.jiggleDir ||= new THREE.Vector3()).set(Math.cos(a), 0, Math.sin(a));
         }
-        this.lastProgressPos = this.pos.clone();
+        (this.lastProgressPos ||= new THREE.Vector3()).copy(this.pos);
         this.progressT = 1.2;
       }
 
@@ -1712,7 +1773,8 @@ export class Combatant {
     // crouchK stays the gameplay value that eyePos/aimPoint and the hit model read;
     // the visible squat comes from the authored crouch clips, which are keyed to
     // roughly the same head height.
-    const wantCrouch = this.healingT > 0 || this.mendT > 0 || (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
+    const wantCrouch = this.healingT > 0 || this.mendT > 0 || this.shieldWall ||
+      (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
     this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
     // peeking leans harder than plain strafing. Sign: positive is to his right, which
     // is exactly where the peek eye offsets for side=+1.
@@ -2161,11 +2223,11 @@ export class Combatant {
    */
   _sendRounds(world, w, from, dir, spreadDeg) {
     for (let i = 0; i < w.pellets; i++) {
-      const sdir = applySpread(dir, spreadDeg + (w.pellets > 1 ? 3.5 : 0));
+      const sdir = applySpread(dir, spreadDeg + (w.pellets > 1 ? 3.5 : 0), _sdirTmp);
       const res = fireRay(world, this, from, sdir, w,
         this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
       world.fx.tracer(from, res.point);
-      if (res.type === 'wall') { world.fx.sparks(res.point, sdir); if (Math.random() < 0.3) audio.ricochet(); }
+      if (res.type === 'wall') { world.fx.sparks(res.point, sdir, res.normal); if (Math.random() < 0.3) audio.ricochet(); }
     }
     audio.shot(w.sound, 1.2 / (1 + from.distanceTo(world.cameraPos) * 0.09));
     world.fx.muzzleFlash(from, dir, { source: this });
@@ -2184,10 +2246,83 @@ export class Combatant {
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
   _laneSees(world, from, to) {
     return hasLoS(
-      world.colliders,
+      world,
       _laneFrom.set(from.x, from.y, from.z),
       _laneTo.set(to.x, to.y, to.z),
     );
+  }
+
+  /**
+   * Is a friendly shieldman planted between `from` and `to`, facing the fire?
+   *
+   * A carried riot shield is a wall that walks, and the squad should treat it as
+   * one: ground behind it prices as covered, which is what makes the others stack
+   * up behind him instead of spreading into the open beside him. Facing matters —
+   * a shield pointed the wrong way is a man, not a wall.
+   */
+  _shieldBlocks(world, team, from, to) {
+    const dx = to.x - from.x, dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return false;
+    for (const c of world.combatants) {
+      if (!c.alive || c.team !== team || c.archetype !== 'shield') continue;
+      const t = ((c.pos.x - from.x) * dx + (c.pos.z - from.z) * dz) / (len * len);
+      if (t < 0.05 || t > 0.95) continue;
+      const px = from.x + dx * t, pz = from.z + dz * t;
+      if (Math.hypot(c.pos.x - px, c.pos.z - pz) > 0.7) continue;
+      // Shield toward the threat: his facing within ~70 degrees of the line back
+      // to the muzzle.
+      const md = Math.hypot(from.x - c.pos.x, from.z - c.pos.z) || 1;
+      const facingDot = ((from.x - c.pos.x) / md) * Math.sin(c.yaw)
+        + ((from.z - c.pos.z) / md) * Math.cos(c.yaw);
+      if (facingDot > 0.34) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Is any living squadmate standing in this fire line?
+   *
+   * Bodies are soft cover to the danger model — no one plans a route on the
+   * assumption a friend will keep standing there — but they are a hard reason not
+   * to pull the trigger. AI rounds pass through friendlies by design, and the
+   * visible result was a squad shooting through each other's backs; the round may
+   * not hurt the man in front, but firing it reads as absurd and the shot was
+   * never clean. Blocked shooters keep strafing, which is what clears the lane.
+   */
+  _friendlyInLine(world, from, to) {
+    const dx = to.x - from.x, dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return false;
+    for (const c of world.combatants) {
+      if (c === this || !c.alive || c.team !== this.team) continue;
+      const t = ((c.pos.x - from.x) * dx + (c.pos.z - from.z) * dz) / (len * len);
+      if (t < 0.04 || t > 0.96) continue;
+      const px = from.x + dx * t, pz = from.z + dz * t;
+      if (Math.hypot(c.pos.x - px, c.pos.z - pz) < 0.5) return true;
+    }
+    return false;
+  }
+
+  /** Is this lane coming at my shield? Only a shieldman ever asks. */
+  _shieldFronts(lane) {
+    if (this.archetype !== 'shield') return false;
+    const dx = lane.x - this.pos.x, dz = lane.z - this.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    return (dx / d) * Math.sin(this.yaw) + (dz / d) * Math.cos(this.yaw) > 0.5;
+  }
+
+  /**
+   * The sight callback the danger model runs on: walls, then the walking wall.
+   *
+   * His own shield first — fire from the front is his to ignore, which is the
+   * boldness the archetype is for — then any squadmate's shield planted across the
+   * line, which is what lets everyone else treat the man as cover.
+   */
+  _dangerSees(world, from, to) {
+    if (this._shieldFronts(from)) return false;
+    if (!this._laneSees(world, from, to)) return false;
+    return !this._shieldBlocks(world, this.team, from, to);
   }
 
   /**
@@ -2221,7 +2356,7 @@ export class Combatant {
    */
   _groundIsDangerous(world, point, now) {
     if (this.suppression.markedAt(point, now)) return true;
-    return !!this.suppression.covering(point, (from, to) => this._laneSees(world, from, to), now);
+    return !!this.suppression.covering(point, (from, to) => this._dangerSees(world, from, to), now);
   }
 
   /**
@@ -2237,7 +2372,7 @@ export class Combatant {
    */
   _routeCost(world, goal, now, side = this.flankSide) {
     if (!this.suppression.anyDanger(now)) return 0;
-    const sees = (from, to) => this._laneSees(world, from, to);
+    const sees = (from, to) => this._dangerSees(world, from, to);
     const chest = this.pos.y + 1.15 * this.scale;
     const legs = this._routeLegs(world, goal, side);
     let walked = 0;
