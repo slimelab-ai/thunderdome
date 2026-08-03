@@ -289,6 +289,25 @@ test('rival reserve responds to confidence, loss exposure, win income, and remai
   assert.ok(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }) >= 3000);
 });
 
+test('losing underdog invests unattainable reserve in field power but keeps the next stake', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 650;
+  state.enemyLossStreak = 3;
+  state.draft.fundedRounds = 4;
+  state.enemy.recruits = ['enforcer', 'medic', 'rusher'];
+  state.enemy.inventory = { smg: 3, ammo_9mm: 3 };
+
+  const risk = liquidationRiskModel(state, { opponentPower: 900, expectedStake: 250 });
+  assert.ok(risk.reserveTarget > state.enemyMoney);
+  const decision = runLiquidationAI(state, market, { opponentPower: 900, expectedStake: 250 });
+  assert.equal(decision.kind, 'buy');
+  assert.equal(decision.type, 'medkit');
+  assert.equal(decision.comebackMode, true);
+  assert.equal(decision.strategicFloor, 250);
+  assert.ok(state.enemyMoney >= 250);
+});
+
 test('public market tape records both sides and separates rounds', () => {
   const state = newLiquidationState(20000, () => 0.5);
   recordMarketTrade(state, 'player', 'buy', 'rifle', 1500);
