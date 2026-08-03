@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addAmmoToPack, ammoInGrid, makeCharacter, makeItem, takeAmmoFromGrid,
+  addAmmoToPack, ammoInGrid, extractAmmoFromPack, makeCharacter, makeItem, takeAmmoFromGrid,
 } from '../src/items.js';
 
 test('adding ammo tops partial backpack stacks before using empty cells', () => {
@@ -30,4 +30,15 @@ test('stash ammo can be removed by exact round count across partial boxes', () =
   assert.equal(takeAmmoFromGrid(grid, '9mm', 45), 45);
   assert.equal(ammoInGrid(grid, '9mm'), 25);
   assert.equal(grid.items.length, 1);
+});
+
+test('extracting pack surplus splits a box without losing rounds', () => {
+  const ch = makeCharacter();
+  const box = makeItem('ammo_9mm');
+  ch.pack.items.push({ it: box, x: 0, y: 0 });
+
+  const extracted = extractAmmoFromPack(ch, box.uid, 35);
+  assert.equal(extracted.rounds, 35);
+  assert.equal(ch.pack.items[0].it.rounds, 55);
+  assert.equal(extracted.rounds + ch.pack.items[0].it.rounds, 90);
 });

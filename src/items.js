@@ -202,6 +202,21 @@ export function addAmmoToPack(ch, ammoType, n) {
   return n - left;
 }
 
+export function extractAmmoFromPack(ch, uid, n) {
+  const entry = ch.pack.items.find(candidate => candidate.it.uid === uid);
+  const def = entry && ITEM_TYPES[entry.it.type];
+  if (!entry || def?.kind !== 'ammo' || n <= 0) return null;
+  const rounds = Math.min(n, entry.it.rounds);
+  if (rounds >= entry.it.rounds) {
+    removeFromGrid(ch.pack, uid);
+    return entry.it;
+  }
+  entry.it.rounds -= rounds;
+  const extracted = makeItem(entry.it.type);
+  extracted.rounds = rounds;
+  return extracted;
+}
+
 export function consumeAmmo(ch, ammoType, n) {
   return takeAmmoFromGrid(ch.pack, ammoType, n);
 }

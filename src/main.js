@@ -20,7 +20,7 @@ import { preloadViewmodel } from './viewmodel.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
-  ammoInGrid, ammoInPack, addAmmoToPack, takeAmmoFromGrid, consumeAmmo,
+  ammoInGrid, ammoInPack, addAmmoToPack, extractAmmoFromPack, takeAmmoFromGrid, consumeAmmo,
   bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
@@ -1803,10 +1803,9 @@ function executeAutoAmmo(earnings) {
     if (!fighter) continue;
 
     if (step.source === 'pack') {
-      const entry = fighter.ch.pack.items.find(candidate => candidate.it.uid === step.uid);
-      if (!entry) continue;
-      removeFromGrid(fighter.ch.pack, step.uid);
-      autoPlace(career.stash, entry.it);
+      const returned = extractAmmoFromPack(fighter.ch, step.uid, step.rounds);
+      if (!returned) continue;
+      autoPlace(career.stash, returned);
       changed = true;
       continue;
     }

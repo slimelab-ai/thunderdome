@@ -78,29 +78,59 @@ export function planSquadAmmo(
   const returns = [];
   const transfers = [];
   const returnedUids = new Set();
+  const returnedRoundsByFighter = new Map();
   const stashRounds = new Map(Object.keys(AMMO_TYPES).map(ammoType => [
     ammoType,
     stash ? ammoInGrid(stash, ammoType) : 0,
   ]));
+  const weaponCountsByFighter = new Map(fighters.map(fighter => {
+    const counts = new Map();
+    for (const slot of ['gun1', 'gun2']) {
+      const gun = fighter.ch.gear[slot];
+      const ammoType = gun && ITEM_TYPES[gun.type]?.ammo;
+      if (ammoType) counts.set(ammoType, (counts.get(ammoType) || 0) + 1);
+    }
+    return [fighter, counts];
+  }));
 
-  // Pool incompatible ammo before planning any refill, so somebody else's dead
-  // weight can supply an equipped weapon earlier in the roster on the same click.
+  const planReturn = (fighter, entry, rounds, reason) => {
+    const def = ITEM_TYPES[entry.it.type];
+    const take = Math.min(Math.max(0, rounds), entry.it.rounds);
+    if (!take || def?.kind !== 'ammo') return;
+    returns.push({
+      source: 'pack', reason, who: fighter.who, uid: entry.it.uid,
+      type: entry.it.type, rounds: take,
+    });
+    if (take >= entry.it.rounds) returnedUids.add(entry.it.uid);
+    const fighterReturns = returnedRoundsByFighter.get(fighter) || new Map();
+    fighterReturns.set(def.ammoType, (fighterReturns.get(def.ammoType) || 0) + take);
+    returnedRoundsByFighter.set(fighter, fighterReturns);
+    stashRounds.set(def.ammoType, (stashRounds.get(def.ammoType) || 0) + take);
+  };
+
+  // Pool incompatible and surplus ammo before planning any refill, so somebody
+  // else's dead weight can supply an equipped weapon earlier in the roster on
+  // the same click. Keep exactly the configured target for compatible weapons.
   for (const fighter of fighters) {
-    const usableAmmo = new Set(['gun1', 'gun2']
-      .map(slot => fighter.ch.gear[slot])
-      .filter(Boolean)
-      .map(gun => ITEM_TYPES[gun.type]?.ammo)
-      .filter(Boolean));
-    for (const entry of fighter.ch.pack.items) {
+    const weaponCounts = weaponCountsByFighter.get(fighter);
+    const ammoEntries = fighter.ch.pack.items.filter(entry => ITEM_TYPES[entry.it.type]?.kind === 'ammo');
+    for (const entry of ammoEntries) {
       const def = ITEM_TYPES[entry.it.type];
-      if (def?.kind !== 'ammo' || usableAmmo.has(def.ammoType)) continue;
-      const step = {
-        source: 'pack', who: fighter.who, uid: entry.it.uid,
-        type: entry.it.type, rounds: entry.it.rounds,
-      };
-      returns.push(step);
-      returnedUids.add(entry.it.uid);
-      stashRounds.set(def.ammoType, (stashRounds.get(def.ammoType) || 0) + entry.it.rounds);
+      if (!weaponCounts.has(def.ammoType)) planReturn(fighter, entry, entry.it.rounds, 'incompatible');
+    }
+    for (const [ammoType, weaponCount] of weaponCounts) {
+      const targetRounds = AMMO_TYPES[ammoType].box * stacksPerWeapon * weaponCount;
+      const entries = ammoEntries
+        .filter(entry => ITEM_TYPES[entry.it.type].ammoType === ammoType)
+        .sort((a, b) => a.it.rounds - b.it.rounds);
+      let excessRounds = Math.max(0,
+        entries.reduce((total, entry) => total + entry.it.rounds, 0) - targetRounds);
+      for (const entry of entries) {
+        if (excessRounds <= 0) break;
+        const take = Math.min(excessRounds, entry.it.rounds);
+        planReturn(fighter, entry, take, 'excess');
+        excessRounds -= take;
+      }
     }
   }
 
@@ -108,12 +138,7 @@ export function planSquadAmmo(
 
   for (const fighter of fighters) {
     if (planner.stopped) break;
-    const weaponCounts = new Map();
-    for (const slot of ['gun1', 'gun2']) {
-      const gun = fighter.ch.gear[slot];
-      const ammoType = gun && ITEM_TYPES[gun.type]?.ammo;
-      if (ammoType) weaponCounts.set(ammoType, (weaponCounts.get(ammoType) || 0) + 1);
-    }
+    const weaponCounts = weaponCountsByFighter.get(fighter);
     const usedCells = fighter.ch.pack.items.reduce((total, entry) => {
       if (returnedUids.has(entry.it.uid)) return total;
       const def = ITEM_TYPES[entry.it.type];
@@ -123,10 +148,11 @@ export function planSquadAmmo(
     for (const [ammoType, weaponCount] of weaponCounts) {
       const roundsPerStack = AMMO_TYPES[ammoType].box;
       const targetRounds = roundsPerStack * stacksPerWeapon * weaponCount;
-      let carriedRounds = ammoInPack(fighter.ch, ammoType);
+      let carriedRounds = ammoInPack(fighter.ch, ammoType) -
+        (returnedRoundsByFighter.get(fighter)?.get(ammoType) || 0);
       let carriedStacks = fighter.ch.pack.items.filter(entry => {
         const def = ITEM_TYPES[entry.it.type];
-        return def?.kind === 'ammo' && def.ammoType === ammoType;
+        return !returnedUids.has(entry.it.uid) && def?.kind === 'ammo' && def.ammoType === ammoType;
       }).length;
       const carryCapacity = (carriedStacks + freeCells) * roundsPerStack;
       let missingRounds = Math.max(0, Math.min(targetRounds, carryCapacity) - carriedRounds);
