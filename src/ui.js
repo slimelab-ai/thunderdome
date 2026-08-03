@@ -367,7 +367,12 @@ export class UI {
     tapeWrap.classList.toggle('hidden', !liquidation);
     if (liquidation) {
       const tape = $('market-tape');
-      tape.innerHTML = (career.liquidation.marketLog || []).map(entry => {
+      const log = career.liquidation.marketLog || [];
+      const previousCount = Number(tape.dataset.entryCount || 0);
+      const previousTop = tape.scrollTop;
+      const wasFollowing = previousCount === 0 ||
+        tape.scrollHeight - tape.clientHeight - tape.scrollTop <= 12;
+      tape.innerHTML = log.map(entry => {
         if (entry.kind === 'round') {
           return `<div class="tape-round"><span>ROUND ${entry.round}</span></div>`;
         }
@@ -383,7 +388,13 @@ export class UI {
           `<span class="tape-action">${verb} ${item}</span>` +
           `<b class="${credit ? 'tape-credit' : 'tape-debit'}">${credit ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
       }).join('');
-      tape.scrollTop = tape.scrollHeight;
+      tape.dataset.entryCount = String(log.length);
+      const logReplaced = log.length < previousCount;
+      if (logReplaced || (log.length > previousCount && wasFollowing)) {
+        tape.scrollTop = tape.scrollHeight;
+      } else {
+        tape.scrollTop = previousTop;
+      }
     }
 
     const turnStatus = $('shop-turn-status');
@@ -404,7 +415,7 @@ export class UI {
     $('btn-next-fight').disabled = draftTurn.mustEndTurn;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
     const autoButton = (action, label, description, plan, unit = '$') => `
-      <button class="btn squad-auto-btn" data-auto-squad="${action}" ${draftTurn.locked || plan.cost <= 0 ? 'disabled' : ''}>
+      <button class="btn squad-auto-btn" data-auto-squad="${action}" ${draftTurn.locked || !(plan.actionable ?? (plan.cost > 0)) ? 'disabled' : ''}>
         <span><b>${label}</b><small>${description}</small></span>
         <strong>${unit === '$' ? '$' : ''}${plan.cost.toLocaleString()}${unit === '$' ? '' : ` ${unit}`}</strong>
       </button>`;

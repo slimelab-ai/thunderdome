@@ -304,6 +304,18 @@ test('public market tape records both sides and separates rounds', () => {
   assert.equal(state.marketLog[4].amount, 1600);
 });
 
+test('market tape keeps delayed actions at the tail under an explicit round header', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  state.round = 2;
+  recordMarketTrade(state, 'rival', 'buy', 'rifle', 1500);
+  state.round = 1;
+  recordMarketTrade(state, 'player', 'buy', 'ammo_9mm', 55);
+  assert.deepEqual(state.marketLog.slice(-2), [
+    { kind: 'round', round: 1 },
+    { kind: 'trade', round: 1, side: 'player', action: 'buy', type: 'ammo_9mm', amount: 55 },
+  ]);
+});
+
 test('rival supplies are divided across fighters without duplication', () => {
   const inventory = { grenade: 5 };
   const shares = Array.from({ length: 3 }, (_, i) => allocateRivalSupply(inventory, 'grenade', i, 3));
