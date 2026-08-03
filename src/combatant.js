@@ -1568,10 +1568,11 @@ export class Combatant {
         // would be pure cost and the AI would be strictly worse for doing it.
         const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
           * distFactor * (this.crouchK < 0.9 ? 0.8 : 1) * (1.35 - 0.72 * this.adsK);
-        this._sendRounds(world, w, fireEye, dir, spreadDeg);
+        const volley = this._sendRounds(world, w, fireEye, dir, spreadDeg);
         world.onCombatEvent?.('shot', this, {
           target: this.target?.name || null, weapon: this.weaponId, range: fireDist,
           line_of_sight: los, role: this.role, suppressive: false,
+          pellets: volley.pellets, hits: volley.hits,
         });
         this.burstLeft--;
         if (this.burstLeft <= 0) {
@@ -1606,12 +1607,13 @@ export class Combatant {
           const dir = _fireDir.copy(_suppressAt).sub(fireEye).normalize();
           const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
             * (0.7 + dist / 30) + SUPPRESSING.spread;
-          this._sendRounds(world, w, fireEye, dir, spreadDeg);
+          const volley = this._sendRounds(world, w, fireEye, dir, spreadDeg);
           world.onCombatEvent?.('shot', this, {
             target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
             weapon: this.weaponId, range: +dist.toFixed(2),
             line_of_sight: false, role: this.role, suppressive: true,
             belief_error: +uncertainty.toFixed(2),
+            pellets: volley.pellets, hits: volley.hits,
           });
           this.suppressLeft--;
           if (this.suppressLeft <= 0) {
@@ -2222,10 +2224,12 @@ export class Combatant {
    * ammunition, and they make the noise that gives the shooter away.
    */
   _sendRounds(world, w, from, dir, spreadDeg) {
+    let hits = 0;
     for (let i = 0; i < w.pellets; i++) {
       const sdir = applySpread(dir, spreadDeg + (w.pellets > 1 ? 3.5 : 0), _sdirTmp);
       const res = fireRay(world, this, from, sdir, w,
         this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
+      if (res.type === 'flesh' || res.type === 'player') hits++;
       world.fx.tracer(from, res.point);
       if (res.type === 'wall') { world.fx.sparks(res.point, sdir, res.normal); if (Math.random() < 0.3) audio.ricochet(); }
     }
@@ -2241,6 +2245,7 @@ export class Combatant {
     // When he last put a round out, which is what 'covering' means to the
     // rest of the squad — an elected setter holding his fire covers nobody.
     this.lastShotAt = world.simTime ?? 0;
+    return { pellets: w.pellets, hits };
   }
 
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
