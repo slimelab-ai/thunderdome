@@ -199,6 +199,7 @@ export class Announcer {
     this.lastLineAt = -99;
     this._used = {};   // per-category lines already played this session (no repeats until exhausted)
     this._voice = null;
+    this._speaking = false;   // event-tracked; never read from the speechSynthesis getter
     this._resolveVoice();
   }
 
@@ -241,7 +242,11 @@ export class Announcer {
       if (this.showing > 0 || this.queue.length) return;
       if (now - this.lastLineAt < 6) return;
       if (this.cooldowns[category] && now - this.cooldowns[category] < minGap) return;
-      try { if (window.speechSynthesis?.speaking) return; } catch { /* fine */ }
+      // `_speaking` is our own event-tracked flag, not the `speechSynthesis.speaking`
+      // getter that used to sit here: that getter is a synchronous call into the
+      // browser's speech process, it ran inside the announcer tick, and on Windows it
+      // can stall the main thread while SAPI is busy. This path must not do IPC.
+      if (this._speaking) return;
     }
     this.cooldowns[category] = now;
     let text = this._pickFresh(category);
@@ -271,13 +276,20 @@ export class Announcer {
   }
 
   // VULTURE's voice: Web Speech API — zero assets, maximum carnival barker
+  //
+  // The engine is talked to as little as possible: speak() and cancel() only, always
+  // from a macrotask, never a getter. Whether he is mid-line is tracked on our side
+  // through utterance events (`_speaking`), because every property read on
+  // `speechSynthesis` is a synchronous round-trip to the browser's speech process
+  // and on Windows those round-trips have hung the game.
   _speak(text, force) {
     try {
       if (!window.speechSynthesis) return;
       // never interrupt himself mid-sentence for color commentary
-      if (speechSynthesis.speaking) {
+      if (this._speaking) {
         if (!force) return;
         speechSynthesis.cancel();
+        this._speaking = false;
         // cancel-then-speak in one task is a long-standing Chrome stall (and on
         // some engines the new utterance is silently dropped); give the engine a
         // beat to actually stop before handing it the next line.
@@ -291,11 +303,23 @@ export class Announcer {
 
   _utter(text) {
     try {
-      const u = new SpeechSynthesisUtterance(text.replace(/[“”"]/g, ''));
+      const plain = text.replace(/[“”"]/g, '');
+      const u = new SpeechSynthesisUtterance(plain);
       u.rate = 1.2;
       u.pitch = 0.55;
       u.volume = 0.9;
       if (this._voice) u.voice = this._voice;
+      this._speaking = true;
+      // The token keeps a stale fallback timer from freeing the mic under a NEWER
+      // utterance that started after this one finished.
+      const token = (this._utterToken = (this._utterToken || 0) + 1);
+      const done = () => { if (this._utterToken === token) this._speaking = false; };
+      u.onend = done;
+      u.onerror = done;
+      // Chrome has lost `end` events for years; without a fallback one dropped event
+      // would mute him for the rest of the session. Generous estimate of the line's
+      // duration at rate 1.2, then assume the mic is free.
+      setTimeout(done, 1500 + plain.length * 70);
       speechSynthesis.speak(u);
       this._spokeCount = (this._spokeCount || 0) + 1;
     } catch { /* no voice, no problem */ }
@@ -305,6 +329,7 @@ export class Announcer {
     this._gen = (this._gen || 0) + 1;   // invalidates any deferred _speak in flight
     this.queue.length = 0;
     this.showing = 0;
+    this._speaking = false;
     this.wrap.classList.remove('show');
     try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
   }
