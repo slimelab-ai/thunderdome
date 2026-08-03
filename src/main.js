@@ -1802,6 +1802,15 @@ function executeAutoAmmo(earnings) {
     const fighter = shopSquad().find(entry => String(entry.who) === String(step.who));
     if (!fighter) continue;
 
+    if (step.source === 'pack') {
+      const entry = fighter.ch.pack.items.find(candidate => candidate.it.uid === step.uid);
+      if (!entry) continue;
+      removeFromGrid(fighter.ch.pack, step.uid);
+      autoPlace(career.stash, entry.it);
+      changed = true;
+      continue;
+    }
+
     const ammoType = ITEM_TYPES[step.type].ammoType;
     if (step.source === 'stash') {
       const available = ammoInGrid(career.stash, ammoType);

@@ -75,12 +75,36 @@ export function planSquadAmmo(
   fighters, budget, quoteSeries, stacksPerWeapon = AUTO_AMMO_STACKS, stash = null,
 ) {
   const planner = purchasePlanner(Math.max(0, budget), quoteSeries);
-  const steps = [];
+  const returns = [];
   const transfers = [];
+  const returnedUids = new Set();
   const stashRounds = new Map(Object.keys(AMMO_TYPES).map(ammoType => [
     ammoType,
     stash ? ammoInGrid(stash, ammoType) : 0,
   ]));
+
+  // Pool incompatible ammo before planning any refill, so somebody else's dead
+  // weight can supply an equipped weapon earlier in the roster on the same click.
+  for (const fighter of fighters) {
+    const usableAmmo = new Set(['gun1', 'gun2']
+      .map(slot => fighter.ch.gear[slot])
+      .filter(Boolean)
+      .map(gun => ITEM_TYPES[gun.type]?.ammo)
+      .filter(Boolean));
+    for (const entry of fighter.ch.pack.items) {
+      const def = ITEM_TYPES[entry.it.type];
+      if (def?.kind !== 'ammo' || usableAmmo.has(def.ammoType)) continue;
+      const step = {
+        source: 'pack', who: fighter.who, uid: entry.it.uid,
+        type: entry.it.type, rounds: entry.it.rounds,
+      };
+      returns.push(step);
+      returnedUids.add(entry.it.uid);
+      stashRounds.set(def.ammoType, (stashRounds.get(def.ammoType) || 0) + entry.it.rounds);
+    }
+  }
+
+  const steps = [...returns];
 
   for (const fighter of fighters) {
     if (planner.stopped) break;
@@ -91,6 +115,7 @@ export function planSquadAmmo(
       if (ammoType) weaponCounts.set(ammoType, (weaponCounts.get(ammoType) || 0) + 1);
     }
     const usedCells = fighter.ch.pack.items.reduce((total, entry) => {
+      if (returnedUids.has(entry.it.uid)) return total;
       const def = ITEM_TYPES[entry.it.type];
       return total + (def?.w || 1) * (def?.h || 1);
     }, 0);
@@ -143,7 +168,7 @@ export function planSquadAmmo(
     }
   }
 
-  return { ...planner.finish(), transfers, steps };
+  return { ...planner.finish(), returns, transfers, steps };
 }
 
 export function planSquadTraining(fighters) {

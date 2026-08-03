@@ -142,6 +142,40 @@ test('auto-ammo remains actionable at zero cost when the stash covers the refill
   assert.equal(plan.steps.length, 1);
 });
 
+test('auto-ammo returns ammo a fighter cannot use to the stash', () => {
+  const fighter = {
+    who: 'player',
+    ch: character({ pack: [
+      { type: 'ammo_9mm', rounds: 90 },
+      { type: 'ammo_9mm', rounds: 90 },
+      { type: 'ammo_762', rounds: 35 },
+    ] }),
+  };
+  const plan = planSquadAmmo([fighter], 0, flatQuote({}));
+  assert.deepEqual(plan.returns.map(step => [step.type, step.rounds]), [['ammo_762', 35]]);
+  assert.deepEqual(plan.steps.map(step => step.source), ['pack']);
+  assert.equal(plan.cost, 0);
+});
+
+test('auto-ammo can refill a squadmate with incompatible ammo recovered from another pack', () => {
+  const fighters = [
+    {
+      who: 'player',
+      ch: character({ pack: [
+        { type: 'ammo_9mm', rounds: 90 },
+        { type: 'ammo_9mm', rounds: 90 },
+        { type: 'ammo_762', rounds: 60 },
+      ] }),
+    },
+    { who: 0, ch: character({ gun1: 'rifle', pack: [] }) },
+  ];
+  const plan = planSquadAmmo(fighters, 0, flatQuote({ ammo_762: 95 }));
+  assert.deepEqual(plan.steps.slice(0, 2).map(step => [step.source, step.who, step.rounds]), [
+    ['pack', 'player', 60],
+    ['stash', 0, 60],
+  ]);
+});
+
 test('auto-upgrade spends each fighter’s XP on balanced stat tiers without touching gear', () => {
   const fighters = [
     {
