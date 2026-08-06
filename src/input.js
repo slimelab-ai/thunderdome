@@ -83,6 +83,8 @@ export class InputHub {
     this.menuYHeldFor = 0;
     this.menuYHoldFired = false;
     this.gamepadActiveAt = -10;
+    this.controllerConnected = false;
+    this._padIdentity = null;
     this.sprintLatch = false;   // L3 arms it; easing off the stick clears it
     this.rtHeld = false;
     this.ltHeld = false;
@@ -90,11 +92,38 @@ export class InputHub {
     this._to = new THREE.Vector3();
     this._aim = new THREE.Vector3();
     this._best = new THREE.Vector3();
+
+    // Polling remains the source of truth, but these events let Xbox Edge promote
+    // the pad as soon as its browser-level controller mode hands it to the page.
+    // The first poll still covers engines which do not dispatch the events.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gamepadconnected', () => {
+        this.controllerConnected = true;
+        this.prevButtons = [];
+        this.onControllerActive?.();
+      });
+      window.addEventListener('gamepaddisconnected', () => this.resetGamepadState());
+    }
   }
 
   // true while a pad has produced input recently — lets a controller play
   // without pointer lock and turns its aim assist on
   get gamepadActive() { return performance.now() / 1000 - this.gamepadActiveAt < 3; }
+
+  // Unlike the recent-input modality flag above, connection is deliberately
+  // sticky while the pad is present. An idle controller must not make the game
+  // revoke controller play or treat a pointer-lock change as a pause.
+  get gamepadConnected() { return this.controllerConnected; }
+
+  resetGamepadState() {
+    this.controllerConnected = false;
+    this._padIdentity = null;
+    this.prevButtons = [];
+    this.menuYHeldFor = 0;
+    this.menuYHoldFired = false;
+    if (this.rtHeld) { this.player.onMouseUp?.(0); this.rtHeld = false; }
+    if (this.ltHeld) { this.player.onMouseUp?.(2); this.ltHeld = false; }
+  }
 
   setControllerSettings(settings) {
     this.controllerSettings = { ...this.controllerSettings, ...settings };
@@ -116,21 +145,34 @@ export class InputHub {
     let padMove = { x: 0, y: 0, mag: 0 };
 
     if (pad) {
-      const val = (i) => pad.buttons[i] ? Math.max(pad.buttons[i].value || 0, pad.buttons[i].pressed ? 1 : 0) : 0;
+      const identity = `${pad.index ?? 0}:${pad.id || ''}`;
+      if (!this.controllerConnected || identity !== this._padIdentity) {
+        // A browser controller-mode popup can consume the Start release. Treat the
+        // pad returned afterwards as a fresh device so stale edges cannot strand it.
+        this.prevButtons = [];
+        this._padIdentity = identity;
+        this.controllerConnected = true;
+        this.onControllerActive?.();
+      }
+      // Some console Chromium builds expose legacy array-like lists here rather
+      // than real Arrays. Normalize once so `some`/`map` cannot throw in the frame.
+      const buttons = Array.from(pad.buttons || []);
+      const axes = Array.from(pad.axes || []);
+      const val = (i) => buttons[i] ? Math.max(buttons[i].value || 0, buttons[i].pressed ? 1 : 0) : 0;
       const pressed = (i) => val(i) > STICK.triggerAt;
       const edge = (i) => pressed(i) && !this.prevButtons[i];
 
-      if (pad.buttons.some((b) => b.pressed || (b.value || 0) > STICK.triggerAt)
-        || pad.axes.some((a) => Math.abs(a) > STICK.deadzone)) {
+      if (buttons.some((b) => b.pressed || (b.value || 0) > STICK.triggerAt)
+        || axes.some((a) => Math.abs(a) > STICK.deadzone)) {
         this.gamepadActiveAt = now;
         this.onControllerActive?.();
       }
       padLook = stickCurve(
-        pad.axes[2] || 0, pad.axes[3] || 0,
+        axes[2] || 0, axes[3] || 0,
         STICK.deadzone, this.controllerSettings.exponent
       );
       this.onControllerSample?.({
-        raw: Math.min(1, Math.hypot(pad.axes[2] || 0, pad.axes[3] || 0)),
+        raw: Math.min(1, Math.hypot(axes[2] || 0, axes[3] || 0)),
         curved: padLook.mag,
       });
 
@@ -141,8 +183,8 @@ export class InputHub {
       }
 
       if (!inMatch) {
-        const ax = pad.axes[0] || 0;
-        const ay = pad.axes[1] || 0;
+        const ax = axes[0] || 0;
+        const ay = axes[1] || 0;
         const cursor = stickCurve(ax, ay, 0.14, 1.45);
         if (cursor.mag > 0) {
           this.onMenuInput?.({
@@ -190,7 +232,7 @@ export class InputHub {
       }
 
       if (inMatch && p.alive) {
-        padMove = stickCurve(pad.axes[0] || 0, pad.axes[1] || 0, STICK.deadzone, STICK.expo);
+        padMove = stickCurve(axes[0] || 0, axes[1] || 0, STICK.deadzone, STICK.expo);
         p.padMoveX += padMove.x;
         p.padMoveZ += padMove.y;
 
@@ -221,7 +263,9 @@ export class InputHub {
         }
       }
 
-      this.prevButtons = pad.buttons.map((_, i) => pressed(i));
+      this.prevButtons = buttons.map((_, i) => pressed(i));
+    } else if (this.controllerConnected || this._padIdentity !== null) {
+      this.resetGamepadState();
     }
 
     // -------- touch --------
@@ -281,13 +325,19 @@ export class InputHub {
 
   _pad() {
     if (!navigator.getGamepads) return null;
-    let fallback = null;
-    for (const g of navigator.getGamepads()) {
-      if (!g || !g.connected) continue;
-      if (g.mapping === 'standard') return g;
-      fallback ||= g;
+    try {
+      let fallback = null;
+      for (const g of navigator.getGamepads() || []) {
+        if (!g || !g.connected) continue;
+        if (g.mapping === 'standard') return g;
+        fallback ||= g;
+      }
+      return fallback;
+    } catch {
+      // A disabled browser-level controller mode may temporarily deny the API.
+      // Input absence is recoverable; throwing once per rAF would freeze rendering.
+      return null;
     }
-    return fallback;
   }
 
   // enemy nearest the crosshair inside the slow cone, in range, with line of sight

@@ -150,6 +150,32 @@ test('gamepad update wires buttons, movement, and pause edges into the player', 
   assert.equal(resumed, 1);
 });
 
+test('a connected gamepad remains available while idle and reconnect clears stale Start edges', () => {
+  const { hub } = makeHub();
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  const pad = { index: 0, id: 'Xbox Controller', connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons };
+  hub._pad = () => pad;
+
+  hub.update(1 / 60, 'menu');
+  assert.equal(hub.gamepadConnected, true);
+  hub.gamepadActiveAt = -10;
+  assert.equal(hub.gamepadActive, false, 'recent modality can expire');
+  assert.equal(hub.gamepadConnected, true, 'play authorization does not expire with it');
+
+  buttons[9] = { pressed: true, value: 1 };
+  let advances = 0;
+  hub.onMenuInput = (action) => { if (action === 'advance') advances++; };
+  hub.update(1 / 60, 'intro');
+  assert.equal(advances, 1);
+
+  hub._pad = () => null;
+  hub.update(1 / 60, 'intro');
+  assert.equal(hub.gamepadConnected, false);
+  hub._pad = () => pad;
+  hub.update(1 / 60, 'intro');
+  assert.equal(advances, 2, 'held Start is a fresh edge after browser handoff/reconnect');
+});
+
 test('looking with the right stick turns the view and aim assist slows it near a target', () => {
   const enemies = [enemyAt(0.5, 1.62, -12)];
   const clean = makeHub();           // no enemies

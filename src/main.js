@@ -32,6 +32,7 @@ import { MenuNavigator } from './ui-nav.js';
 import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
 import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
+import { isXboxBrowser } from './platform.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -98,10 +99,14 @@ function enterSandbox(weapons = null, { god = true } = {}) {
 
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
+const xboxCompatibilityMode = isXboxBrowser();
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.
 function loadGraphicsQuality() {
+  // Xbox One Edge reports enough CPU cores to select high, but its browser WebGL
+  // budget cannot reliably carry the HDR/GTAO stack at a television resolution.
+  if (xboxCompatibilityMode) return 'low';
   const saved = localStorage.getItem(QUALITY_KEY);
   if (QUALITY_TIERS.includes(saved)) return saved;
   // First run: guess from the device rather than dropping a phone straight into the
@@ -127,6 +132,7 @@ scene.add(camera);
 const pipeline = new RenderPipeline(scene, camera, {
   quality: loadGraphicsQuality(),
   container: document.getElementById('app'),
+  compatibilityMode: xboxCompatibilityMode,
 });
 const renderer = pipeline.renderer;
 
@@ -136,8 +142,10 @@ pipeline.onShadowMapSize(pipeline.tier.shadowMap);
 
 // The reflection probe has to run after the arena exists, and again once the
 // streamed prop GLBs have landed — the first bake sees a pit with no props in it.
-requestAnimationFrame(() => pipeline.bakeEnvironment());
-arena.propsReady.then(() => pipeline.bakeEnvironment());
+if (!xboxCompatibilityMode) {
+  requestAnimationFrame(() => pipeline.bakeEnvironment());
+  arena.propsReady.then(() => pipeline.bakeEnvironment());
+}
 
 // Fighters and weapons stream in behind the menu, so the first bout never waits.
 const assetsReady = Promise.all([
@@ -157,7 +165,9 @@ assetsReady.catch((err) => {
   document.body.appendChild(el);
 });
 // Warm the shader cache while the menu is up.
-assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already reported */ });
+if (!xboxCompatibilityMode) {
+  assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already reported */ });
+}
 
 /**
  * Compile every program the first match will need, behind the menu.
@@ -2349,15 +2359,20 @@ window.addEventListener('pagehide', () => {
 });
 
 // if focus ever leaves (browser dialog, alt-tab, lock loss), drop all held keys so we never get stuck walking
-window.addEventListener('blur', () => player.clearInput());
-document.addEventListener('visibilitychange', () => { if (document.hidden) player.clearInput(); });
+window.addEventListener('blur', () => { player.clearInput(); input.resetGamepadState(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { player.clearInput(); input.resetGamepadState(); }
+});
 
 // fullscreen + keyboard lock: inside fullscreen, Keyboard Lock captures even Ctrl+W / Esc-adjacent combos
 async function enterCombatMode() {
+  // Controller players do not need any of these mouse/keyboard capture APIs. On
+  // Xbox Edge, requesting them can reopen the browser's own controller-mode popup
+  // and take focus straight back from the game after Start was pressed.
+  if (touchMode || input.gamepadConnected) return;
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
   } catch { /* user denied or unsupported — playable regardless */ }
-  if (touchMode) return; // no pointer to lock; the touch layer drives input
   try {
     if (navigator.keyboard?.lock) await navigator.keyboard.lock([...GAME_KEYS]);
   } catch { /* unsupported — fine */ }
@@ -2371,7 +2386,7 @@ document.addEventListener('pointerlockchange', () => {
   player.clearInput();
   if (!locked && phase === 'match' && (player.alive || match.spectating) && !match.ended) {
     // pointer-lock loss only pauses mouse players; a controller plays unlocked
-    if (input.gamepadActive) return;
+    if (input.gamepadConnected) return;
     ui.showScreen('pause');
     phase = 'paused';
   }
@@ -3214,7 +3229,7 @@ function updateSpectatorCamera(dt) {
 function stepMatch(dt) {
   match.time += dt;
   world.simTime += dt;
-  player.update(dt, locked || touchMode || input.gamepadActive, !!match.spectating);
+  player.update(dt, locked || touchMode || input.gamepadConnected, !!match.spectating);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);

@@ -1,5 +1,16 @@
 // VULTURE — the tournament master. All flavor text lives here.
 
+import { isXboxBrowser } from './platform.js';
+
+export function announcerSpeechProfile(nav = globalThis.navigator) {
+  // Xbox Edge uses a different system speech backend. Extreme pitch shifting on
+  // that backend turns into a gravelly, time-stretched voice, so keep it near the
+  // voice's native range. Desktop retains a little more carnival-barker colour.
+  return isXboxBrowser(nav)
+    ? { rate: 1.0, pitch: 0.95, volume: 0.86 }
+    : { rate: 1.12, pitch: 0.78, volume: 0.9 };
+}
+
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
 export const LINES = {
@@ -200,6 +211,7 @@ export class Announcer {
     this._used = {};   // per-category lines already played this session (no repeats until exhausted)
     this._voice = null;
     this._speaking = false;   // event-tracked; never read from the speechSynthesis getter
+    this._speechProfile = announcerSpeechProfile();
     this._resolveVoice();
   }
 
@@ -305,9 +317,9 @@ export class Announcer {
     try {
       const plain = text.replace(/[“”"]/g, '');
       const u = new SpeechSynthesisUtterance(plain);
-      u.rate = 1.2;
-      u.pitch = 0.55;
-      u.volume = 0.9;
+      u.rate = this._speechProfile.rate;
+      u.pitch = this._speechProfile.pitch;
+      u.volume = this._speechProfile.volume;
       if (this._voice) u.voice = this._voice;
       this._speaking = true;
       // The token keeps a stale fallback timer from freeing the mic under a NEWER

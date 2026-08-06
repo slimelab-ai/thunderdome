@@ -131,9 +131,12 @@ const GradeShader = {
 };
 
 export class RenderPipeline {
-  constructor(scene, camera, { quality = 'high', container = document.body } = {}) {
+  constructor(scene, camera, {
+    quality = 'high', container = document.body, compatibilityMode = false,
+  } = {}) {
     this.scene = scene;
     this.camera = camera;
+    this.compatibilityMode = compatibilityMode;
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,              // SMAA does this; MSAA would cost us the HDR buffer
@@ -158,7 +161,9 @@ export class RenderPipeline {
     // exactly, so the "scale back up" condition could never fire on a 60 Hz display.
     // Chrome exposes the extension; elsewhere the CPU measure stands alone.
     const gl = this.renderer.getContext();
-    this._timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    // Xbox Edge's WebGL driver is much more reliable when it is not carrying
+    // asynchronous timer queries alongside a post-processing workload.
+    this._timerExt = compatibilityMode ? null : gl.getExtension('EXT_disjoint_timer_query_webgl2');
     this._gpuQueries = [];
     this._gpuMs = 0;
 
@@ -174,14 +179,19 @@ export class RenderPipeline {
     // Half-float targets: bloom needs values above 1.0 to have anything to pick out,
     // which an 8-bit target clips away before the pass ever sees them.
     this.composer = new EffectComposer(this.renderer, new THREE.WebGLRenderTarget(1, 1, {
-      type: THREE.HalfFloatType,
+      // Half-float composer targets show up as an all-white final buffer on some
+      // Xbox Edge builds. The compatibility path trades HDR bloom for a dependable
+      // 8-bit framebuffer; the arena itself remains fully lit and tone-mapped.
+      type: compatibilityMode ? THREE.UnsignedByteType : THREE.HalfFloatType,
       samples: 0,
     }));
 
     this.renderPass = new RenderPass(scene, camera);
 
-    this.aoPass = new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
-    this.aoPass.output = GTAOPass.OUTPUT.Default;
+    this.aoPass = compatibilityMode
+      ? null
+      : new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
+    if (this.aoPass) this.aoPass.output = GTAOPass.OUTPUT.Default;
 
     // Keep light and haze out of the occlusion prepass.
     //
@@ -195,26 +205,28 @@ export class RenderPipeline {
     // renders. Wrapping `render` rather than editing the addon keeps this working
     // across three.js upgrades.
     camera.layers.enable(NO_OCCLUDE_LAYER);
-    const aoRender = this.aoPass.render.bind(this.aoPass);
-    this.aoPass.render = (...args) => {
-      camera.layers.disable(NO_OCCLUDE_LAYER);
-      try {
-        aoRender(...args);
-      } finally {
-        camera.layers.enable(NO_OCCLUDE_LAYER);
-      }
-    };
-    this.aoPass.blendIntensity = 0.85;
-    this.aoPass.updateGtaoMaterial({
-      radius: 0.6,                  // metres — contact shadows, not a global dimmer
-      distanceExponent: 1.4,
-      thickness: 1.0,
-      scale: 1.0,
-      samples: 12,
-      screenSpaceRadius: false,
-    });
+    if (this.aoPass) {
+      const aoRender = this.aoPass.render.bind(this.aoPass);
+      this.aoPass.render = (...args) => {
+        camera.layers.disable(NO_OCCLUDE_LAYER);
+        try {
+          aoRender(...args);
+        } finally {
+          camera.layers.enable(NO_OCCLUDE_LAYER);
+        }
+      };
+      this.aoPass.blendIntensity = 0.85;
+      this.aoPass.updateGtaoMaterial({
+        radius: 0.6,                  // metres — contact shadows, not a global dimmer
+        distanceExponent: 1.4,
+        thickness: 1.0,
+        scale: 1.0,
+        samples: 12,
+        screenSpaceRadius: false,
+      });
+    }
 
-    this.bloomPass = new UnrealBloomPass(
+    this.bloomPass = compatibilityMode ? null : new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       0.62,   // strength
       0.55,   // radius
@@ -225,7 +237,7 @@ export class RenderPipeline {
     this.renderScale = 1;
 
     this.outputPass = new OutputPass();      // tone map + sRGB transfer
-    this.smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
+    this.smaaPass = compatibilityMode ? null : new SMAAPass(window.innerWidth, window.innerHeight);
     this.gradePass = new ShaderPass(GradeShader);
 
     this.setQuality(quality);
@@ -250,10 +262,10 @@ export class RenderPipeline {
     // its render target, and GTAO's is the expensive one.
     this.composer.passes.length = 0;
     this.composer.addPass(this.renderPass);
-    if (tier.ao) this.composer.addPass(this.aoPass);
-    if (tier.bloom) this.composer.addPass(this.bloomPass);
+    if (tier.ao && this.aoPass) this.composer.addPass(this.aoPass);
+    if (tier.bloom && this.bloomPass) this.composer.addPass(this.bloomPass);
     this.composer.addPass(this.outputPass);
-    if (tier.smaa) this.composer.addPass(this.smaaPass);
+    if (tier.smaa && this.smaaPass) this.composer.addPass(this.smaaPass);
     if (tier.grade) this.composer.addPass(this.gradePass);
 
     this.onShadowMapSize?.(tier.shadowMap);
@@ -272,6 +284,10 @@ export class RenderPipeline {
    * before they exist.
    */
   bakeEnvironment(at = new THREE.Vector3(0, 2.6, 0)) {
+    // PMREM and the cubemap both allocate floating-point targets internally. The
+    // console path uses direct arena lighting instead of risking another white or
+    // incomplete framebuffer for a subtle reflection layer.
+    if (this.compatibilityMode) return null;
     const cubeTarget = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
     const cubeCam = new THREE.CubeCamera(0.3, 60, cubeTarget);
     cubeCam.position.copy(at);
@@ -426,6 +442,7 @@ export class RenderPipeline {
       pixelRatio: +this.renderer.getPixelRatio().toFixed(2),
       renderMs: +(this._frameAvg ?? 0).toFixed(2),
       gpuMs: this._timerExt ? +this._gpuMs.toFixed(2) : null,
+      compatibilityMode: this.compatibilityMode,
       calls: info.calls,
       triangles: info.triangles,
       programs: this.renderer.info.programs?.length ?? 0,
