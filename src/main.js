@@ -100,6 +100,7 @@ function enterSandbox(weapons = null, { god = true } = {}) {
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
 const xboxCompatibilityMode = isXboxBrowser();
+if (xboxCompatibilityMode) document.body.classList.add('xbox-browser');
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.

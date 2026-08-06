@@ -295,6 +295,15 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .game-title span { color: var(--blood); text-shadow: 0 4px 0 #000, 0 0 40px rgba(227,36,43,0.8); }
 .menu-tagline { color: #b9b9c2; margin: 14px 0 30px; font-style: italic; }
 .menu-buttons { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-bottom: 18px; }
+.xbox-controller-help {
+  display: none; max-width: 720px; margin: -4px auto 18px; padding: 10px 14px;
+  border: 1px solid rgba(255,185,46,0.65); border-radius: 4px;
+  background: rgba(34,25,8,0.88); color: #d7c79f;
+  font-size: 12px; line-height: 1.45; letter-spacing: 0.4px;
+}
+.xbox-browser .xbox-controller-help { display: block; }
+.xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
+.xbox-controller-help strong { color: #fff; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }

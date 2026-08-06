@@ -176,22 +176,37 @@ export class RenderPipeline {
     // smears the aggregate into mush a few metres out.
     setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
+    // Xbox Edge compatibility means *no off-screen render targets at all*. The
+    // previous fallback still built an 8-bit EffectComposer and the console showed
+    // the same white frame, which isolates the failure to the compositor path rather
+    // than specifically to half-float HDR. Direct WebGLRenderer output is the
+    // smallest reliable path from scene to the television framebuffer.
+    camera.layers.enable(NO_OCCLUDE_LAYER);
+    this.renderScale = 1;
+    if (compatibilityMode) {
+      this.composer = null;
+      this.renderPass = null;
+      this.aoPass = null;
+      this.bloomPass = null;
+      this.outputPass = null;
+      this.smaaPass = null;
+      this.gradePass = null;
+      this.setQuality(quality);
+      window.addEventListener('resize', () => { this._pendingResize = true; });
+      return;
+    }
+
     // Half-float targets: bloom needs values above 1.0 to have anything to pick out,
     // which an 8-bit target clips away before the pass ever sees them.
     this.composer = new EffectComposer(this.renderer, new THREE.WebGLRenderTarget(1, 1, {
-      // Half-float composer targets show up as an all-white final buffer on some
-      // Xbox Edge builds. The compatibility path trades HDR bloom for a dependable
-      // 8-bit framebuffer; the arena itself remains fully lit and tone-mapped.
-      type: compatibilityMode ? THREE.UnsignedByteType : THREE.HalfFloatType,
+      type: THREE.HalfFloatType,
       samples: 0,
     }));
 
     this.renderPass = new RenderPass(scene, camera);
 
-    this.aoPass = compatibilityMode
-      ? null
-      : new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
-    if (this.aoPass) this.aoPass.output = GTAOPass.OUTPUT.Default;
+    this.aoPass = new GTAOPass(scene, camera, window.innerWidth, window.innerHeight);
+    this.aoPass.output = GTAOPass.OUTPUT.Default;
 
     // Keep light and haze out of the occlusion prepass.
     //
@@ -204,7 +219,6 @@ export class RenderPipeline {
     // it for the beauty pass, and it is dropped for the duration of GTAO's own
     // renders. Wrapping `render` rather than editing the addon keeps this working
     // across three.js upgrades.
-    camera.layers.enable(NO_OCCLUDE_LAYER);
     if (this.aoPass) {
       const aoRender = this.aoPass.render.bind(this.aoPass);
       this.aoPass.render = (...args) => {
@@ -226,18 +240,15 @@ export class RenderPipeline {
       });
     }
 
-    this.bloomPass = compatibilityMode ? null : new UnrealBloomPass(
+    this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       0.62,   // strength
       0.55,   // radius
       0.82,   // threshold — only genuine emissives and specular hits bloom
     );
 
-    // Trimmed by _adapt when frames run long; 1 means "the tier's full pixel ratio".
-    this.renderScale = 1;
-
     this.outputPass = new OutputPass();      // tone map + sRGB transfer
-    this.smaaPass = compatibilityMode ? null : new SMAAPass(window.innerWidth, window.innerHeight);
+    this.smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
     this.gradePass = new ShaderPass(GradeShader);
 
     this.setQuality(quality);
@@ -258,15 +269,17 @@ export class RenderPipeline {
     this.renderScale = 1;
     this._frameAvg = undefined;
 
-    // Rebuild the chain rather than toggling `enabled`: a disabled pass still costs
-    // its render target, and GTAO's is the expensive one.
-    this.composer.passes.length = 0;
-    this.composer.addPass(this.renderPass);
-    if (tier.ao && this.aoPass) this.composer.addPass(this.aoPass);
-    if (tier.bloom && this.bloomPass) this.composer.addPass(this.bloomPass);
-    this.composer.addPass(this.outputPass);
-    if (tier.smaa && this.smaaPass) this.composer.addPass(this.smaaPass);
-    if (tier.grade) this.composer.addPass(this.gradePass);
+    if (this.composer) {
+      // Rebuild the chain rather than toggling `enabled`: a disabled pass still costs
+      // its render target, and GTAO's is the expensive one.
+      this.composer.passes.length = 0;
+      this.composer.addPass(this.renderPass);
+      if (tier.ao && this.aoPass) this.composer.addPass(this.aoPass);
+      if (tier.bloom && this.bloomPass) this.composer.addPass(this.bloomPass);
+      this.composer.addPass(this.outputPass);
+      if (tier.smaa && this.smaaPass) this.composer.addPass(this.smaaPass);
+      if (tier.grade) this.composer.addPass(this.gradePass);
+    }
 
     this.onShadowMapSize?.(tier.shadowMap);
     this._pendingResize = true;
@@ -318,6 +331,7 @@ export class RenderPipeline {
 
   /** Whole-frame tint, used by damage and event feedback. */
   setFlash(amount, color) {
+    if (!this.gradePass) return;
     this.gradePass.uniforms.uFlash.value = amount;
     if (color) this.gradePass.uniforms.uFlashColor.value.set(color);
   }
@@ -383,8 +397,8 @@ export class RenderPipeline {
     // the whole story: adding explicit per-pass setSize calls on top (as this used
     // to) reallocates GTAO's four targets, bloom's five mip pairs and SMAA's two a
     // third time each per resize.
-    this.composer.setPixelRatio(dpr);
-    this.composer.setSize(w, h);
+    this.composer?.setPixelRatio(dpr);
+    this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -400,6 +414,11 @@ export class RenderPipeline {
       this.resize();
     }
     const t0 = performance.now();
+    if (this.compatibilityMode) {
+      this.renderer.render(this.scene, this.camera);
+      this._adapt(performance.now() - t0);
+      return;
+    }
     this.gradePass.uniforms.uTime.value = elapsed;
     const gl = this.renderer.getContext();
     const ext = this._timerExt;
