@@ -24,6 +24,10 @@ let session = null;
 let sequence = 0;
 let uploadTail = Promise.resolve();
 let graphicsComplete = false;
+let graphicsRunning = false;
+let graphicsFailures = 0;
+let controllerTriggeredRerun = false;
+let gamepadSeen = false;
 let voiceRunning = false;
 const checksSeen = new Set();
 const deferredErrors = [];
@@ -277,6 +281,7 @@ async function runProbe(test, index) {
   await new Promise(resolve => requestAnimationFrame(resolve));
 
   let renderer, composer;
+  let succeeded = false;
   const cleanup = [];
   try {
     const built = makeScene();
@@ -293,6 +298,7 @@ async function runProbe(test, index) {
     const outcome = sampleFrame(renderer, width, height);
     addProbeResult(test, outcome);
     await emit('render_probe_result', { id: test.id, ...outcome });
+    succeeded = true;
   } catch (error) {
     const detail = compactError(error);
     addProbeResult(test, null, detail);
@@ -302,22 +308,40 @@ async function runProbe(test, index) {
     try { composer?.dispose?.(); } catch {}
     try { renderer?.dispose(); renderer?.forceContextLoss(); } catch {}
   }
+  return succeeded;
 }
 
-async function runGraphicsProbes() {
+function maybeRerunForController() {
+  if (!gamepadSeen || graphicsRunning || !graphicsComplete || graphicsFailures === 0 || controllerTriggeredRerun) return;
+  controllerTriggeredRerun = true;
+  setState(graphicsState, 'CONTROLLER FOUND · RETRYING', 'pending');
+  overallState.textContent = 'CONTROLLER MODE DETECTED — GRAPHICS RETRY STARTING';
+  emit('graphics_rerun_scheduled', { reason: 'gamepad_visible', previous_failures: graphicsFailures });
+  setTimeout(() => runGraphicsProbes('gamepad_visible'), 500);
+}
+
+async function runGraphicsProbes(reason = 'manual') {
+  if (graphicsRunning) return;
+  graphicsRunning = true;
   rerun.disabled = true;
   graphicsComplete = false;
+  graphicsFailures = 0;
   results.replaceChildren();
   setState(graphicsState, 'STARTING', 'pending');
+  await emit('graphics_run_started', { reason });
   for (let i = 0; i < PROBES.length; i++) {
-    await runProbe(PROBES[i], i);
+    if (!(await runProbe(PROBES[i], i))) graphicsFailures++;
     await new Promise(resolve => setTimeout(resolve, 350));
   }
   graphicsComplete = true;
+  graphicsRunning = false;
   rerun.disabled = false;
-  setState(graphicsState, 'ALL PROBES REPORTED', 'good');
+  setState(graphicsState,
+    graphicsFailures ? `${graphicsFailures} PROBE${graphicsFailures === 1 ? '' : 'S'} FAILED` : 'ALL PROBES PASSED',
+    graphicsFailures ? 'bad' : 'good');
   overallState.textContent = 'GRAPHICS COMPLETE — FINISH THE CONTROLLER CHECKS';
-  await emit('graphics_complete', { probes: PROBES.map(test => test.id) });
+  await emit('graphics_complete', { reason, failures: graphicsFailures, probes: PROBES.map(test => test.id) });
+  maybeRerunForController();
 }
 
 function markCheck(name) {
@@ -349,6 +373,7 @@ function snapshotGamepads() {
 }
 
 let lastPadSignature = '';
+let lastPadUploadAt = -Infinity;
 let previousButtons = [];
 function pollController() {
   const snapshot = snapshotGamepads();
@@ -356,10 +381,18 @@ function pollController() {
   if (signature !== lastPadSignature) {
     lastPadSignature = signature;
     controllerReadout.textContent = JSON.stringify(snapshot, null, 2);
-    emit('gamepad_snapshot', { gamepads: snapshot });
+    const now = performance.now();
+    if (now - lastPadUploadAt >= 500) {
+      lastPadUploadAt = now;
+      emit('gamepad_snapshot', { gamepads: snapshot });
+    }
   }
   const pad = Array.isArray(snapshot) ? snapshot[0] : null;
   if (pad) {
+    if (!gamepadSeen) {
+      gamepadSeen = true;
+      maybeRerunForController();
+    }
     setState(controllerState, 'GAMEPAD VISIBLE', 'good');
     const axes = pad.axes || [];
     if (Math.hypot(axes[0] || 0, axes[1] || 0) > 0.35) markCheck('left-stick');
@@ -433,13 +466,13 @@ async function playVoiceTest() {
 }
 
 $('voice-test').addEventListener('click', playVoiceTest);
-rerun.addEventListener('click', runGraphicsProbes);
+rerun.addEventListener('click', () => runGraphicsProbes('manual'));
 
 async function boot() {
   try {
     await openSession();
     pollController();
-    await runGraphicsProbes();
+    await runGraphicsProbes('initial');
   } catch (error) {
     codeEl.textContent = 'ERROR';
     setState(uploadState, 'SESSION FAILED', 'bad');
