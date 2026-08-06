@@ -9,8 +9,12 @@ const dataDir = process.env.ANALYTICS_DATA_DIR || '/data';
 const maxBytes = Number(process.env.ANALYTICS_MAX_BODY_BYTES || 1_000_000);
 const retentionDays = Math.max(1, Number(process.env.ANALYTICS_RETENTION_DAYS || 90));
 const saltPath = join(dataDir, '.source-salt');
+const diagnosticsDir = join(dataDir, 'diagnostics');
+const diagnosticsTtlMs = Math.max(60_000, Number(process.env.DIAGNOSTICS_TTL_MS || 6 * 60 * 60 * 1000));
+const diagnosticsMaxEvents = Math.max(100, Number(process.env.DIAGNOSTICS_MAX_EVENTS || 1000));
 
 await mkdir(dataDir, { recursive: true });
+await mkdir(diagnosticsDir, { recursive: true });
 await access(dataDir, constants.R_OK | constants.W_OK);
 
 async function loadOrCreateSalt() {
@@ -43,8 +47,29 @@ async function pruneExpiredFiles() {
   if (removed) console.log(`analytics retention removed ${removed} expired file(s)`);
 }
 
+async function pruneExpiredDiagnostics() {
+  const now = Date.now();
+  const names = await readdir(diagnosticsDir);
+  let removed = 0;
+  for (const name of names) {
+    const match = /^(\d{6})\.json$/.exec(name);
+    if (!match) continue;
+    try {
+      const metadata = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
+      if (Date.parse(metadata.expires_at) > now) continue;
+    } catch {
+      // A broken metadata file is not a usable session; remove it with its events.
+    }
+    await unlink(join(diagnosticsDir, name)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await unlink(join(diagnosticsDir, `${match[1]}.ndjson`)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    removed++;
+  }
+  if (removed) console.log(`diagnostics retention removed ${removed} expired session(s)`);
+}
+
 const salt = await loadOrCreateSalt();
 await pruneExpiredFiles();
+await pruneExpiredDiagnostics();
 const recentEventIds = new Set();
 const recentEventOrder = [];
 const metrics = { accepted: 0, duplicates: 0, rejected: 0, last_received_at: null };
@@ -89,7 +114,9 @@ function serializeIngestion(task) {
 await restoreRecentEventIds();
 const pruneTimer = setInterval(() => pruneExpiredFiles().catch(error => {
   console.error('analytics retention failed', error);
-}), 6 * 60 * 60 * 1000);
+}).then(() => pruneExpiredDiagnostics()).catch(error => {
+  console.error('diagnostics retention failed', error);
+}), 30 * 60 * 1000);
 pruneTimer.unref();
 
 function reply(res, status, body = '') {
@@ -126,8 +153,121 @@ function validEvent(event) {
     event.schema_version === 1;
 }
 
+function sourceHashFor(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  return createHash('sha256').update(`${salt}:${forwarded}`).digest('hex').slice(0, 24);
+}
+
+function diagnosticTokenHash(token) {
+  return createHash('sha256').update(`${salt}:diagnostic:${token}`).digest('hex');
+}
+
+function validDiagnosticEvent(event) {
+  return event && typeof event === 'object' &&
+    Number.isSafeInteger(event.seq) && event.seq > 0 &&
+    typeof event.type === 'string' && event.type.length >= 1 && event.type.length <= 80 &&
+    typeof event.at === 'string' && event.at.length <= 80 &&
+    event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload);
+}
+
+function diagnosticError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function loadDiagnosticSession(code) {
+  try {
+    const metadata = JSON.parse(await readFile(join(diagnosticsDir, `${code}.json`), 'utf8'));
+    if (Date.parse(metadata.expires_at) <= Date.now()) throw diagnosticError(410, 'diagnostic session expired');
+    return metadata;
+  } catch (error) {
+    if (error.status) throw error;
+    if (error.code === 'ENOENT') throw diagnosticError(404, 'diagnostic session not found');
+    throw error;
+  }
+}
+
+async function createDiagnosticSession(req) {
+  await pruneExpiredDiagnostics();
+  const active = (await readdir(diagnosticsDir)).filter(name => /^\d{6}\.json$/.test(name));
+  if (active.length >= 250) throw diagnosticError(503, 'too many active diagnostic sessions');
+  const writeToken = randomBytes(24).toString('base64url');
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const code = String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, '0');
+    const createdAt = new Date().toISOString();
+    const metadata = {
+      code,
+      token_hash: diagnosticTokenHash(writeToken),
+      source_hash: sourceHashFor(req),
+      created_at: createdAt,
+      expires_at: new Date(Date.now() + diagnosticsTtlMs).toISOString(),
+      last_received_at: null,
+      event_count: 0,
+    };
+    try {
+      await writeFile(join(diagnosticsDir, `${code}.json`), JSON.stringify(metadata), {
+        encoding: 'utf8', mode: 0o600, flag: 'wx',
+      });
+      return { code, write_token: writeToken, created_at: createdAt, expires_at: metadata.expires_at };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+  throw diagnosticError(503, 'could not allocate diagnostic code');
+}
+
+async function appendDiagnosticEvents(req, code) {
+  const auth = String(req.headers.authorization || '');
+  if (!auth.startsWith('Bearer ')) throw diagnosticError(401, 'diagnostic write token required');
+  const body = JSON.parse(await readBody(req));
+  if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > 50) {
+    throw diagnosticError(400, 'events must contain 1-50 diagnostic records');
+  }
+  if (!body.events.every(validDiagnosticEvent)) throw diagnosticError(400, 'invalid diagnostic event');
+
+  return serializeIngestion(async () => {
+    const metadata = await loadDiagnosticSession(code);
+    if (diagnosticTokenHash(auth.slice(7)) !== metadata.token_hash) {
+      throw diagnosticError(403, 'invalid diagnostic write token');
+    }
+    if (metadata.event_count + body.events.length > diagnosticsMaxEvents) {
+      throw diagnosticError(413, 'diagnostic event limit reached');
+    }
+    const receivedAt = new Date().toISOString();
+    const lines = body.events.map(event => JSON.stringify({ ...event, received_at: receivedAt })).join('\n') + '\n';
+    await appendFile(join(diagnosticsDir, `${code}.ndjson`), lines, { encoding: 'utf8', mode: 0o600 });
+    metadata.event_count += body.events.length;
+    metadata.last_received_at = receivedAt;
+    await writeFile(join(diagnosticsDir, `${code}.json`), JSON.stringify(metadata), { encoding: 'utf8', mode: 0o600 });
+    return { accepted: body.events.length, event_count: metadata.event_count };
+  });
+}
+
+async function readDiagnosticEvents(code) {
+  return serializeIngestion(async () => {
+    const metadata = await loadDiagnosticSession(code);
+    let events = [];
+    try {
+      const text = await readFile(join(diagnosticsDir, `${code}.ndjson`), 'utf8');
+      events = text.split('\n').filter(Boolean).map(line => JSON.parse(line));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    return {
+      code: metadata.code,
+      created_at: metadata.created_at,
+      expires_at: metadata.expires_at,
+      last_received_at: metadata.last_received_at,
+      event_count: metadata.event_count,
+      events,
+    };
+  });
+}
+
 const server = createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+  if (req.method === 'GET' && pathname === '/health') {
     try {
       await access(dataDir, constants.R_OK | constants.W_OK);
       return reply(res, 200, {
@@ -140,7 +280,29 @@ const server = createServer(async (req, res) => {
       return reply(res, 503, { ok: false, storage: 'unavailable' });
     }
   }
-  if (req.method !== 'POST' || req.url !== '/events') return reply(res, 404, { error: 'not found' });
+  if (req.method === 'POST' && pathname === '/diagnostics/session') {
+    try {
+      return reply(res, 201, await createDiagnosticSession(req));
+    } catch (error) {
+      return reply(res, error.status || 400, { error: error.message });
+    }
+  }
+  const diagnosticMatch = /^\/diagnostics\/(\d{6})$/.exec(pathname);
+  if (diagnosticMatch && req.method === 'POST') {
+    try {
+      return reply(res, 202, await appendDiagnosticEvents(req, diagnosticMatch[1]));
+    } catch (error) {
+      return reply(res, error.status || (error.message === 'body too large' ? 413 : 400), { error: error.message });
+    }
+  }
+  if (diagnosticMatch && req.method === 'GET') {
+    try {
+      return reply(res, 200, await readDiagnosticEvents(diagnosticMatch[1]));
+    } catch (error) {
+      return reply(res, error.status || 500, { error: error.message });
+    }
+  }
+  if (req.method !== 'POST' || pathname !== '/events') return reply(res, 404, { error: 'not found' });
   try {
     const body = JSON.parse(await readBody(req));
     if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > 100) {
@@ -152,8 +314,7 @@ const server = createServer(async (req, res) => {
       return reply(res, 400, { error: 'invalid event' });
     }
     const receivedAt = new Date().toISOString();
-    const forwarded = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-    const sourceHash = createHash('sha256').update(`${salt}:${forwarded}`).digest('hex').slice(0, 24);
+    const sourceHash = sourceHashFor(req);
     const result = await serializeIngestion(async () => {
       const batchEventIds = new Set();
       const uniqueEvents = body.events.filter(event => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,6 +62,27 @@ async function postEvents(port, events) {
   return { response, body: await response.json() };
 }
 
+async function createDiagnosticSession(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/diagnostics/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  return { response, body: await response.json() };
+}
+
+async function postDiagnostics(port, code, token, events) {
+  const response = await fetch(`http://127.0.0.1:${port}/diagnostics/${code}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ events }),
+  });
+  return { response, body: await response.json() };
+}
+
 test('collector only deduplicates durable appends and restores IDs after restart', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'thunderdome-analytics-'));
   const port = await availablePort();
@@ -102,6 +123,60 @@ test('collector only deduplicates durable appends and restores IDs after restart
       .split('\n');
     assert.equal(lines.length, 3);
     assert.equal(JSON.parse(lines[0]).event_id, event.event_id);
+  } finally {
+    if (collector) await stopCollector(collector);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('short-lived diagnostic sessions require a private writer token and remain readable by six-digit code', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'thunderdome-diagnostics-'));
+  const port = await availablePort();
+  let collector;
+  try {
+    collector = await startCollector(dataDir, port);
+    const created = await createDiagnosticSession(port);
+    assert.equal(created.response.status, 201);
+    assert.match(created.body.code, /^\d{6}$/);
+    assert.ok(created.body.write_token.length >= 24);
+
+    const event = {
+      seq: 1,
+      type: 'render_probe_result',
+      at: new Date().toISOString(),
+      payload: { id: 'direct', average_rgb: [20, 30, 40], screenshot: 'data:image/jpeg;base64,abc' },
+    };
+    const missingToken = await postDiagnostics(port, created.body.code, null, [event]);
+    assert.equal(missingToken.response.status, 401);
+    const wrongToken = await postDiagnostics(port, created.body.code, 'wrong-token', [event]);
+    assert.equal(wrongToken.response.status, 403);
+
+    const accepted = await postDiagnostics(port, created.body.code, created.body.write_token, [event]);
+    assert.equal(accepted.response.status, 202);
+    assert.deepEqual(accepted.body, { accepted: 1, event_count: 1 });
+
+    let report = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`).then(response => response.json());
+    assert.equal(report.code, created.body.code);
+    assert.equal(report.event_count, 1);
+    assert.equal(report.events[0].type, event.type);
+    assert.equal(report.events[0].payload.id, 'direct');
+    assert.equal(report.write_token, undefined);
+
+    await stopCollector(collector);
+    collector = await startCollector(dataDir, port);
+    report = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`).then(response => response.json());
+    assert.equal(report.event_count, 1, 'diagnostics survive collector restart');
+
+    const metadataPath = join(dataDir, 'diagnostics', `${created.body.code}.json`);
+    const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+    metadata.expires_at = new Date(Date.now() - 1000).toISOString();
+    await writeFile(metadataPath, JSON.stringify(metadata));
+    const expired = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`);
+    assert.equal(expired.status, 410);
+
+    await createDiagnosticSession(port); // creation prunes expired sessions
+    await assert.rejects(access(metadataPath));
+    await assert.rejects(access(join(dataDir, 'diagnostics', `${created.body.code}.ndjson`)));
   } finally {
     if (collector) await stopCollector(collector);
     await rm(dataDir, { recursive: true, force: true });

@@ -55,7 +55,7 @@ const FRAME_BUDGET_MS = 1000 / 60;
  * a cheap camera bolted to the cage" — the fiction is that you are watching a
  * broadcast of an illegal fight.
  */
-const GradeShader = {
+export const GradeShader = {
   uniforms: {
     tDiffuse:      { value: null },
     uTime:         { value: 0 },
