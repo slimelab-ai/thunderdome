@@ -327,6 +327,12 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .xbox-browser .xbox-controller-help { display: block; }
 .xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
 .xbox-controller-help strong { color: #fff; }
+.diagnostic-session-label {
+  width: fit-content; margin: 0 auto 12px; padding: 5px 9px;
+  border: 1px solid rgba(134,255,60,0.3); border-radius: 3px;
+  background: rgba(8,18,10,0.78); color: #86ff3c;
+  font-size: 8px; font-weight: 800; letter-spacing: 1px;
+}
 .loading-screen { z-index: 180; overflow: hidden; }
 .loading-screen::before {
   content: ""; position: absolute; inset: -20%;
