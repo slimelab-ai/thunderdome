@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   WEAPONS, buildViewmodel, animateWeaponParts, solveSightAlignment, adsRelief, planReload,
+  cycleTime,
 } from './weapons.js';
 import { Recoil, RecoilPattern } from './recoil.js';
 import { ViewModel } from './viewmodel.js';
@@ -60,6 +61,7 @@ export class Player {
     this.character = makeCharacter();  // live ref to career.playerCh: pack = meds/ammo
     this.weightMult = 1;
     this.magBySlot = [];               // mags persist per gun — no free refills on switch
+    this.chamberBySlot = [];           // and so does whether each one has a round up
     this.knifeOut = false;             // knife lives on [3], not the scroll cycle
     this.swingT = 0;                   // viewmodel slash arc
     this._lungeT = 0;
@@ -89,6 +91,18 @@ export class Player {
     this._swapFrom = WEAPONS.pistol;   // what is being put away, for its `holster`
     this.raiseT = 0;
     this.reloadFromEmpty = false;      // did this reload begin with a dead chamber?
+    // The chambered round, as real state rather than as bookkeeping.
+    //
+    // `mag` is the magazine alone; this is the one round sitting in the chamber on top
+    // of it. Firing empties the chamber and the action cycles it full again a moment
+    // later, taking that round out of the magazine — so ammunition leaves the magazine
+    // when the bolt strips it, not when the trigger breaks. Everything people expect of
+    // a chambered round falls out of that: the extra round on a tactical reload, the
+    // last shot you can still take with an empty magazine, and the dead trigger after
+    // it. See `cycleTime` in src/weapons.js.
+    this.chambered = true;
+    this.chamberT = 0;                 // seconds until the action finishes cycling
+    this.chamberDur = 0;
     this.fireCooldown = 0;
     this.triggerHeld = false;
     this.triggerQueued = false;
@@ -162,7 +176,10 @@ export class Player {
       if (!t) return 0;
       return consumeAmmo(this.character, t, w.mag);
     });
+    // Everything comes off the rack loaded: a full magazine and a round chambered.
+    this.chamberBySlot = this.magBySlot.map((m) => m > 0);
     this.mag = this.magBySlot[this.slotIdx] ?? 0;
+    this.chambered = this.chamberBySlot[this.slotIdx] ?? false;
   }
 
   _mountViewmodel() {
@@ -187,6 +204,7 @@ export class Player {
     this.reloading = 0; this.shellLoading = false; this.pumpT = 0;
     this.swapT = 0; this.holsterT = 0; this._swapDur = 0; this.raiseT = 0;
     this.reloadFromEmpty = false;
+    this.chambered = this.mag > 0; this.chamberT = 0; this.chamberDur = 0;
     this.fireCooldown = 0; this.bloom = 0;
     this.recoil.reset();
     this.deathT = 0;
@@ -319,10 +337,16 @@ export class Player {
   }
 
   switchTo(n) {
-    if (!this.knifeOut) this.magBySlot[this.slotIdx] = this.mag; // mags stay as you left them
+    if (!this.knifeOut) {
+      this.magBySlot[this.slotIdx] = this.mag;   // mags stay as you left them
+      this.chamberBySlot[this.slotIdx] = this.chambered;
+    }
     this.knifeOut = false;
     this.slotIdx = n;
     this.mag = this.magBySlot[n] ?? 0;
+    // A weapon you put away with a round up still has one when you pick it back up.
+    this.chambered = this.chamberBySlot[n] ?? (this.mag > 0);
+    this.chamberT = 0;
     this.reloading = 0;
     this.shellLoading = false;
     this._beginSwap();
@@ -352,7 +376,10 @@ export class Player {
 
   drawKnife() {
     if (this.knifeOut || !this.alive) return;
-    if (this.slots.length) this.magBySlot[this.slotIdx] = this.mag;
+    if (this.slots.length) {
+      this.magBySlot[this.slotIdx] = this.mag;
+      this.chamberBySlot[this.slotIdx] = this.chambered;
+    }
     this.knifeOut = true;
     this.reloading = 0;
     this.shellLoading = false;
@@ -362,10 +389,30 @@ export class Player {
     audio.slash(0.4);
   }
 
+  /**
+   * Strip the next round out of the magazine and put it in the chamber.
+   *
+   * The one place ammunition leaves the magazine. Called when the action finishes
+   * cycling after a shot, and at the end of a reload that had to send the bolt home.
+   * A magazine with nothing in it simply fails to feed, which leaves the chamber empty
+   * and the trigger dead until the player reloads — the click after the last round.
+   */
+  _loadChamber() {
+    if (this.chambered) return;
+    if (this.infiniteAmmo) { this.chambered = true; return; }
+    if (this.mag <= 0) return;
+    this.mag--;
+    this.chambered = true;
+  }
+
+  /** Rounds the player actually has in hand: the magazine plus whatever is chambered. */
+  get roundsInWeapon() { return this.mag + (this.chambered ? 1 : 0); }
+
   startReload() {
     const w = this.weapon;
-    // A reload with a round chambered tops up to `mag + 1`, so "full" is not `w.mag`.
-    const full = this.mag >= w.mag + (this.mag > 0 ? 1 : 0);
+    // Full means a full magazine *and* a round up. Topping up a full magazine when the
+    // chamber is dead is still a reload worth doing — it is the rack.
+    const full = this.mag >= w.mag && this.chambered;
     if (w.melee || this.reloading > 0 || full || !this.alive) return;
     if (this.swapT > 0 || this.raiseT > 0) return;   // the weapon is not up yet
     if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
@@ -374,7 +421,7 @@ export class Player {
       // Shell by shell. Each round is its own timer and its own animation, and the
       // player can break off and fire whatever is already in the tube.
       this.shellLoading = true;
-      this.reloadFromEmpty = this.mag <= 0;
+      this.reloadFromEmpty = !this.chambered;
       this.reloading = this.weapon.shellReload * mult;
       this.reloadDur = this.reloading;
       this.arms.loadShell(this.reloading);
@@ -383,7 +430,7 @@ export class Player {
     }
     // Empty guns take longer: there is a bolt to send home as well as a magazine to
     // change. `planReload` owns that rule and the round-count that goes with it.
-    const plan = planReload(w, this.mag, this.reserve(), mult);
+    const plan = planReload(w, this.mag, this.reserve(), this.chambered, mult);
     // Racking is gated on this. A gun reloaded with a round still up does not need it;
     // one reloaded dry cannot fire without it.
     this.reloadFromEmpty = !plan.chambered;
@@ -628,7 +675,10 @@ export class Player {
             // Only when the tube started empty. Shells fed on top of a chambered round
             // need no stroke, and pumping anyway throws a live shell on the floor —
             // which is exactly what it looked like, because it is what it did.
-            if (w.pump && this.reloadFromEmpty) { this.pumpT = w.pump; this.arms.pump(w.pump); }
+            if (w.pump && this.reloadFromEmpty) {
+              this.pumpT = w.pump; this.arms.pump(w.pump);
+              this._loadChamber();          // the stroke is what chambers the first shell
+            }
           }
         } else {
           // `planReload` decided the capacity when the reload started, and it depends
@@ -637,10 +687,14 @@ export class Player {
           //
           // `reserve()` already returns Infinity on the firing range, so the plan comes
           // back asking for a full magazine and only the *taking* has to know about it.
-          const plan = planReload(w, this.mag, this.reserve());
+          const plan = planReload(w, this.mag, this.reserve(), this.chambered);
           this.mag += (this.infiniteAmmo || !t)
             ? plan.taken
             : consumeAmmo(this.character, t, plan.taken);
+          // A reload that began with a dead chamber ends by sending the bolt home,
+          // which is the rack the player just watched. That is the round the `+1`
+          // is made of, and the reason an empty reload gives one fewer.
+          if (!this.chambered) this._loadChamber();
           this.reloading = 0;
         }
       }
@@ -661,13 +715,19 @@ export class Player {
     else if (this.raiseT > 0) this.raiseT -= dt;
     if (this.swapT > 0) this.swapT -= dt;
     if (this.holsterT > 0) this.holsterT -= dt;
+    // The action, cycling. DogEater loads the chamber a hair before the weapon is ready
+    // to fire again, so the round is up by the time the trigger will answer.
+    if (this.chamberT > 0) {
+      this.chamberT -= dt;
+      if (this.chamberT <= 0) this._loadChamber();
+    }
     const weaponUp = this.swapT <= 0 && this.raiseT <= 0 && !this.sprinting;
 
     if (wantFire && this.fireCooldown <= 0 && this.pumpT <= 0 && weaponUp
         && this.reloading <= 0 && !this.healing && locked) {
       if (w.melee) {
         this._slash();
-      } else if (this.mag <= 0) {
+      } else if (!this.chambered) {
         audio.dryFire();
         this.fireCooldown = 0.25;
         this.startReload();
@@ -853,9 +913,16 @@ export class Player {
     const rack = win && reloadK > win[0] && reloadK < win[1]
       ? Math.sin((reloadK - win[0]) / (win[1] - win[0]) * Math.PI)
       : 0;
+    // The action, driven by the chamber cycle rather than by the recoil impulse it
+    // used to be guessed from. This is the same timer that decides when the next round
+    // is available, so the bolt is not miming a cycle alongside the real one — it *is*
+    // the cycle, and its speed is the weapon's fire rate for free.
+    const cycleK = this.chamberT > 0 && this.chamberDur > 0
+      ? Math.sin((1 - this.chamberT / this.chamberDur) * Math.PI)
+      : 0;
     animateWeaponParts(
       this.currentVM,
-      Math.max(Math.min(1, this.kick * 1.6), rack),
+      Math.max(cycleK, rack),
       reloadK > 0.12 && reloadK < 0.58 ? Math.sin((reloadK - 0.12) / 0.46 * Math.PI) : 0,
       pumpK,
     );
@@ -1001,7 +1068,13 @@ export class Player {
 
   _fire() {
     const w = this.weapon;
-    this.mag--;
+    // The round that leaves the barrel is the one that was chambered, so the magazine
+    // is untouched here — `_loadChamber` takes the next one out of it when the action
+    // finishes cycling. That ordering is what gives a magazine-empty gun one last shot
+    // and a dead trigger after it.
+    this.chambered = false;
+    this.chamberDur = cycleTime(w);
+    this.chamberT = this.chamberDur;
     this.fireCooldown = 60 / w.rpm;
     this.world.playerFiredAt = performance.now() / 1000; // crew hears this and clears the lane
     const spread = this.currentSpread();

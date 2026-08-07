@@ -481,16 +481,35 @@ const _m4 = new THREE.Matrix4();
  * @param {number} reserve  rounds available in the pack
  * @param {number} mult     reload speed multiplier from progression (lower is faster)
  */
-export function planReload(w, mag, reserve, mult = 1) {
-  const chambered = mag > 0;
-  const capacity = w.mag + (chambered ? 1 : 0);
-  const want = Math.max(0, capacity - mag);
+export function planReload(w, mag, reserve, chambered = mag > 0, mult = 1) {
+  // `mag` is the magazine alone. The chambered round is *not* counted in it — it is
+  // separate state that `loadChamber` moves rounds into — which is why a full magazine
+  // plus a chambered round comes to `mag + 1` with nothing special-casing that.
+  const want = Math.max(0, w.mag - mag);
   const taken = Math.min(want, Math.max(0, reserve));
   return {
     chambered,
-    capacity,
+    capacity: w.mag,
     taken,
     mag: mag + taken,
+    total: mag + taken + (chambered ? 1 : 0),
+    // A gun with a round still up needs only the magazine changed. One with a dead
+    // chamber needs the bolt sent home too: the longer animation, and the only time the
+    // rack is played.
     duration: (chambered ? w.reload : (w.reloadEmpty ?? w.reload)) * mult,
   };
+}
+
+/**
+ * How long the action takes to cycle after a shot, in seconds.
+ *
+ * DogEater ties this to the refire delay and loads the chamber a hair before the weapon
+ * is ready again: `wait(refire - 0.03) -> LoadChamber() -> wait(0.03)`. The consequence
+ * worth having is that the bolt travel *is* the fire rate — a DMR at 145 rpm throws its
+ * bolt over four tenths of a second and you watch it happen, an SMG at 850 rpm is a
+ * blur — with no per-weapon animation timing to keep in sync.
+ */
+export const CHAMBER_LEAD = 0.03;
+export function cycleTime(w) {
+  return Math.max(0, 60 / w.rpm - CHAMBER_LEAD);
 }

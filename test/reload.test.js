@@ -7,23 +7,28 @@
 // player's update.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WEAPONS, planReload } from '../src/weapons.js';
+import { WEAPONS, planReload, cycleTime, CHAMBER_LEAD } from '../src/weapons.js';
 
 const rifle = WEAPONS.rifle;
 
-test('reloading with rounds left keeps the chambered one: mag + 1', () => {
-  const p = planReload(rifle, 5, 999);
+test('reloading with a round up fills the magazine and keeps the chambered one', () => {
+  // `mag` is the magazine alone; the chambered round sits on top of it. That is why
+  // `total` is mag + 1 without anything special-casing the extra round.
+  const p = planReload(rifle, 5, 999, true);
   assert.equal(p.chambered, true);
-  assert.equal(p.capacity, rifle.mag + 1);
-  assert.equal(p.mag, rifle.mag + 1);
-  assert.equal(p.taken, rifle.mag + 1 - 5);
-});
-
-test('reloading from empty gets a full magazine and no more', () => {
-  const p = planReload(rifle, 0, 999);
-  assert.equal(p.chambered, false);
   assert.equal(p.capacity, rifle.mag);
   assert.equal(p.mag, rifle.mag);
+  assert.equal(p.total, rifle.mag + 1);
+  assert.equal(p.taken, rifle.mag - 5);
+});
+
+test('reloading with a dead chamber fills the magazine and nothing more', () => {
+  // The bolt going home at the end of the reload strips one of these into the chamber,
+  // which is what leaves a dry reload one round behind a tactical one.
+  const p = planReload(rifle, 0, 999, false);
+  assert.equal(p.chambered, false);
+  assert.equal(p.mag, rifle.mag);
+  assert.equal(p.total, rifle.mag);
 });
 
 test('an empty gun takes longer, because the bolt has to go home too', () => {
@@ -37,31 +42,30 @@ test('an empty gun takes longer, because the bolt has to go home too', () => {
 test('reloading early is strictly better: more rounds, less time', () => {
   // The whole point of the mechanic. If either half of this fails there is no reason
   // to ever top up behind cover.
-  const early = planReload(rifle, 1, 999);
-  const late = planReload(rifle, 0, 999);
-  assert.ok(early.mag > late.mag, 'topping up should end with more rounds');
+  const early = planReload(rifle, 1, 999, true);
+  const late = planReload(rifle, 0, 999, false);
+  assert.ok(early.total > late.total, 'topping up should end with more rounds');
   assert.ok(early.duration < late.duration, 'topping up should be quicker');
 });
 
 test('the reserve short-changes both paths, and never goes negative', () => {
-  assert.equal(planReload(rifle, 5, 3).mag, 8);
-  assert.equal(planReload(rifle, 5, 3).taken, 3);
-  assert.equal(planReload(rifle, 0, 4).mag, 4);
-  assert.equal(planReload(rifle, 5, 0).taken, 0);
-  assert.equal(planReload(rifle, 5, -10).taken, 0, 'a negative reserve is not a refund');
+  assert.equal(planReload(rifle, 5, 3, true).mag, 8);
+  assert.equal(planReload(rifle, 5, 3, true).taken, 3);
+  assert.equal(planReload(rifle, 0, 4, false).mag, 4);
+  assert.equal(planReload(rifle, 5, 0, true).taken, 0);
+  assert.equal(planReload(rifle, 5, -10, true).taken, 0, 'a negative reserve is not a refund');
 });
 
 test('a full magazine asks for nothing', () => {
-  // Full *with* the chambered round — `w.mag` alone is not full for a loaded gun.
-  const p = planReload(rifle, rifle.mag + 1, 999);
+  const p = planReload(rifle, rifle.mag, 999, true);
   assert.equal(p.taken, 0);
-  assert.equal(p.mag, rifle.mag + 1);
+  assert.equal(p.total, rifle.mag + 1);
 });
 
 test('the progression multiplier scales the duration, not the round count', () => {
-  const fast = planReload(rifle, 5, 999, 0.5);
+  const fast = planReload(rifle, 5, 999, true, 0.5);
   assert.equal(fast.duration, rifle.reload * 0.5);
-  assert.equal(fast.mag, planReload(rifle, 5, 999, 1).mag);
+  assert.equal(fast.mag, planReload(rifle, 5, 999, true, 1).mag);
 });
 
 test('every weapon that reloads has both durations, and empty is never quicker', () => {
@@ -123,4 +127,30 @@ test('the pump gun reloads shell by shell and has no magazine rack', () => {
   assert.ok(WEAPONS.shotgun.shellReload > 0);
   assert.equal(WEAPONS.shotgun.emptyRack, undefined);
   assert.ok(WEAPONS.shotgun.pump > 0);
+});
+
+// ---- the chamber cycle ----
+
+test('the action cycles at the weapon fire rate, less the load lead', () => {
+  // DogEater loads the chamber a hair before the weapon is ready again, so the round
+  // is up by the time the trigger will answer. The consequence worth having is that
+  // the bolt travel *is* the fire rate: nothing to keep in sync per weapon.
+  for (const w of Object.values(WEAPONS)) {
+    if (w.melee || !w.rpm) continue;
+    assert.equal(cycleTime(w), Math.max(0, 60 / w.rpm - CHAMBER_LEAD), w.id);
+    assert.ok(cycleTime(w) >= 0, `${w.id}: negative cycle`);
+  }
+});
+
+test('a slow weapon visibly throws its bolt; a fast one does not', () => {
+  // The DMR's cycle should be long enough to watch and the SMG's short enough to read
+  // as a blur, or the animation is not carrying the fire rate.
+  assert.ok(cycleTime(WEAPONS.dmr) > 0.25, 'the DMR should have a slow, readable action');
+  assert.ok(cycleTime(WEAPONS.smg) < 0.08, 'the SMG should cycle too fast to follow');
+  assert.ok(cycleTime(WEAPONS.dmr) > cycleTime(WEAPONS.rifle));
+  assert.ok(cycleTime(WEAPONS.rifle) > cycleTime(WEAPONS.smg));
+});
+
+test('a fire rate faster than the load lead still cycles, rather than going negative', () => {
+  assert.equal(cycleTime({ rpm: 6000 }), 0);
 });

@@ -152,7 +152,9 @@ export class UI {
 
     // ammo / weapon — reserve is real rounds in the backpack now
     const melee = !!player.weapon.melee;
-    const magTxt = melee ? '—' : String(player.mag);
+    // What the player has in hand is the magazine plus whatever is chambered.
+    const inWeapon = player.roundsInWeapon ?? player.mag;
+    const magTxt = melee ? '—' : String(inWeapon);
     if (this.el.ammoMag._last !== magTxt) {
       this.el.ammoMag._last = magTxt;
       this.el.ammoMag.textContent = magTxt;
@@ -168,8 +170,11 @@ export class UI {
     const chEl = this.el.ammoChamber;
     if (chEl) {
       const capacity = player.weapon.mag || 0;
+      // `+1` when the magazine is full *and* a round is up — the state a tactical
+      // reload leaves you in. The hollow mark means the chamber is empty: the trigger
+      // will not answer, and the reload that fixes it is the slow one with the rack.
       const chTxt = melee || !capacity ? ''
-        : (player.mag > capacity ? '+1' : (player.mag === 0 ? '○' : ''));
+        : (!player.chambered ? '○' : (player.mag >= capacity ? '+1' : ''));
       if (chEl._last !== chTxt) {
         chEl._last = chTxt;
         chEl.textContent = chTxt;

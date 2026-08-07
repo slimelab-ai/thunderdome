@@ -197,7 +197,12 @@ const report = await page.evaluate(async (opts) => {
     }
     g.step(1 / 60, 150);                    // let the draw settle
 
-    const magBefore = p.mag;
+    // Rounds in the weapon, not the magazine. Firing no longer decrements the
+    // magazine: the round that leaves is the chambered one, and the magazine gives up
+    // its next round when the action finishes cycling a fraction of a second later. A
+    // check on `mag` alone therefore reads a discharge as "never fired" on any weapon
+    // whose cycle outlasts the sample — which is exactly what the shotgun did.
+    const magBefore = p.roundsInWeapon ?? p.mag;
     // Baseline first, *then* the trigger. Sampling only after setup meant frame 0
     // already contained the recoil at full deflection, so the series that followed was
     // the kick decaying — and every weapon read as recoiling downwards.
@@ -232,7 +237,7 @@ const report = await page.evaluate(async (opts) => {
       reachMedian: reaches.length ? +reaches[Math.floor(reaches.length / 2)].toFixed(4) : null,
       reachMax: reaches.length ? +reaches[reaches.length - 1].toFixed(4) : null,
       finite,
-      fired: action === 'fire' ? p.mag < magBefore : null,
+      fired: action === 'fire' ? (p.roundsInWeapon ?? p.mag) < magBefore : null,
       frames: opts.verbose ? frameData.map((f) => ({
         m: [+f.muzzle.x.toFixed(3), +f.muzzle.y.toFixed(3), +f.muzzle.z.toFixed(3)],
         l: [+f.fistL.x.toFixed(3), +f.fistL.y.toFixed(3), +f.fistL.z.toFixed(3)],
