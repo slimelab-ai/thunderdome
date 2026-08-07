@@ -406,7 +406,7 @@ export const LINES = {
 };
 
 export class Announcer {
-  constructor({ voiceBank = new AnnouncerVoiceBank() } = {}) {
+  constructor({ voiceBank = new AnnouncerVoiceBank(), onVoiceStart = null } = {}) {
     this.wrap = document.getElementById('announcer-wrap');
     this.line = document.getElementById('announcer-line');
     this.queue = [];
@@ -416,6 +416,7 @@ export class Announcer {
     this._used = {};   // per-category lines already played this session (no repeats until exhausted)
     this._speaking = false;
     this._voiceBank = voiceBank;
+    this._onVoiceStart = onVoiceStart;
   }
 
   _pickFresh(category) {
@@ -491,6 +492,7 @@ export class Announcer {
     const playing = this._voiceBank.play(category, index, done);
     this._lastVoiceStartMs = performance.now() - started;
     this._lastVoiceStartAt = started;
+    this._onVoiceStart?.({ category, index, start_ms: this._lastVoiceStartMs, playing });
     if (!playing) done();
     else this._spokeCount = (this._spokeCount || 0) + 1;
   }

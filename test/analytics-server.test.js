@@ -129,7 +129,7 @@ test('collector only deduplicates durable appends and restores IDs after restart
   }
 });
 
-test('short-lived diagnostic sessions require a private writer token and remain readable by six-digit code', async () => {
+test('diagnostic sessions renew while active and retain completed reports', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'thunderdome-diagnostics-'));
   const port = await availablePort();
   let collector;
@@ -154,7 +154,10 @@ test('short-lived diagnostic sessions require a private writer token and remain 
 
     const accepted = await postDiagnostics(port, created.body.code, created.body.write_token, [event]);
     assert.equal(accepted.response.status, 202);
-    assert.deepEqual(accepted.body, { accepted: 1, event_count: 1 });
+    assert.equal(accepted.body.accepted, 1);
+    assert.equal(accepted.body.event_count, 1);
+    assert.ok(Date.parse(accepted.body.expires_at) > Date.now());
+    assert.ok(Date.parse(accepted.body.retained_until) > Date.parse(accepted.body.expires_at));
 
     let report = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`).then(response => response.json());
     assert.equal(report.code, created.body.code);
@@ -188,8 +191,21 @@ test('short-lived diagnostic sessions require a private writer token and remain 
     const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
     metadata.expires_at = new Date(Date.now() - 1000).toISOString();
     await writeFile(metadataPath, JSON.stringify(metadata));
-    const expired = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`);
-    assert.equal(expired.status, 410);
+    const retained = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`);
+    assert.equal(retained.status, 200);
+    assert.equal((await retained.json()).active, false);
+
+    const renewed = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}/heartbeat`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${created.body.write_token}` },
+    });
+    assert.equal(renewed.status, 200);
+    assert.ok(Date.parse((await renewed.json()).expires_at) > Date.now());
+
+    const expiredMetadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+    expiredMetadata.expires_at = new Date(Date.now() - 1000).toISOString();
+    expiredMetadata.retained_until = new Date(Date.now() - 1000).toISOString();
+    await writeFile(metadataPath, JSON.stringify(expiredMetadata));
 
     await createDiagnosticSession(port); // creation prunes expired sessions
     await assert.rejects(access(metadataPath));

@@ -422,7 +422,9 @@ function scheduleBackgroundGraphicsPrep() {
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
-const announcer = new Announcer();
+const announcer = new Announcer({
+  onVoiceStart: details => runtimeDiagnostics?.emit('game_announcer_start', details),
+});
 
 // ============================================================ world
 const world = {
@@ -708,6 +710,23 @@ scheduleBackgroundGraphicsPrep();
 let settingsReturnPhase = 'menu';
 let locked = false;
 let match = null;
+
+if (runtimeDiagnostics && globalThis.PerformanceObserver?.supportedEntryTypes?.includes('longtask')) {
+  let lastLongTaskReportAt = -Infinity;
+  const longTaskObserver = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) {
+      if (entry.startTime - lastLongTaskReportAt < 1000) continue;
+      lastLongTaskReportAt = entry.startTime;
+      runtimeDiagnostics.emit('game_long_task', {
+        duration_ms: +entry.duration.toFixed(2),
+        start_ms: +entry.startTime.toFixed(2),
+        phase,
+        match_time: match ? +match.time.toFixed(3) : null,
+      });
+    }
+  });
+  longTaskObserver.observe({ entryTypes: ['longtask'] });
+}
 
 function itemSnapshot(it) {
   return it ? { type: it.type, ...(it.rounds == null ? {} : { rounds: it.rounds }) } : null;
@@ -1305,6 +1324,14 @@ function handleKill(killer, victim, part) {
     killer: fighterSnapshot(killer),
     victim: fighterSnapshot(victim),
   });
+  runtimeDiagnostics?.emit('game_kill', {
+    match_time: +match.time.toFixed(3),
+    headshot,
+    killer: killerName,
+    killer_is_player: !!killer.isPlayer,
+    victim: victim.name,
+    weapon: killer.weaponId || null,
+  });
 
   if (!match.firstBlood) {
     match.firstBlood = true;
@@ -1395,10 +1422,19 @@ world.throwGrenade = (origin, vel, thrower) => {
   if (thrower) world.emitNoise?.(thrower, origin, 'grenade');
   audio.reload(0);
   announcer.say('nade', {}, { minGap: 14 });
+  runtimeDiagnostics?.emit('game_grenade_throw', {
+    match_time: match ? +match.time.toFixed(3) : null,
+    player: !!thrower?.isPlayer,
+    origin: [origin.x, origin.y, origin.z].map(value => +value.toFixed(2)),
+    velocity: [vel.x, vel.y, vel.z].map(value => +value.toFixed(2)),
+  });
 };
 
 function explode(pos, thrower) {
+  const explodeStarted = performance.now();
   const R = 7, MAX = 165, MIN = 25;
+  let losChecks = 0;
+  let affected = 0;
   // A blast tells you where a *grenade* went off, and nothing about who threw it —
   // so it lands as an unowned disturbance: somewhere to go and look when a fighter
   // has no live contact, not a fix on the thrower.
@@ -1416,9 +1452,13 @@ function explode(pos, thrower) {
     const chest = new THREE.Vector3(player.pos.x, player.pos.y + 1.1, player.pos.z);
     const d = chest.distanceTo(blast);
     if (d < R) {
+      losChecks++;
       const occ = !hasLoS(world, blast, chest);
       const pdmg = dmgAt(d, occ);
-      if (pdmg > 0) handlePlayerDamaged(pdmg / 0.8, 'torso', pos); // undo grit for env-scale
+      if (pdmg > 0) {
+        affected++;
+        handlePlayerDamaged(pdmg / 0.8, 'torso', pos); // undo grit for env-scale
+      }
       // shrapnel chews limbs
       if (!occ && d < R * 0.6) {
         player.armDmg = Math.min(1, player.armDmg + 0.3 * (1 - player.armor.limbAccum));
@@ -1435,14 +1475,23 @@ function explode(pos, thrower) {
     const chest = c.aimPoint();
     const d = chest.distanceTo(blast);
     if (d < R) {
+      losChecks++;
       const occ = !hasLoS(world, blast, chest);
       const dmg = dmgAt(d, occ);
       if (dmg > 1) {
+        affected++;
         if (!occ && d < R * 0.6) { c.armDmg = Math.min(1, c.armDmg + 0.35); c.legDmg = Math.min(1, c.legDmg + 0.35); }
         c.applyDamage(world, 'torso', dmg, thrower, chest);
       }
     }
   }
+  runtimeDiagnostics?.emit('game_grenade_explode', {
+    match_time: match ? +match.time.toFixed(3) : null,
+    player: !!thrower?.isPlayer,
+    duration_ms: +(performance.now() - explodeStarted).toFixed(2),
+    los_checks: losChecks,
+    affected,
+  });
 }
 
 function updateGrenades(dt) {
@@ -2716,6 +2765,7 @@ runtimeDiagnostics?.emit('game_runtime_started', {
   viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
   quality: pipeline.quality,
 });
+if (runtimeDiagnostics) setInterval(() => runtimeDiagnostics.heartbeat(), 60_000);
 
 // idle backdrop camera for menu
 camera.position.set(0, 8, 20);

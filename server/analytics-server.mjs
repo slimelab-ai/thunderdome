@@ -10,7 +10,11 @@ const maxBytes = Number(process.env.ANALYTICS_MAX_BODY_BYTES || 1_000_000);
 const retentionDays = Math.max(1, Number(process.env.ANALYTICS_RETENTION_DAYS || 90));
 const saltPath = join(dataDir, '.source-salt');
 const diagnosticsDir = join(dataDir, 'diagnostics');
-const diagnosticsTtlMs = Math.max(60_000, Number(process.env.DIAGNOSTICS_TTL_MS || 6 * 60 * 60 * 1000));
+const diagnosticsTtlMs = Math.max(60_000, Number(process.env.DIAGNOSTICS_TTL_MS || 24 * 60 * 60 * 1000));
+const diagnosticsRetentionMs = Math.max(
+  diagnosticsTtlMs,
+  Number(process.env.DIAGNOSTICS_RETENTION_MS || 14 * 24 * 60 * 60 * 1000),
+);
 const diagnosticsMaxEvents = Math.max(100, Number(process.env.DIAGNOSTICS_MAX_EVENTS || 1000));
 const diagnosticAdjectives = [
   'AMBER', 'BRAVE', 'BRIGHT', 'CALM', 'COBALT', 'COPPER', 'COSMIC', 'CRIMSON',
@@ -68,7 +72,7 @@ async function pruneExpiredDiagnostics() {
     if (!match) continue;
     try {
       const metadata = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
-      if (Date.parse(metadata.expires_at) > now) continue;
+      if (Date.parse(metadata.retained_until || metadata.expires_at) > now) continue;
     } catch {
       // A broken metadata file is not a usable session; remove it with its events.
     }
@@ -188,10 +192,15 @@ function diagnosticError(status, message) {
   return error;
 }
 
-async function loadDiagnosticSession(code) {
+async function loadDiagnosticSession(code, { allowInactive = false } = {}) {
   try {
     const metadata = JSON.parse(await readFile(join(diagnosticsDir, `${code}.json`), 'utf8'));
-    if (Date.parse(metadata.expires_at) <= Date.now()) throw diagnosticError(410, 'diagnostic session expired');
+    if (Date.parse(metadata.retained_until || metadata.expires_at) <= Date.now()) {
+      throw diagnosticError(410, 'diagnostic session retention expired');
+    }
+    if (!allowInactive && Date.parse(metadata.expires_at) <= Date.now()) {
+      throw diagnosticError(410, 'diagnostic session inactive');
+    }
     return metadata;
   } catch (error) {
     if (error.status) throw error;
@@ -202,15 +211,17 @@ async function loadDiagnosticSession(code) {
 
 async function createDiagnosticSession(req) {
   await pruneExpiredDiagnostics();
-  const active = (await readdir(diagnosticsDir)).filter(name => /^\d{6}\.json$/.test(name));
-  if (active.length >= 250) throw diagnosticError(503, 'too many active diagnostic sessions');
+  const retained = (await readdir(diagnosticsDir)).filter(name => /^\d{6}\.json$/.test(name));
   const activeLabels = new Set();
-  for (const name of active) {
+  let activeCount = 0;
+  for (const name of retained) {
     try {
       const metadata = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
+      if (Date.parse(metadata.expires_at) > Date.now()) activeCount++;
       if (metadata.label) activeLabels.add(metadata.label);
     } catch { /* retention will remove broken metadata */ }
   }
+  if (activeCount >= 250) throw diagnosticError(503, 'too many active diagnostic sessions');
   const writeToken = randomBytes(24).toString('base64url');
   for (let attempt = 0; attempt < 30; attempt++) {
     const code = String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, '0');
@@ -226,6 +237,7 @@ async function createDiagnosticSession(req) {
       source_hash: sourceHashFor(req),
       created_at: createdAt,
       expires_at: new Date(Date.now() + diagnosticsTtlMs).toISOString(),
+      retained_until: new Date(Date.now() + diagnosticsRetentionMs).toISOString(),
       last_received_at: null,
       event_count: 0,
     };
@@ -233,7 +245,10 @@ async function createDiagnosticSession(req) {
       await writeFile(join(diagnosticsDir, `${code}.json`), JSON.stringify(metadata), {
         encoding: 'utf8', mode: 0o600, flag: 'wx',
       });
-      return { code, label, write_token: writeToken, created_at: createdAt, expires_at: metadata.expires_at };
+      return {
+        code, label, write_token: writeToken, created_at: createdAt,
+        expires_at: metadata.expires_at, retained_until: metadata.retained_until,
+      };
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
@@ -251,7 +266,9 @@ async function appendDiagnosticEvents(req, code) {
   if (!body.events.every(validDiagnosticEvent)) throw diagnosticError(400, 'invalid diagnostic event');
 
   return serializeIngestion(async () => {
-    const metadata = await loadDiagnosticSession(code);
+    // A retained writer token is enough to resume a page after sleep or a deploy.
+    // Successful traffic immediately opens a fresh active window below.
+    const metadata = await loadDiagnosticSession(code, { allowInactive: true });
     if (diagnosticTokenHash(auth.slice(7)) !== metadata.token_hash) {
       throw diagnosticError(403, 'invalid diagnostic write token');
     }
@@ -263,14 +280,36 @@ async function appendDiagnosticEvents(req, code) {
     await appendFile(join(diagnosticsDir, `${code}.ndjson`), lines, { encoding: 'utf8', mode: 0o600 });
     metadata.event_count += body.events.length;
     metadata.last_received_at = receivedAt;
+    metadata.expires_at = new Date(Date.now() + diagnosticsTtlMs).toISOString();
+    metadata.retained_until = new Date(Date.now() + diagnosticsRetentionMs).toISOString();
     await writeFile(join(diagnosticsDir, `${code}.json`), JSON.stringify(metadata), { encoding: 'utf8', mode: 0o600 });
-    return { accepted: body.events.length, event_count: metadata.event_count };
+    return {
+      accepted: body.events.length,
+      event_count: metadata.event_count,
+      expires_at: metadata.expires_at,
+      retained_until: metadata.retained_until,
+    };
+  });
+}
+
+async function renewDiagnosticSession(req, code) {
+  const auth = String(req.headers.authorization || '');
+  if (!auth.startsWith('Bearer ')) throw diagnosticError(401, 'diagnostic write token required');
+  return serializeIngestion(async () => {
+    const metadata = await loadDiagnosticSession(code, { allowInactive: true });
+    if (diagnosticTokenHash(auth.slice(7)) !== metadata.token_hash) {
+      throw diagnosticError(403, 'invalid diagnostic write token');
+    }
+    metadata.expires_at = new Date(Date.now() + diagnosticsTtlMs).toISOString();
+    metadata.retained_until = new Date(Date.now() + diagnosticsRetentionMs).toISOString();
+    await writeFile(join(diagnosticsDir, `${code}.json`), JSON.stringify(metadata), { encoding: 'utf8', mode: 0o600 });
+    return { expires_at: metadata.expires_at, retained_until: metadata.retained_until };
   });
 }
 
 async function readDiagnosticEvents(code) {
   return serializeIngestion(async () => {
-    const metadata = await loadDiagnosticSession(code);
+    const metadata = await loadDiagnosticSession(code, { allowInactive: true });
     let events = [];
     try {
       const text = await readFile(join(diagnosticsDir, `${code}.ndjson`), 'utf8');
@@ -283,6 +322,8 @@ async function readDiagnosticEvents(code) {
       label: metadata.label || null,
       created_at: metadata.created_at,
       expires_at: metadata.expires_at,
+      retained_until: metadata.retained_until || metadata.expires_at,
+      active: Date.parse(metadata.expires_at) > Date.now(),
       last_received_at: metadata.last_received_at,
       event_count: metadata.event_count,
       events,
@@ -298,7 +339,7 @@ async function readLatestDiagnosticEvents(req) {
     if (!/^\d{6}\.json$/.test(name)) continue;
     try {
       const candidate = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
-      if (candidate.source_hash === requester && Date.parse(candidate.expires_at) > Date.now()) metadata.push(candidate);
+      if (candidate.source_hash === requester && Date.parse(candidate.retained_until || candidate.expires_at) > Date.now()) metadata.push(candidate);
     } catch {
       // Ignore a session whose metadata is incomplete while retention cleans it up.
     }
@@ -316,7 +357,7 @@ async function readNamedDiagnosticEvents(req, label) {
     if (!/^\d{6}\.json$/.test(name)) continue;
     try {
       const candidate = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
-      if (candidate.label === label && candidate.source_hash === requester && Date.parse(candidate.expires_at) > Date.now()) {
+      if (candidate.label === label && candidate.source_hash === requester && Date.parse(candidate.retained_until || candidate.expires_at) > Date.now()) {
         metadata.push(candidate);
       }
     } catch {
@@ -366,6 +407,14 @@ const server = createServer(async (req, res) => {
     }
   }
   const diagnosticMatch = /^\/diagnostics\/(\d{6})$/.exec(pathname);
+  const diagnosticHeartbeatMatch = /^\/diagnostics\/(\d{6})\/heartbeat$/.exec(pathname);
+  if (diagnosticHeartbeatMatch && req.method === 'POST') {
+    try {
+      return reply(res, 200, await renewDiagnosticSession(req, diagnosticHeartbeatMatch[1]));
+    } catch (error) {
+      return reply(res, error.status || 400, { error: error.message });
+    }
+  }
   if (diagnosticMatch && req.method === 'POST') {
     try {
       return reply(res, 202, await appendDiagnosticEvents(req, diagnosticMatch[1]));

@@ -64,6 +64,12 @@ async function sendEvent(record) {
         body: JSON.stringify({ events: [record] }),
       });
       if (response.ok) {
+        try {
+          const lifetime = await response.json();
+          if (lifetime?.expires_at) session.expires_at = lifetime.expires_at;
+          if (lifetime?.retained_until) session.retained_until = lifetime.retained_until;
+          sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...session, sequence }));
+        } catch { /* an older collector may acknowledge without a body */ }
         setState(uploadState, 'REPORTING LIVE', 'good');
         return;
       }
@@ -117,7 +123,8 @@ async function openSession() {
   let resumed = false;
   try {
     const saved = JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY) || 'null');
-    if (saved?.code && saved?.label && saved?.write_token && Date.parse(saved.expires_at) > Date.now()) {
+    const availableUntil = saved?.retained_until || saved?.expires_at;
+    if (saved?.code && saved?.label && saved?.write_token && Date.parse(availableUntil) > Date.now()) {
       session = saved;
       sequence = Number.isSafeInteger(saved.sequence) ? saved.sequence : 0;
       resumed = true;
@@ -135,7 +142,7 @@ async function openSession() {
     try { sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...session, sequence })); } catch {}
   }
   codeEl.textContent = session.label;
-  sessionDetail.textContent = 'Tell Codex this once. It survives automatic updates until this tab closes.';
+  sessionDetail.textContent = 'Tell Codex this once. Active pages renew it automatically; reports remain available for 14 days.';
   setState(uploadState, 'REPORTING LIVE', 'good');
   let userAgentData = null;
   if (navigator.userAgentData) {
@@ -169,6 +176,26 @@ async function openSession() {
     resumed,
   });
   for (const queued of deferredErrors.splice(0)) await emit(queued.type, queued.payload);
+}
+
+async function renewSession() {
+  if (!session) return;
+  try {
+    const response = await fetch(`/api/diagnostics/${session.code}/heartbeat`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.write_token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`diagnostic heartbeat returned ${response.status}`);
+    const lifetime = await response.json();
+    if (lifetime?.expires_at) session.expires_at = lifetime.expires_at;
+    if (lifetime?.retained_until) session.retained_until = lifetime.retained_until;
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...session, sequence }));
+    setState(uploadState, 'REPORTING LIVE', 'good');
+  } catch (error) {
+    setState(uploadState, 'RECONNECTING…', 'pending');
+    console.warn('[xbox diagnostics] heartbeat interrupted', error);
+  }
 }
 
 function validBuild(value) {
@@ -652,6 +679,7 @@ async function boot() {
   try {
     await openSession();
     setInterval(checkForDeployment, 5000);
+    setInterval(renewSession, 60_000);
     pollController();
     await runGraphicsProbes('initial');
   } catch (error) {

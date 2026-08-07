@@ -35,6 +35,8 @@ const MUT_NAMES = {
 };
 
 const CREW_NAMES = ['Moose', 'Wren', 'Sledge', 'Ivy', 'Tarmac', 'Nadia', 'Brick', 'Kestrel', 'Yusuf', 'Dora', 'Flint', 'Marrow'];
+const KILLFEED_SLOT_COUNT = 5;
+const KILLFEED_LIFETIME_MS = 6000;
 let crewNameIdx = 0;
 export function nextCrewName() { return CREW_NAMES[crewNameIdx++ % CREW_NAMES.length]; }
 
@@ -60,6 +62,19 @@ export class UI {
       pause: $('screen-pause'),
     };
     this._eventTimer = null;
+    // Xbox Edge was spending almost a full second collecting/reflowing the HUD when
+    // the first dynamically-created killfeed node was removed. Keep a tiny fixed
+    // pool for the whole page lifetime and expire entries with opacity only, so a
+    // kill never schedules DOM destruction on the combat thread.
+    this._killfeedSequence = 0;
+    this._killfeedSlots = Array.from({ length: KILLFEED_SLOT_COUNT }, () => {
+      const entry = document.createElement('div');
+      entry.className = 'kf-entry';
+      entry.style.opacity = '0';
+      entry.setAttribute('aria-hidden', 'true');
+      this.el.killfeed.appendChild(entry);
+      return { entry, sequence: -1, fadeToken: 0 };
+    });
     this.selChar = 'player';
     this.hireOpen = false;
     this.controllerCarry = null;
@@ -253,12 +268,23 @@ export class UI {
   }
 
   killfeed(killerName, victimName, headshot, friendlyKiller) {
-    const e = document.createElement('div');
+    const slot = this._killfeedSlots.reduce((oldest, candidate) =>
+      candidate.sequence < oldest.sequence ? candidate : oldest);
+    const e = slot.entry;
+    slot.sequence = ++this._killfeedSequence;
+    const fadeToken = ++slot.fadeToken;
     e.className = 'kf-entry' + (friendlyKiller ? ' friendly' : '');
     e.innerHTML = `<b>${killerName}</b> ${headshot ? '<span class="kf-head">☠ headshot</span>' : '🗡'} ${victimName}`;
-    this.el.killfeed.prepend(e);
-    while (this.el.killfeed.children.length > 5) this.el.killfeed.lastChild.remove();
-    setTimeout(() => e.remove(), 6000);
+    e.style.order = String(-slot.sequence);
+    e.style.transition = 'none';
+    e.style.opacity = '1';
+    e.setAttribute('aria-hidden', 'false');
+    (this._killfeedSetTimeout || setTimeout)(() => {
+      if (slot.fadeToken !== fadeToken) return;
+      e.style.transition = 'opacity 0.2s ease-out';
+      e.style.opacity = '0';
+      e.setAttribute('aria-hidden', 'true');
+    }, KILLFEED_LIFETIME_MS);
   }
 
   eventBanner(title, sub, color = 'var(--blood)') {
