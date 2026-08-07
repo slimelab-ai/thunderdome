@@ -17,7 +17,13 @@ test('game runtime resumes the existing one-time diagnostic session', async () =
   const reporter = createRuntimeDiagnostics({
     storage,
     now: () => new Date('2026-08-07T02:00:00.000Z'),
-    fetchImpl: async (url, options) => { requests.push([url, options]); return { ok: true }; },
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      return { ok: true, json: async () => ({
+        expires_at: '2099-01-02T00:00:00.000Z',
+        retained_until: '2099-01-15T00:00:00.000Z',
+      }) };
+    },
   });
   assert.equal(reporter.label, 'STORMY-FOX');
   await reporter.emit('game_frame_hitch', { duration_ms: 180 });
@@ -30,6 +36,31 @@ test('game runtime resumes the existing one-time diagnostic session', async () =
     at: '2026-08-07T02:00:00.000Z',
     payload: { duration_ms: 180 },
   });
+  assert.equal(writes.at(-1)[1].retained_until, '2099-01-15T00:00:00.000Z');
+  await reporter.heartbeat();
+  assert.equal(requests[1][0], '/api/diagnostics/753160/heartbeat');
+});
+
+test('game runtime can renew a retained diagnostic session after its active window', async () => {
+  const requests = [];
+  const saved = {
+    code: '753160', label: 'STORMY-FOX', write_token: 'secret', sequence: 122,
+    expires_at: '2026-08-06T00:00:00.000Z',
+    retained_until: '2026-08-20T00:00:00.000Z',
+  };
+  const reporter = createRuntimeDiagnostics({
+    storage: {
+      getItem: () => JSON.stringify(saved),
+      setItem: () => {},
+    },
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  assert.equal(reporter.label, 'STORMY-FOX');
+  await reporter.heartbeat();
+  assert.equal(requests[0][0], '/api/diagnostics/753160/heartbeat');
 });
 
 test('ordinary game tabs do not create diagnostic sessions', () => {

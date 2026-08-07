@@ -85,21 +85,34 @@
 
     <div id="objective-line"></div>
     <div id="interact-hint" class="hidden"></div>
+    <div id="range-panel" class="hidden">
+      <b>FIRING RANGE</b>
+      <span id="range-stats">0 HITS · 0 HEADSHOTS</span>
+      <small><span class="controller-only">Y SWAP · X RELOAD · START PAUSE</span><span class="keyboard-only">MOUSE WHEEL SWAP · R RELOAD · ESC PAUSE</span></small>
+    </div>
   </div>
 
   <!-- ===================== SCREENS ===================== -->
-  <div id="graphics-prep" class="graphics-prep hidden" role="status" aria-live="polite">
-    <b>LOADING ARENA</b><span>STREAMING FIGHTERS AND WEAPONS</span>
+  <div id="screen-loading" class="screen loading-screen hidden" role="status" aria-live="polite">
+    <div class="loading-card">
+      <div class="loading-kicker">THE HOUSE IS SETTING THE STAGE</div>
+      <h2 id="loading-title">OPENING THE GATES</h2>
+      <div class="loading-meter"><i id="loading-meter-fill"></i></div>
+      <b id="loading-stage">STREAMING ARENA</b>
+      <span id="loading-detail">FIGHTERS · WEAPONS · LIGHTING</span>
+      <small>The picture may pause briefly while Edge unpacks the arena. Your controller is still connected.</small>
+    </div>
   </div>
   <div id="screen-menu" class="screen">
     <div class="menu-inner">
       <div class="menu-pretitle">THE UNDERGROUND KILL LEAGUE PRESENTS</div>
       <h1 class="game-title">THUNDER<span>DOME</span></h1>
-      <div class="menu-tagline">Ten ranks. One champion. Everybody else leaves in a bag.</div>
+      <div class="menu-tagline">Fifteen ranks. One champion. Everybody else leaves in a bag.</div>
       <div class="menu-buttons">
         <button id="btn-continue" class="btn btn-big hidden">CONTINUE CAREER</button>
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
+        <button id="btn-firing-range" class="btn btn-big">FIRING RANGE</button>
         <button id="btn-menu-settings" class="btn btn-big btn-ghost">SETTINGS</button>
       </div>
       <div class="xbox-controller-help">

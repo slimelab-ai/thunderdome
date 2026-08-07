@@ -19,9 +19,19 @@ The generator downloads Kokoro 82M v1.0 and its voice embeddings into the ignore
 model files with `--model` and `--voices`. Existing clips are preserved unless
 `--force` is supplied.
 
-The checked-in bank uses `am_michael` at speed 1.04 with light EQ, compression,
-and loudness normalization. Kokoro's model weights are Apache-2.0 licensed; the
-`kokoro-onnx` runtime used only by this development tool is MIT licensed.
+The checked-in bank uses Chatterbox Turbo 350M, cloned from the stable VULTURE
+reference in `vulture-ref.wav`. It adds a small, deterministic set of performance
+cues (breaths, dry chuckles, sighs, and whispers) to selected alternates, then
+normalizes every clip to the same broadcast loudness. Generate it from an isolated
+`chatterbox-tts` environment with CUDA-enabled PyTorch and:
+
+```sh
+npm run voice:generate -- --engine chatterbox --force
+```
+
+Chatterbox is MIT licensed. The previous Kokoro renderer remains available as a
+quick CPU fallback, and the slower Qwen renderer remains available for experiments.
+No inference runtime ships to players.
 
 Procedural fighter names stay in the on-screen subtitle. Their clips use generic
 phrases such as “the target” and “the hired gun,” keeping the bank finite and the
