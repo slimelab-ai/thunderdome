@@ -331,9 +331,19 @@ def anim_melee(rig):
     clip is a third of a second, the game's own loop advances it between screenshots,
     and sampling it by eye reports whatever moment the timing happened to land on.
     """
+    # The off hand, keyed on every frame of this clip.
+    #
+    # `melee` is in SUPPORT_ARM_CLIPS, so the runtime lets go of the knife's support
+    # pins while it plays — and every bone this clip does not key falls to ZERO, which
+    # is the rig's rest pose with *both* hands out on a rifle handguard. Measured, the
+    # left fist went from 16 cm behind the camera (tucked, correct for a knife) to
+    # 63 cm in front of it: mid-slash the off hand flew forward and gripped a weapon
+    # that is not there. Keying it here is what keeps it out of the way.
+    OFF = {"upperarm_l": (62, 0, -16), "forearm_l": (36, 0, 0), "hand_l": (0, 0, 0)}
+
     new_action(rig, "melee")
     clear_pose(rig)
-    key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0)})
+    key(rig, 1, {**ZERO, **OFF}, loc={"vm_root": (0, 0, 0)})
     # Wind up: hand back, up and outboard, blade cocked over the shoulder.
     #
     # Every number below is smaller than it wants to be, and that is the point. The
@@ -342,20 +352,20 @@ def anim_melee(rig):
     # sees the knife leave and come back, not a cut. `vm_root`'s roll is the worst
     # offender: the hand sits 35 cm off that axis, so every degree of it moves the
     # blade a long way.
-    key(rig, 6, {**ZERO, "vm_root": (-9, 0, 10), "upperarm_r": (11, 0, -7),
+    key(rig, 6, {**ZERO, **OFF, "upperarm_l": (58, 0, -22), "vm_root": (-9, 0, 10), "upperarm_r": (11, 0, -7),
                  "forearm_r": (-16, 0, 0)},
         loc={"vm_root": (0.055, -0.050, 0.050)})
     # The cut. Down and across to the left, with a modest reach forward — the edge is
     # travelling the way it points, which is the whole difference between a slash that
     # reads and a fist waved at the screen.
-    key(rig, 11, {**ZERO, "vm_root": (5, 0, -14), "upperarm_r": (-7, 0, 8),
+    key(rig, 11, {**ZERO, **OFF, "upperarm_l": (66, 0, -10), "vm_root": (5, 0, -14), "upperarm_r": (-7, 0, 8),
                   "forearm_r": (11, 0, 0)},
         loc={"vm_root": (-0.080, 0.080, -0.045)})
     # Follow-through, short. The blade carries past the target before the arm checks.
-    key(rig, 14, {**ZERO, "vm_root": (7, 0, -18), "upperarm_r": (-9, 0, 10),
+    key(rig, 14, {**ZERO, **OFF, "upperarm_l": (68, 0, -8), "vm_root": (7, 0, -18), "upperarm_r": (-9, 0, 10),
                   "forearm_r": (13, 0, 0)},
         loc={"vm_root": (-0.105, 0.055, -0.065)})
-    key(rig, 24, ZERO, loc={"vm_root": (0, 0, 0)})
+    key(rig, 24, {**ZERO, **OFF}, loc={"vm_root": (0, 0, 0)})
 
 
 
