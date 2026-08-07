@@ -203,7 +203,17 @@ function enterSandbox(weapons = null, { god = true, publicRange = false } = {}) 
 const QUALITY_KEY = 'thunderdome-quality';
 const xboxBrowser = isXboxBrowser();
 if (xboxBrowser) document.body.classList.add('xbox-browser');
-const runtimeDiagnostics = createRuntimeDiagnostics();
+const diagnosticsSetting = new URLSearchParams(location.search).get('diagnostics');
+const developmentHost = /^dev\d*-thunderdome\.slimelab\.ai$/i.test(location.hostname);
+const runtimeDiagnostics = createRuntimeDiagnostics({
+  autoCreate: diagnosticsSetting === '1' || (diagnosticsSetting !== '0' && developmentHost),
+});
+runtimeDiagnostics?.ready.then(session => {
+  if (!session?.label) return;
+  const label = document.getElementById('diagnostic-session-label');
+  label.textContent = `LIVE DIAGNOSTICS · ${session.label} · RETAINED 14 DAYS`;
+  label.classList.remove('hidden');
+});
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.
@@ -2760,8 +2770,14 @@ matchLifecycle.recoverIncomplete();
 ui.showScreen('menu');
 runtimeDiagnostics?.emit('game_runtime_started', {
   build: import.meta.env?.VITE_BUILD_SHA || 'dev',
+  installation_id: analytics.installationId,
+  analytics_session_id: analytics.sessionId,
   xbox_browser: xboxBrowser,
   touch_mode: touchMode,
+  user_agent: navigator.userAgent,
+  platform: navigator.platform || '',
+  hardware_concurrency: navigator.hardwareConcurrency || null,
+  device_memory: navigator.deviceMemory || null,
   viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
   quality: pipeline.quality,
 });

@@ -15,7 +15,7 @@ const diagnosticsRetentionMs = Math.max(
   diagnosticsTtlMs,
   Number(process.env.DIAGNOSTICS_RETENTION_MS || 14 * 24 * 60 * 60 * 1000),
 );
-const diagnosticsMaxEvents = Math.max(100, Number(process.env.DIAGNOSTICS_MAX_EVENTS || 1000));
+const diagnosticsMaxEvents = Math.max(100, Number(process.env.DIAGNOSTICS_MAX_EVENTS || 10_000));
 const diagnosticAdjectives = [
   'AMBER', 'BRAVE', 'BRIGHT', 'CALM', 'COBALT', 'COPPER', 'COSMIC', 'CRIMSON',
   'ELECTRIC', 'FROSTY', 'GOLDEN', 'IRON', 'JADE', 'LUCKY', 'LUNAR', 'MELLOW',

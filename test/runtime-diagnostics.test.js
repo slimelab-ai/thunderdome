@@ -27,7 +27,7 @@ test('game runtime resumes the existing one-time diagnostic session', async () =
   });
   assert.equal(reporter.label, 'STORMY-FOX');
   await reporter.emit('game_frame_hitch', { duration_ms: 180 });
-  assert.equal(writes[0][1].sequence, 123);
+  assert.ok(writes.some(([, value]) => value.sequence === 123));
   assert.equal(requests[0][0], '/api/diagnostics/753160');
   assert.equal(requests[0][1].headers.authorization, 'Bearer secret');
   assert.deepEqual(JSON.parse(requests[0][1].body).events[0], {
@@ -69,4 +69,45 @@ test('ordinary game tabs do not create diagnostic sessions', () => {
     fetchImpl: async () => { throw new Error('must not send'); },
   });
   assert.equal(reporter, null);
+});
+
+test('dev game tabs create a cross-platform diagnostic session and queue early events', async () => {
+  const writes = [];
+  const requests = [];
+  const reporter = createRuntimeDiagnostics({
+    autoCreate: true,
+    storage: {
+      getItem: () => null,
+      setItem: (key, value) => writes.push([key, JSON.parse(value)]),
+    },
+    now: () => new Date('2026-08-07T21:30:00.000Z'),
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      if (url === '/api/diagnostics/session') return {
+        ok: true,
+        json: async () => ({
+          code: '482013', label: 'BRIGHT-OTTER', write_token: 'new-secret',
+          expires_at: '2026-08-08T21:30:00.000Z',
+          retained_until: '2026-08-21T21:30:00.000Z',
+        }),
+      };
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+
+  const emitted = reporter.emit('game_runtime_started', { platform: 'Win32' });
+  assert.equal(reporter.label, null);
+  assert.equal((await reporter.ready).label, 'BRIGHT-OTTER');
+  await emitted;
+
+  assert.equal(requests[0][0], '/api/diagnostics/session');
+  assert.equal(requests[1][0], '/api/diagnostics/482013');
+  assert.equal(requests[1][1].headers.authorization, 'Bearer new-secret');
+  assert.deepEqual(JSON.parse(requests[1][1].body).events[0], {
+    seq: 1,
+    type: 'game_runtime_started',
+    at: '2026-08-07T21:30:00.000Z',
+    payload: { platform: 'Win32' },
+  });
+  assert.equal(writes.at(-1)[1].label, 'BRIGHT-OTTER');
 });
