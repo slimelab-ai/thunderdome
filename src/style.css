@@ -327,17 +327,38 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .xbox-browser .xbox-controller-help { display: block; }
 .xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
 .xbox-controller-help strong { color: #fff; }
-.graphics-prep {
-  display: none; position: fixed; left: 50%; bottom: 16px; z-index: 170;
-  transform: translateX(-50%); width: min(520px, 88vw); margin: 0; padding: 7px 11px;
-  border: 1px solid rgba(255,185,46,0.5); background: rgba(255,185,46,0.07);
-  font: 10px/1.35 var(--font-mono); letter-spacing: 1px; color: var(--muted);
+.loading-screen { z-index: 180; overflow: hidden; }
+.loading-screen::before {
+  content: ""; position: absolute; inset: -20%;
+  background: repeating-linear-gradient(105deg, transparent 0 70px, rgba(227,36,43,0.035) 72px 74px);
+  animation: loading-drift 7s linear infinite;
 }
-.xbox-browser .graphics-prep { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.graphics-prep b { color: var(--gold); }
-.graphics-prep.complete { border-color: rgba(74,222,128,0.55); background: rgba(74,222,128,0.07); }
-.graphics-prep.complete b { color: #68ee91; }
-.xbox-browser .graphics-prep.hidden { display: none; }
+.loading-card {
+  position: relative; width: min(680px, 86vw); padding: 42px 44px; text-align: center;
+  border: 1px solid rgba(255,185,46,0.42); border-top: 4px solid var(--blood);
+  background: rgba(8,8,12,0.94); box-shadow: 0 24px 90px #000, inset 0 0 80px rgba(227,36,43,0.06);
+}
+.loading-kicker { color: var(--gold); font-size: 11px; letter-spacing: 4px; }
+.loading-card h2 { margin: 12px 0 22px; font: 54px/.95 Impact, "Arial Black", sans-serif; letter-spacing: 4px; }
+.loading-meter { height: 7px; margin: 0 0 18px; overflow: hidden; border: 1px solid #3c3c47; background: #111117; }
+.loading-meter i { display: block; width: 8%; height: 100%; background: linear-gradient(90deg, var(--blood), var(--gold)); transition: width .18s ease; }
+.loading-card b, .loading-card span, .loading-card small { display: block; }
+.loading-card b { color: #fff; font-size: 14px; letter-spacing: 2px; }
+.loading-card span { margin-top: 6px; color: #aaaab4; font-size: 11px; letter-spacing: 1.4px; }
+.loading-card small { margin-top: 24px; color: #777784; font-size: 10px; line-height: 1.5; }
+@keyframes loading-drift { to { transform: translateX(74px); } }
+
+#range-panel {
+  position: absolute; top: 20px; right: 22px; min-width: 250px; padding: 10px 14px;
+  border: 1px solid rgba(255,185,46,.55); border-left: 4px solid var(--gold);
+  background: rgba(5,5,8,.82); text-align: right; text-shadow: 0 2px 4px #000;
+}
+#range-panel b, #range-panel span, #range-panel small { display: block; }
+#range-panel b { color: var(--gold); letter-spacing: 2px; }
+#range-panel span { margin-top: 3px; color: #eee; font-size: 11px; }
+#range-panel small { margin-top: 4px; color: #8d8d98; font-size: 9px; letter-spacing: .6px; }
+.keyboard-only { display: inline; }
+.controller-mode .keyboard-only { display: none; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }

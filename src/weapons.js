@@ -14,6 +14,8 @@ import { bindAuthoredMaterials } from './materials.js';
 //
 // `recoilPattern` is the shape of the climb, one entry per shot, `x` right and `y` up,
 // in roughly unit terms — `recoilVelocity` sets how hard it is in degrees per second.
+// `recoilImpulse` advances a few milliseconds of that kick on the firing frame, so
+// low-rate guns punch immediately instead of beginning a slow camera drift.
 // The list is walked in order and repeated if the magazine outlasts it, and the index
 // resets after `recoilCooldown` without firing, so every burst opens the same way.
 //
@@ -37,7 +39,8 @@ export const WEAPONS = {
     // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
-    recoilVelocity: 8.05, recoilRandom: 1.4, recoilCooldown: 0.45,
+    recoilVelocity: 9.0, recoilRandom: 1.4, recoilCooldown: 0.45,
+    recoilImpulse: 0.055, viewKick: 0.72,
     // Just above what the decay eats at a fast trigger finger, so sustained
     // deliberate fire does pin somebody after a few seconds and a couple of
     // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
@@ -59,6 +62,7 @@ export const WEAPONS = {
       [0.38, 0.15], [0.2, 0.15], [-0.05, 0.15], [-0.28, 0.15],
     ],
     recoilVelocity: 5.29, recoilRandom: 1.8, recoilCooldown: 0.5,
+    recoilImpulse: 0.010, viewKick: 0.50,
     suppression: 0.75,
     desc: 'A hose of cheap brass. Wild past 12 meters, filthy up close.',
   },
@@ -74,7 +78,8 @@ export const WEAPONS = {
     // One heavy shove. There is no pattern to learn on a pump gun — you are back on
     // target by the time the next shell is chambered.
     recoilPattern: [[0, 1], [0.12, 1], [-0.12, 1]],
-    recoilVelocity: 17.25, recoilRandom: 2.2, recoilCooldown: 0.6,
+    recoilVelocity: 18.5, recoilRandom: 2.2, recoilCooldown: 0.6,
+    recoilImpulse: 0.065, viewKick: 1.0,
     suppression: 0.6,
     desc: '9 pellets of crowd-pleasing violence. Deletes torsos inside 10m.',
   },
@@ -94,6 +99,7 @@ export const WEAPONS = {
       [-0.36, 0.08], [-0.46, 0.06], [-0.4, 0.06], [-0.22, 0.06],
     ],
     recoilVelocity: 7.13, recoilRandom: 1.1, recoilCooldown: 0.55,
+    recoilImpulse: 0.012, viewKick: 0.58,
     suppression: 1,
     desc: 'The workhorse of every syndicate in the league. 2–3 rounds does it.',
   },
@@ -105,6 +111,7 @@ export const WEAPONS = {
     // A single hard punch straight up. You lose the sight picture and get it back.
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
     recoilVelocity: 19.55, recoilRandom: 1.0, recoilCooldown: 0.8,
+    recoilImpulse: 0.048, viewKick: 0.86,
     suppression: 1.15,
     desc: 'One shot, one funeral. Scoped. Slow. Surgical.',
   },

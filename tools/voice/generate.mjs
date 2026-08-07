@@ -19,16 +19,27 @@ const spokenText = (text) => {
 };
 const python = process.env.VOICE_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 const rawArgs = process.argv.slice(2);
+const engineAt = rawArgs.indexOf('--engine');
+const engine = engineAt >= 0 ? rawArgs[engineAt + 1] : 'kokoro';
+if (engineAt >= 0) rawArgs.splice(engineAt, 2);
 const jobsAt = rawArgs.indexOf('--jobs');
-const jobs = Math.max(1, Math.min(6, jobsAt >= 0 ? Number(rawArgs[jobsAt + 1]) || 1 : 1));
+const requestedJobs = Math.max(1, Math.min(6, jobsAt >= 0 ? Number(rawArgs[jobsAt + 1]) || 1 : 1));
+// Qwen uses one model per worker. Chatterbox is deliberately single-worker: its
+// distilled decoder already keeps the GPU busy and extra model copies only add VRAM pressure.
+const jobs = engine === 'qwen' ? Math.min(3, requestedJobs)
+  : engine === 'chatterbox' ? 1 : requestedJobs;
 if (jobsAt >= 0) rawArgs.splice(jobsAt, 2);
 const output = path.join(root, 'public/assets/voice/vulture');
 await mkdir(output, { recursive: true });
 
 const run = (input) => new Promise((resolve, reject) => {
+  const renderer = engine === 'qwen' ? 'render_qwen.py'
+    : engine === 'chatterbox' ? 'render_chatterbox.py' : 'render.py';
+  const engineArgs = engine === 'chatterbox'
+    ? ['--reference', path.join(here, 'vulture-ref.wav')] : [];
   const child = spawn(python, [
-    path.join(here, 'render.py'), '--input', input, '--output', output,
-    '--no-manifest', ...rawArgs,
+    path.join(here, renderer), '--input', input, '--output', output,
+    '--no-manifest', ...engineArgs, ...rawArgs,
   ], { cwd: root, stdio: 'inherit' });
   child.on('error', reject);
   child.on('exit', code => code === 0 ? resolve() : reject(new Error(`voice renderer exited ${code}`)));
@@ -48,11 +59,13 @@ try {
     const at = rawArgs.indexOf(name);
     return at >= 0 ? rawArgs[at + 1] : null;
   };
-  const voice = option('--voice') || 'am_michael';
-  const speed = Number(option('--speed') || 1.04);
+  const voice = option('--voice') || (engine === 'qwen' ? 'Ryan'
+    : engine === 'chatterbox' ? 'Vulture reference voice' : 'am_michael');
+  const speed = Number(option('--speed') || (engine === 'qwen' || engine === 'chatterbox' ? 1.0 : 1.04));
   const manifest = {
     format: 1,
-    engine: 'Kokoro-82M-v1.0-ONNX',
+    engine: engine === 'qwen' ? 'Qwen3-TTS-12Hz-1.7B-CustomVoice'
+      : engine === 'chatterbox' ? 'Chatterbox-Turbo-350M' : 'Kokoro-82M-v1.0-ONNX',
     voice,
     speed,
     codec: 'Opus 48 kbps mono',

@@ -13,6 +13,16 @@ test('voice clips have stable category and line URLs', () => {
   assert.equal(announcerClipUrl('playerKill', 11), `/assets/voice/vulture/playerKill/12.opus?v=${ASSET_VERSION}`);
 });
 
+test('a full circuit has enough commentary to avoid obvious event loops', () => {
+  const total = Object.values(LINES).reduce((sum, lines) => sum + lines.length, 0);
+  assert.ok(total >= 290, `voice catalog regressed to ${total} lines`);
+  assert.ok(LINES.matchStart.length >= 20);
+  assert.ok(LINES.firstBlood.length >= 15);
+  assert.ok(LINES.playerKill.length >= 30);
+  assert.ok(LINES.playerHeadshot.length >= 20);
+  assert.ok(LINES.playerHurt.length >= 15);
+});
+
 test('every authored subtitle has a pre-rendered voice clip', async () => {
   await Promise.all(Object.entries(LINES).flatMap(([category, lines]) =>
     lines.map((_, index) => access(path.join(

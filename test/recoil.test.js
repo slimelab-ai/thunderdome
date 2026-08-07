@@ -34,6 +34,16 @@ test('a kick climbs and then comes back to exactly zero', () => {
   assert.equal(r.stable, true);
 });
 
+test('a low-rate weapon can deliver immediate punch without changing the final aim', () => {
+  const r = new Recoil();
+  r.add(0, 18, 0.06);
+  assert.ok(r.posY > 1, `immediate impulse was only ${r.posY.toFixed(2)} degrees`);
+  run(r, 3);
+  assert.equal(r.posY, 0);
+  assert.equal(r.posX, 0);
+  assert.equal(r.stable, true);
+});
+
 test('the climb is upward for an upward kick, and rightward for a rightward one', () => {
   const up = new Recoil();
   up.add(0, 8);

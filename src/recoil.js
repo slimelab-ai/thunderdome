@@ -42,7 +42,7 @@ export function cosAlpha(a) {
  * patterns in src/weapons.js are written in.
  */
 export const RECOIL_TUNING = {
-  multiplier: 1.12,
+  multiplier: 1.16,
   recoverySpeed: 5,        // how fast the kick velocity bleeds off
   drawbackThreshold: 1.2,  // deg/s below which the offset starts easing home
   drawbackSpeed: 1,        // degrees per second of drawback, before clamping
@@ -77,10 +77,26 @@ export class Recoil {
     this.stable = true;
   }
 
-  /** Kick, in degrees per second. `x` right, `y` up. */
-  add(x, y) {
-    this.velX += x * this.t.multiplier;
-    this.velY += y * this.t.multiplier;
+  /**
+   * Kick in degrees per second, with an optional short immediate impulse.
+   *
+   * Velocity makes automatic fire climb naturally, but a low-rate pistol or pump
+   * gun feels late if *all* of its movement has to integrate over later frames.
+   * `impulseSeconds` advances a small part of that same kick immediately; it is
+   * still an offset, still cancellable, and still returns exactly to the base aim.
+   */
+  add(x, y, impulseSeconds = 0) {
+    const mx = x * this.t.multiplier;
+    const my = y * this.t.multiplier;
+    this.velX += mx;
+    this.velY += my;
+    if (impulseSeconds > 0) {
+      const cap = this.t.maxOffset ?? 15;
+      this.posX = Math.max(-cap, Math.min(cap, this.posX + mx * impulseSeconds));
+      this.posY = Math.max(-cap, Math.min(cap, this.posY + my * impulseSeconds));
+      this.drawback = false;
+      this.stable = false;
+    }
   }
 
   /**

@@ -55,6 +55,7 @@ export class UI {
     };
     this.screens = {
       menu: $('screen-menu'), intro: $('screen-intro'), shop: $('screen-shop'),
+      loading: $('screen-loading'),
       death: $('screen-death'), champion: $('screen-champion'), executed: $('screen-executed'),
       pause: $('screen-pause'),
     };
@@ -156,12 +157,13 @@ export class UI {
     this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
 
     // weapon slots: guns on 1/2, the knife pinned on 3
-    const slotsKey = player.slots.join(',') + player.slotIdx + (player.knifeOut ? 'K' : '');
+    const slotsKey = player.slots.join(',') + player.slotIdx + (player.knifeOut ? 'K' : '')
+      + (player.hideKnifeSlot ? 'H' : '');
     if (this.el.weaponSlots._last !== slotsKey) {
       this.el.weaponSlots._last = slotsKey;
       this.el.weaponSlots.innerHTML = player.slots.map((id, i) =>
         `<span class="wslot ${!player.knifeOut && i === player.slotIdx ? 'active' : ''}">${i + 1}·${WEAPONS[id].name.split(' ')[0]}</span>`).join('') +
-        `<span class="wslot ${player.knifeOut ? 'active' : ''}">3·SHANK</span>`;
+        (player.hideKnifeSlot ? '' : `<span class="wslot ${player.knifeOut ? 'active' : ''}">3·SHANK</span>`);
     }
 
     const rankMoneyKey = `${career.rank}|${career.money}`;

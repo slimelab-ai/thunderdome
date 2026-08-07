@@ -133,6 +133,7 @@ export class Player {
   ammoType() { return ITEM_TYPES[this.weapon.id]?.ammo || null; }
   reserve() {
     if (this.weapon.melee) return Infinity; // a knife never runs dry
+    if (this.infiniteAmmo) return Infinity;  // firing range only; live bouts always use the pack
     const t = this.ammoType();
     return t ? ammoInPack(this.character, t) : 0;
   }
@@ -140,6 +141,7 @@ export class Player {
     this.magBySlot = this.slots.map((id) => {
       const w = WEAPONS[id];
       if (w.melee) return 0;
+      if (this.infiniteAmmo) return w.mag;
       const t = ITEM_TYPES[id]?.ammo;
       if (!t) return 0;
       return consumeAmmo(this.character, t, w.mag);
@@ -561,7 +563,7 @@ export class Player {
       if (this.reloading <= 0) {
         const t = this.ammoType();
         if (this.shellLoading) {
-          this.mag += t ? consumeAmmo(this.character, t, 1) : 1;
+          this.mag += this.infiniteAmmo ? 1 : (t ? consumeAmmo(this.character, t, 1) : 1);
           if (this.mag < w.mag && this.reserve() > 0) {
             // Another round to feed: restart the timer and replay the insert.
             this.reloading = (w.shellReload || 0.45) * (this.progressStats.reloadMult || 1);
@@ -573,7 +575,8 @@ export class Player {
             if (w.pump) { this.pumpT = w.pump; this.arms.pump(w.pump); }  // chamber the first round
           }
         } else {
-          this.mag += t ? consumeAmmo(this.character, t, w.mag - this.mag) : (w.mag - this.mag);
+          this.mag += this.infiniteAmmo ? (w.mag - this.mag)
+            : (t ? consumeAmmo(this.character, t, w.mag - this.mag) : (w.mag - this.mag));
           this.reloading = 0;
         }
       }
@@ -948,9 +951,9 @@ export class Player {
     // twice and make the heavy guns quadratically worse than the light ones.
     const r = (1 - this.ads * 0.35) * (1 - (this.skills.aim || 0) * 0.14) * (1 + this.armDmg * 0.8);
     const kick = this.recoilPattern.next(this.world.simTime ?? performance.now() / 1000);
-    this.recoil.add(kick.x * r, kick.y * r);
+    this.recoil.add(kick.x * r, kick.y * r, w.recoilImpulse || 0);
     this.bloom += w.recoil * 0.45;
-    this.kickTarget = Math.min(1, (this.kickTarget ?? 0) + 0.55);
+    this.kickTarget = Math.min(1, (this.kickTarget ?? 0) + (w.viewKick ?? 0.55));
 
     if (this.mag <= 0) this.startReload();
   }

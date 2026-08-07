@@ -68,14 +68,120 @@ import {
  * and the thing you were watching is gone. This spawns no opposition, keeps the match
  * from ending on an empty arena, and (by default) makes the player invulnerable.
  */
-const sandbox = { active: false, god: true };
+const sandbox = {
+  active: false, god: true, publicRange: false, weapons: [],
+  savedCareer: null, savedMarket: null, hits: 0, headshots: 0, damage: 0,
+};
 
-function enterSandbox(weapons = null, { god = true } = {}) {
+function updateRangePanel() {
+  const panel = document.getElementById('range-panel');
+  panel?.classList.toggle('hidden', !sandbox.active);
+  const stats = document.getElementById('range-stats');
+  if (stats) stats.textContent = `${sandbox.hits} HITS · ${sandbox.headshots} HEADSHOTS · ${Math.round(sandbox.damage)} DAMAGE`;
+}
+
+function spawnRangeTarget(pos, label) {
+  const group = new THREE.Group();
+  const plate = new THREE.MeshBasicMaterial({ color: 0xd8d3c3 });
+  const bull = new THREE.MeshBasicMaterial({ color: 0xe3242b });
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.82, 0.10), plate);
+  torso.position.y = 0.86;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 10), bull);
+  head.position.y = 1.48;
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.72, 0.08), new THREE.MeshBasicMaterial({ color: 0x4d4a45 }));
+  post.position.y = 0.36;
+  group.add(post, torso, head);
+  group.position.copy(pos);
+
+  const target = {
+    name: label, team: 'enemy', alive: true, scale: 1, pos: pos.clone(), group,
+    parts: [torso, head],
+    aimPoint(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + 1.12, this.pos.z); },
+    applyDamage(targetWorld, part, damage, shooter, point) {
+      sandbox.hits++;
+      sandbox.damage += damage;
+      if (part === 'head') sandbox.headshots++;
+      updateRangePanel();
+      targetWorld.onHitmarker?.(false, part === 'head');
+      targetWorld.fx.sparks(point, null, null, false);
+      const material = part === 'head' ? bull : plate;
+      const old = material.color.getHex();
+      material.color.setHex(0xffb92e);
+      setTimeout(() => material.color.setHex(old), 70);
+    },
+    update() {},
+    removeFrom(targetWorld) {
+      targetWorld.scene.remove(group);
+      targetWorld.combatants = targetWorld.combatants.filter(c => c !== this);
+      targetWorld.hitMeshes = targetWorld.hitMeshes.filter(mesh => mesh.userData.combatant !== this);
+      torso.geometry.dispose(); head.geometry.dispose(); post.geometry.dispose();
+      plate.dispose(); bull.dispose(); post.material.dispose();
+    },
+  };
+  torso.userData = { combatant: target, part: 'torso' };
+  head.userData = { combatant: target, part: 'head' };
+  scene.add(group);
+  world.combatants.push(target);
+  world.hitMeshes.push(torso, head);
+  group.updateMatrixWorld(true);
+  return target;
+}
+
+function setupFiringRange() {
+  // Start beyond the protective gate, looking straight down the target lane. A live
+  // bout opens angled toward the gate's right-hand gap; that is useful under fire and
+  // confusing in a range, where the first frame should already explain the mode.
+  player.pos.set(0, 0, 8.5);
+  player.vel.set(0, 0, 0);
+  player.yaw = 0;
+  player.pitch = 0;
+  player.slots = [...sandbox.weapons];
+  player.slotIdx = 0;
+  player.knifeOut = false;
+  player.infiniteAmmo = true;
+  player.hideKnifeSlot = true;
+  player.magBySlot = player.slots.map(id => WEAPONS[id].mag);
+  player.mag = WEAPONS[player.slots[0]].mag;
+  player._mountViewmodel();
+  sandbox.hits = 0; sandbox.headshots = 0; sandbox.damage = 0;
+  [
+    [-4.8, 0, 1.5, 'CLOSE PLATE'],
+    [0, 0.45, 1.5, 'CENTER PLATE'],
+    [4.8, 0, 1.5, 'RIGHT PLATE'],
+  ].forEach(([x, y, z, label]) => spawnRangeTarget(new THREE.Vector3(x, y, z), label));
+  updateRangePanel();
+  ui.eventBanner('FIRING RANGE', 'Y / MOUSE WHEEL cycles every gun · ammunition is unlimited', 'var(--gold)');
+}
+
+function leaveFiringRange() {
+  clearCombatants();
+  player.infiniteAmmo = false;
+  player.hideKnifeSlot = false;
+  sandbox.active = false;
+  updateRangePanel();
+  career = sandbox.savedCareer || newCareer('circuits');
+  market = sandbox.savedMarket || createMarket(career.mode, career.liquidation?.market);
+  sandbox.savedCareer = null;
+  sandbox.savedMarket = null;
+  const hasSave = !!load();
+  document.getElementById('btn-continue').classList.toggle('hidden', !hasSave);
+  document.getElementById('btn-new').textContent = hasSave ? 'NEW CAREER (WIPES SAVE)' : 'NEW CIRCUITS CAREER';
+  ui.showScreen('menu');
+  phase = 'menu';
+}
+
+function enterSandbox(weapons = null, { god = true, publicRange = false } = {}) {
   const list = (Array.isArray(weapons) ? weapons : String(weapons || '').split(','))
     .map((w) => w.trim())
     .filter((w) => WEAPON_ORDER.includes(w));
   sandbox.active = true;
   sandbox.god = god;
+  sandbox.publicRange = publicRange;
+  sandbox.weapons = list.length ? list : [...WEAPON_ORDER];
+  if (publicRange) {
+    sandbox.savedCareer = career;
+    sandbox.savedMarket = market;
+  }
 
   career = newCareer('circuits');
   career.rank = 15;
@@ -86,16 +192,10 @@ function enterSandbox(weapons = null, { god = true } = {}) {
   for (const ammo of ['ammo_9mm', 'ammo_buck', 'ammo_762', 'ammo_308']) {
     for (let i = 0; i < 3; i++) autoPlace(pack, makeItem(ammo));
   }
-  const chosen = list.length ? list : WEAPON_ORDER;
+  const chosen = sandbox.weapons;
   for (const id of chosen.slice(0, 2)) autoPlace(pack, makeItem(id));
 
   startMatch();
-  player.slots = chosen.slice(0, 2);
-  player.slotIdx = 0;
-  player.knifeOut = false;
-  player.loadMagsFromPack();
-  player._mountViewmodel();
-  ui.eventBanner('SANDBOX', `${chosen.join(' · ')}${god ? ' · invulnerable' : ''}`, 'var(--gold)');
   return chosen;
 }
 
@@ -143,9 +243,9 @@ try {
 }
 const renderer = pipeline.renderer;
 
-// On Xbox, keep the controller handoff and main menu completely free of GLTF
-// parsing/GPU uploads. Selecting a career reveals the fight card or market first,
-// then opens this gate on the next task while a persistent loading status is visible.
+// On Xbox, keep the controller handoff and every menu completely free of GLTF
+// parsing/GPU uploads. The gate opens only after FIGHT or FIRING RANGE: expensive
+// work belongs behind an unmistakable transition, never underneath a usable menu.
 let resolveCombatAssetGate;
 let combatAssetLoadingStarted = !xboxBrowser;
 const combatAssetGate = xboxBrowser
@@ -255,29 +355,24 @@ async function warmShaderCache({ between = async () => {} } = {}) {
 let graphicsPrepScheduled = false;
 let graphicsPrepStage = 'not-scheduled';
 let lastControllerActivityAt = -Infinity;
-const graphicsPrepEl = document.getElementById('graphics-prep');
-function showGraphicsPrep(stage, detail) {
-  if (!graphicsPrepEl) return;
-  graphicsPrepEl.classList.remove('hidden', 'complete');
-  graphicsPrepEl.querySelector('b').textContent = stage;
-  graphicsPrepEl.querySelector('span').textContent = detail;
+const loadingTitleEl = document.getElementById('loading-title');
+const loadingStageEl = document.getElementById('loading-stage');
+const loadingDetailEl = document.getElementById('loading-detail');
+const loadingMeterEl = document.getElementById('loading-meter-fill');
+let resolveGraphicsReady;
+const graphicsReady = new Promise(resolve => { resolveGraphicsReady = resolve; });
+function showGraphicsPrep(stage, detail, progress = null) {
+  if (loadingStageEl) loadingStageEl.textContent = stage;
+  if (loadingDetailEl) loadingDetailEl.textContent = detail;
+  if (loadingMeterEl && progress != null) loadingMeterEl.style.width = `${Math.round(progress * 100)}%`;
 }
 function finishGraphicsPrepStatus(detail = 'REFLECTIONS AND SHADERS READY') {
-  if (!graphicsPrepEl) return;
-  graphicsPrepEl.classList.add('complete');
-  graphicsPrepEl.querySelector('b').textContent = 'ARENA READY';
-  graphicsPrepEl.querySelector('span').textContent = detail;
-  setTimeout(() => graphicsPrepEl.classList.add('hidden'), 1800);
+  showGraphicsPrep('ARENA READY', detail, 1);
 }
 function scheduleBackgroundGraphicsPrep() {
   if (graphicsPrepScheduled) return;
   graphicsPrepScheduled = true;
   graphicsPrepStage = 'waiting-for-assets';
-  if (xboxBrowser && !combatAssetLoadingStarted) {
-    showGraphicsPrep('CONTROLLER SETUP', 'SELECT A CAREER TO LOAD THE ARENA');
-  } else {
-    showGraphicsPrep('LOADING ARENA', 'STREAMING FIGHTERS AND WEAPONS');
-  }
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const idle = () => new Promise(resolve => {
     if (window.requestIdleCallback) window.requestIdleCallback(resolve, { timeout: 800 });
@@ -285,7 +380,9 @@ function scheduleBackgroundGraphicsPrep() {
   });
   const prepTurn = async (stage, detail) => {
     graphicsPrepStage = stage;
-    showGraphicsPrep('PREPARING ARENA', detail);
+    const face = stage.match(/reflection-face-(\d)/)?.[1];
+    const progress = face ? 0.68 + Number(face) * 0.04 : stage === 'environment' ? 0.68 : 0.94;
+    showGraphicsPrep('PREPARING ARENA', detail, progress);
     while (phase === 'match' || phase === 'paused'
       || (xboxBrowser && performance.now() - lastControllerActivityAt < 1200)) {
       await delay(250);
@@ -318,6 +415,7 @@ function scheduleBackgroundGraphicsPrep() {
     finishGraphicsPrepStatus(xboxBrowser
       ? 'REFLECTIONS READY · SHADERS STREAM ON DEMAND'
       : 'REFLECTIONS AND SHADERS READY');
+    resolveGraphicsReady?.();
   }).catch(() => { /* assetsReady already reported */ });
 }
 
@@ -878,25 +976,41 @@ function clearCombatants() {
   }
 }
 
-function startMatch() {
+function startMatch({ prepared = false } = {}) {
+  if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
+    openShop();
+    return;
+  }
   // Fighters are skinned GLB instances now, so a bout cannot begin until the model
-  // is in memory. Desktop normally has it by now; Xbox may still be showing the
-  // explicit arena-loading status after a cold career selection.
-  if (!fighterReady()) {
+  // is in memory. On Xbox, every part of that work happens on this dedicated screen.
+  if (!prepared && (!fighterReady() || graphicsPrepStage !== 'complete')) {
+    // This is intentionally called before the first await so a real FIGHT/START click
+    // still owns browser activation and can enter fullscreen.
+    enterCombatMode();
+    phase = 'loading';
+    ui.showScreen('loading');
+    if (loadingTitleEl) loadingTitleEl.textContent = sandbox.active ? 'OPENING THE RANGE' : 'OPENING THE GATES';
+    showGraphicsPrep('STREAMING COMBAT ASSETS', 'FIGHTERS · WEAPONS · ARENA PROPS', 0.08);
     // If the load failed, do not start a match with no fighters in it — the banner
     // from the `assetsReady` catch is already up and says why.
     beginCombatAssetLoading();
     if (!startMatch.assetWait) {
       startMatch.assetWait = true;
-      assetsReady.then(() => {
+      // Give the loading screen two paints before any parser work can monopolize the
+      // main thread. A static, explicit transition remains comprehensible even while
+      // Edge is busy enough that its animation pauses.
+      Promise.resolve()
+        .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+        .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+        .then(() => assetsReady)
+        .then(() => {
+          showGraphicsPrep('FINALIZING THE ARENA', 'LIGHTING · REFLECTIONS · FIRST-FRAME SHADERS', 0.68);
+          return graphicsReady;
+        }).then(() => {
         startMatch.assetWait = false;
-        startMatch();
+        startMatch({ prepared: true });
       }, () => { startMatch.assetWait = false; });
     }
-    return;
-  }
-  if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
-    openShop();
     return;
   }
   // Request fullscreen while the trusted FIGHT click still owns browser activation;
@@ -1039,6 +1153,9 @@ function startMatch() {
   player.vmRoot.visible = true;
   player._mountViewmodel();
   player.loadMagsFromPack();
+  player.infiniteAmmo = false;
+  player.hideKnifeSlot = false;
+  if (sandbox.active) setupFiringRange();
   // player wounds carry over too
   if (career.playerHp != null) player.hp = Math.min(player.maxHp, career.playerHp);
   player.armDmg = career.playerLimbs.arm || 0;
@@ -1067,8 +1184,8 @@ function startMatch() {
   } else if (career.bet > 0) career.money -= career.bet;
 
   announcer.clear();
-  announcer.say('matchStart', {}, { force: true });
-  if (career.rank === 1) setTimeout(() => announcer.say('bossIntro', {}, { force: true }), 3000);
+  if (!sandbox.active) announcer.say('matchStart', {}, { force: true });
+  if (!sandbox.active && career.rank === 1) setTimeout(() => announcer.say('bossIntro', {}, { force: true }), 3000);
   audio.setCrowdLevel(0.055 + (10 - career.rank) * 0.004);
   audio.klaxon();
 
@@ -2188,7 +2305,6 @@ function openShop(earnings = null) {
   phase = 'shop';
   ui.showScreen('shop');
   renderShop(earnings);
-  if (xboxBrowser) setTimeout(beginCombatAssetLoading, 0);
 }
 
 function ensureLiquidationRoundFunding() {
@@ -2403,7 +2519,6 @@ function showIntro() {
   }, liquidationBets);
   rerender();
   ui.showScreen('intro');
-  if (xboxBrowser) setTimeout(beginCombatAssetLoading, 0);
 }
 
 // ============================================================ input
@@ -2534,6 +2649,7 @@ const on = (id, fn) => document.getElementById(id).addEventListener('click', () 
 
 on('btn-new', () => { career = newCareer('circuits'); market = createMarket('circuits'); save(); showIntro(); });
 on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });
+on('btn-firing-range', () => enterSandbox(WEAPON_ORDER, { god: true, publicRange: true }));
 on('btn-continue', () => { showIntro(); });
 on('btn-menu-settings', () => openSettings());
 on('btn-fight', () => startMatch());
@@ -2566,6 +2682,10 @@ document.getElementById('settings-overlay').addEventListener('click', (event) =>
   if (event.target === event.currentTarget) closeSettings();
 });
 on('btn-abandon', () => {
+  if (sandbox.active) {
+    leaveFiringRange();
+    return;
+  }
   journalTerminal('player_abandon');
   if (career.bet > 0) {
     career.money += career.bet;
@@ -3354,7 +3474,7 @@ function stepMatch(dt) {
   if (_aimTmp.lengthSq() > 1e-6) world.playerAim.copy(_aimTmp).normalize();
 
   // anti-camp: the crowd paid for movement. Root in one spot and VULTURE ships fire.
-  if (player.alive && !match.ended) {
+  if (!sandbox.active && player.alive && !match.ended) {
     const cdx = player.pos.x - match.campAnchor.x, cdz = player.pos.z - match.campAnchor.z;
     if (cdx * cdx + cdz * cdz > 5 * 5) {
       match.campAnchor.x = player.pos.x;
@@ -3381,9 +3501,9 @@ function stepMatch(dt) {
   // A scenario, if one is running. Only ever set by the debug harnesses.
   world.scenario?.(dt);
   if (match.spectating) updateSpectatorCamera(dt);
-  updateEvents(dt);
+  if (!sandbox.active) updateEvents(dt);
   updateGrenades(dt);
-  announcer.update(dt);
+  if (!sandbox.active) announcer.update(dt);
   ui.updateHUD(player, career, match);
 
   if (match.ended) {
@@ -3448,11 +3568,11 @@ window.__game = {
    */
   fight(mode = 'circuits', rank = 15) {
     beginCombatAssetLoading();
-    return assetsReady.then(() => {
+    return Promise.all([assetsReady, graphicsReady]).then(() => {
       career = newCareer(mode);
       career.rank = rank;
       market = createMarket(mode);
-      startMatch();
+      startMatch({ prepared: true });
       return match;
     });
   },
