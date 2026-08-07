@@ -21,6 +21,29 @@ html, body {
 
 #app, #app canvas { position: fixed; inset: 0; }
 
+#graphics-startup-failure {
+  position: fixed; inset: 0; z-index: 10000; overflow: auto;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: clamp(28px, 7vw, 90px); background:
+    radial-gradient(circle at 75% 20%, rgba(227,36,43,0.18), transparent 38%),
+    #09090c; color: #eee;
+}
+#graphics-startup-failure .graphics-failure-eyebrow {
+  color: var(--blood); font: 800 12px/1.4 monospace; letter-spacing: 2px;
+}
+#graphics-startup-failure h1 {
+  max-width: 900px; margin: 10px 0 18px;
+  font: 700 clamp(30px, 6vw, 70px)/0.98 Impact, "Arial Black", sans-serif;
+  letter-spacing: 2px;
+}
+#graphics-startup-failure p,
+#graphics-startup-failure ol,
+#graphics-startup-failure strong { max-width: 760px; font-size: clamp(16px, 2.2vw, 24px); line-height: 1.45; }
+#graphics-startup-failure ol { margin: 22px 0 20px 1.5em; }
+#graphics-startup-failure li { margin: 8px 0; padding-left: 8px; }
+#graphics-startup-failure strong { color: var(--gold); }
+#graphics-startup-failure small { max-width: 760px; margin-top: 28px; color: #777; font: 11px/1.4 monospace; }
+
 .hidden { display: none !important; }
 .dim { opacity: 0.5; font-weight: normal; font-size: 11px; }
 

@@ -2,23 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RenderPipeline } from '../src/render.js';
 
-test('Xbox compatibility renders directly without touching the composer or GPU query path', () => {
+test('rendering without GPU timing still preserves the complete composer path', () => {
   const calls = [];
-  const scene = {};
-  const camera = {};
   const pipeline = Object.assign(Object.create(RenderPipeline.prototype), {
-    compatibilityMode: true,
-    scene,
-    camera,
     _pendingResize: false,
+    _timerExt: null,
+    _gpuQueries: [],
+    _gpuMs: 0,
+    gradePass: { uniforms: { uTime: { value: 0 } } },
     renderer: {
-      render(renderedScene, renderedCamera) { calls.push([renderedScene, renderedCamera]); },
-      getContext() { throw new Error('compatibility render must not inspect the WebGL context'); },
+      getContext() { return { isContextLost: () => false }; },
     },
-    composer: { render() { throw new Error('compatibility render must not use EffectComposer'); } },
+    composer: { render() { calls.push('composer'); } },
     _adapt() {},
   });
 
   pipeline.render(1);
-  assert.deepEqual(calls, [[scene, camera]]);
+  assert.deepEqual(calls, ['composer']);
+  assert.equal(pipeline.gradePass.uniforms.uTime.value, 1);
 });

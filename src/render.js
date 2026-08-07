@@ -132,11 +132,10 @@ export const GradeShader = {
 
 export class RenderPipeline {
   constructor(scene, camera, {
-    quality = 'high', container = document.body, compatibilityMode = false,
+    quality = 'high', container = document.body, gpuTiming = true,
   } = {}) {
     this.scene = scene;
     this.camera = camera;
-    this.compatibilityMode = compatibilityMode;
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,              // SMAA does this; MSAA would cost us the HDR buffer
@@ -161,9 +160,7 @@ export class RenderPipeline {
     // exactly, so the "scale back up" condition could never fire on a 60 Hz display.
     // Chrome exposes the extension; elsewhere the CPU measure stands alone.
     const gl = this.renderer.getContext();
-    // Xbox Edge's WebGL driver is much more reliable when it is not carrying
-    // asynchronous timer queries alongside a post-processing workload.
-    this._timerExt = compatibilityMode ? null : gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    this._timerExt = gpuTiming ? gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;
     this._gpuQueries = [];
     this._gpuMs = 0;
 
@@ -176,25 +173,8 @@ export class RenderPipeline {
     // smears the aggregate into mush a few metres out.
     setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
 
-    // Xbox Edge compatibility means *no off-screen render targets at all*. The
-    // previous fallback still built an 8-bit EffectComposer and the console showed
-    // the same white frame, which isolates the failure to the compositor path rather
-    // than specifically to half-float HDR. Direct WebGLRenderer output is the
-    // smallest reliable path from scene to the television framebuffer.
     camera.layers.enable(NO_OCCLUDE_LAYER);
     this.renderScale = 1;
-    if (compatibilityMode) {
-      this.composer = null;
-      this.renderPass = null;
-      this.aoPass = null;
-      this.bloomPass = null;
-      this.outputPass = null;
-      this.smaaPass = null;
-      this.gradePass = null;
-      this.setQuality(quality);
-      window.addEventListener('resize', () => { this._pendingResize = true; });
-      return;
-    }
 
     // Half-float targets: bloom needs values above 1.0 to have anything to pick out,
     // which an 8-bit target clips away before the pass ever sees them.
@@ -297,10 +277,6 @@ export class RenderPipeline {
    * before they exist.
    */
   bakeEnvironment(at = new THREE.Vector3(0, 2.6, 0)) {
-    // PMREM and the cubemap both allocate floating-point targets internally. The
-    // console path uses direct arena lighting instead of risking another white or
-    // incomplete framebuffer for a subtle reflection layer.
-    if (this.compatibilityMode) return null;
     const cubeTarget = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
     const cubeCam = new THREE.CubeCamera(0.3, 60, cubeTarget);
     cubeCam.position.copy(at);
@@ -414,11 +390,6 @@ export class RenderPipeline {
       this.resize();
     }
     const t0 = performance.now();
-    if (this.compatibilityMode) {
-      this.renderer.render(this.scene, this.camera);
-      this._adapt(performance.now() - t0);
-      return;
-    }
     this.gradePass.uniforms.uTime.value = elapsed;
     const gl = this.renderer.getContext();
     const ext = this._timerExt;
@@ -461,7 +432,6 @@ export class RenderPipeline {
       pixelRatio: +this.renderer.getPixelRatio().toFixed(2),
       renderMs: +(this._frameAvg ?? 0).toFixed(2),
       gpuMs: this._timerExt ? +this._gpuMs.toFixed(2) : null,
-      compatibilityMode: this.compatibilityMode,
       calls: info.calls,
       triangles: info.triangles,
       programs: this.renderer.info.programs?.length ?? 0,

@@ -33,6 +33,7 @@ import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
 import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
 import { isXboxBrowser } from './platform.js';
+import { showGraphicsStartupFailure } from './graphics-startup.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -99,15 +100,12 @@ function enterSandbox(weapons = null, { god = true } = {}) {
 
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
-const xboxCompatibilityMode = isXboxBrowser();
-if (xboxCompatibilityMode) document.body.classList.add('xbox-browser');
+const xboxBrowser = isXboxBrowser();
+if (xboxBrowser) document.body.classList.add('xbox-browser');
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.
 function loadGraphicsQuality() {
-  // Xbox One Edge reports enough CPU cores to select high, but its browser WebGL
-  // budget cannot reliably carry the HDR/GTAO stack at a television resolution.
-  if (xboxCompatibilityMode) return 'low';
   const saved = localStorage.getItem(QUALITY_KEY);
   if (QUALITY_TIERS.includes(saved)) return saved;
   // First run: guess from the device rather than dropping a phone straight into the
@@ -130,11 +128,20 @@ scene.background = new THREE.Color(0x07080b);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 scene.add(camera);
 
-const pipeline = new RenderPipeline(scene, camera, {
-  quality: loadGraphicsQuality(),
-  container: document.getElementById('app'),
-  compatibilityMode: xboxCompatibilityMode,
-});
+let pipeline;
+try {
+  pipeline = new RenderPipeline(scene, camera, {
+    quality: loadGraphicsQuality(),
+    container: document.getElementById('app'),
+    // Timing queries are optional instrumentation, not part of the image. Keep
+    // them out of the console path while preserving its complete render stack.
+    gpuTiming: !xboxBrowser,
+  });
+} catch (error) {
+  console.error('[graphics] WebGL startup failed', error);
+  showGraphicsStartupFailure(error, { xbox: xboxBrowser });
+  throw error;
+}
 const renderer = pipeline.renderer;
 
 const arena = buildArena(scene);
@@ -143,10 +150,8 @@ pipeline.onShadowMapSize(pipeline.tier.shadowMap);
 
 // The reflection probe has to run after the arena exists, and again once the
 // streamed prop GLBs have landed — the first bake sees a pit with no props in it.
-if (!xboxCompatibilityMode) {
-  requestAnimationFrame(() => pipeline.bakeEnvironment());
-  arena.propsReady.then(() => pipeline.bakeEnvironment());
-}
+requestAnimationFrame(() => pipeline.bakeEnvironment());
+arena.propsReady.then(() => pipeline.bakeEnvironment());
 
 // Fighters and weapons stream in behind the menu, so the first bout never waits.
 const assetsReady = Promise.all([
@@ -166,9 +171,7 @@ assetsReady.catch((err) => {
   document.body.appendChild(el);
 });
 // Warm the shader cache while the menu is up.
-if (!xboxCompatibilityMode) {
-  assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already reported */ });
-}
+assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already reported */ });
 
 /**
  * Compile every program the first match will need, behind the menu.
