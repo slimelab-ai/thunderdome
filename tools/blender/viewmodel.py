@@ -313,32 +313,48 @@ def anim_draw(rig):
 
 
 def anim_melee(rig):
-    """Knife thrust: cock back at the hip, drive the point forward, recover.
+    """Knife slash: wind up high and right, cut down-left, recover.
 
-    A stab, not a slash. The blade runs along `vm_root`'s local +Y, which is forward,
-    so the whole motion is mostly *translation* on that axis — back to load, hard
-    forward to strike — with only enough rotation to sell the shoulder behind it.
+    A cut, not a stab, and the reason is the grip. The knife is canted across the view
+    by `GRIP_ROT` in src/viewmodel.js so that the flat of the blade faces the camera —
+    without that a six-millimetre blade pointed down the view axis is edge-on and
+    literally invisible. But a blade held across the view cannot also lead a forward
+    thrust, and the version this replaces tried: it drove the fist 22 cm forward while
+    the point travelled only 15 cm, so at full extension the tip was three centimetres
+    *behind* the fist. That is a punch with a knife held sideways.
 
-    What was here before was a diagonal cut with 40 degrees of yaw and roll on the
-    root, and the runtime then added its own arc on top of it: 86 degrees of pitch,
-    which threw the forearm up through the camera. Two animations of the same thing,
-    fighting, and the visible result was neither.
+    Measured from the model, the edge faces down and to the left in camera space, so
+    the cut travels down and to the left and the edge leads it. Forward travel is
+    small on purpose — a slash reaches across, not out.
+
+    `tools/_knifetrace.mjs`-style tracing is the only way to check any of this: the
+    clip is a third of a second, the game's own loop advances it between screenshots,
+    and sampling it by eye reports whatever moment the timing happened to land on.
     """
     new_action(rig, "melee")
     clear_pose(rig)
     key(rig, 1, ZERO, loc={"vm_root": (0, 0, 0)})
-    # Cock: elbow back and slightly inboard, blade turning point-first.
-    key(rig, 5, {**ZERO, "vm_root": (-6, 8, 5), "upperarm_r": (9, 0, -6),
+    # Wind up: hand back, up and outboard, blade cocked over the shoulder.
+    #
+    # Every number below is smaller than it wants to be, and that is the point. The
+    # first pass swung a 117 cm arc, which is a lovely sweep and puts the blade in the
+    # bottom-left corner behind the health bar for a quarter of the clip — the player
+    # sees the knife leave and come back, not a cut. `vm_root`'s roll is the worst
+    # offender: the hand sits 35 cm off that axis, so every degree of it moves the
+    # blade a long way.
+    key(rig, 6, {**ZERO, "vm_root": (-9, 0, 10), "upperarm_r": (11, 0, -7),
                  "forearm_r": (-16, 0, 0)},
-        loc={"vm_root": (0.035, -0.10, -0.02)})
-    # Drive. The arm straightens and the point goes out past where the muzzle sits.
-    key(rig, 10, {**ZERO, "vm_root": (5, -5, -3), "upperarm_r": (-7, 0, 3),
-                  "forearm_r": (12, 0, 0)},
-        loc={"vm_root": (-0.015, 0.20, 0.01)})
-    # Hold at extension for a frame or two, which is what reads as a stab landing.
-    key(rig, 13, {**ZERO, "vm_root": (4, -4, -2), "upperarm_r": (-6, 0, 2),
-                  "forearm_r": (10, 0, 0)},
-        loc={"vm_root": (-0.012, 0.185, 0.008)})
+        loc={"vm_root": (0.055, -0.050, 0.050)})
+    # The cut. Down and across to the left, with a modest reach forward — the edge is
+    # travelling the way it points, which is the whole difference between a slash that
+    # reads and a fist waved at the screen.
+    key(rig, 11, {**ZERO, "vm_root": (5, 0, -14), "upperarm_r": (-7, 0, 8),
+                  "forearm_r": (11, 0, 0)},
+        loc={"vm_root": (-0.080, 0.080, -0.045)})
+    # Follow-through, short. The blade carries past the target before the arm checks.
+    key(rig, 14, {**ZERO, "vm_root": (7, 0, -18), "upperarm_r": (-9, 0, 10),
+                  "forearm_r": (13, 0, 0)},
+        loc={"vm_root": (-0.105, 0.055, -0.065)})
     key(rig, 24, ZERO, loc={"vm_root": (0, 0, 0)})
 
 
