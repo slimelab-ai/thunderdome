@@ -138,6 +138,7 @@ test('short-lived diagnostic sessions require a private writer token and remain 
     const created = await createDiagnosticSession(port);
     assert.equal(created.response.status, 201);
     assert.match(created.body.code, /^\d{6}$/);
+    assert.match(created.body.label, /^[A-Z]+-[A-Z]+$/);
     assert.ok(created.body.write_token.length >= 24);
 
     const event = {
@@ -157,6 +158,7 @@ test('short-lived diagnostic sessions require a private writer token and remain 
 
     let report = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`).then(response => response.json());
     assert.equal(report.code, created.body.code);
+    assert.equal(report.label, created.body.label);
     assert.equal(report.event_count, 1);
     assert.equal(report.events[0].type, event.type);
     assert.equal(report.events[0].payload.id, 'direct');
@@ -169,6 +171,13 @@ test('short-lived diagnostic sessions require a private writer token and remain 
       headers: { 'x-forwarded-for': '203.0.113.5' },
     });
     assert.equal(otherConnection.status, 404, 'latest sessions are scoped to the requester connection');
+    const named = await fetch(`http://127.0.0.1:${port}/diagnostics/named/${created.body.label}`);
+    assert.equal(named.status, 200);
+    assert.equal((await named.json()).code, created.body.code);
+    const namedOtherConnection = await fetch(`http://127.0.0.1:${port}/diagnostics/named/${created.body.label}`, {
+      headers: { 'x-forwarded-for': '203.0.113.5' },
+    });
+    assert.equal(namedOtherConnection.status, 404);
 
     await stopCollector(collector);
     collector = await startCollector(dataDir, port);

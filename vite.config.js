@@ -2,6 +2,13 @@ import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
 export default defineConfig({
+  plugins: [{
+    name: 'diagnostics-build-marker',
+    transformIndexHtml(html, context) {
+      if (!context.filename.endsWith('xbox.html')) return html;
+      return html.replace('__DIAGNOSTICS_BUILD__', process.env.VITE_BUILD_SHA || 'dev');
+    },
+  }],
   build: {
     rollupOptions: {
       input: {

@@ -12,6 +12,18 @@ const saltPath = join(dataDir, '.source-salt');
 const diagnosticsDir = join(dataDir, 'diagnostics');
 const diagnosticsTtlMs = Math.max(60_000, Number(process.env.DIAGNOSTICS_TTL_MS || 6 * 60 * 60 * 1000));
 const diagnosticsMaxEvents = Math.max(100, Number(process.env.DIAGNOSTICS_MAX_EVENTS || 1000));
+const diagnosticAdjectives = [
+  'AMBER', 'BRAVE', 'BRIGHT', 'CALM', 'COBALT', 'COPPER', 'COSMIC', 'CRIMSON',
+  'ELECTRIC', 'FROSTY', 'GOLDEN', 'IRON', 'JADE', 'LUCKY', 'LUNAR', 'MELLOW',
+  'MINT', 'NEON', 'NIMBLE', 'OAKEN', 'QUIET', 'RAPID', 'RED', 'SILVER',
+  'SOLAR', 'STEADY', 'STORMY', 'SWIFT', 'VIOLET', 'WARM', 'WILD', 'ZIPPY',
+];
+const diagnosticNouns = [
+  'BADGER', 'BEACON', 'BISON', 'COMET', 'COYOTE', 'DRAGON', 'EAGLE', 'FALCON',
+  'FOX', 'GECKO', 'HERON', 'JAGUAR', 'KESTREL', 'LANTERN', 'LYNX', 'MAMMOTH',
+  'MOOSE', 'OTTER', 'PANTHER', 'PHOENIX', 'PUMA', 'RAVEN', 'ROCKET', 'SHARK',
+  'SPARROW', 'TIGER', 'TURTLE', 'VIPER', 'WOLF', 'WOMBAT', 'YAK', 'ZEBRA',
+];
 
 await mkdir(dataDir, { recursive: true });
 await mkdir(diagnosticsDir, { recursive: true });
@@ -192,12 +204,24 @@ async function createDiagnosticSession(req) {
   await pruneExpiredDiagnostics();
   const active = (await readdir(diagnosticsDir)).filter(name => /^\d{6}\.json$/.test(name));
   if (active.length >= 250) throw diagnosticError(503, 'too many active diagnostic sessions');
+  const activeLabels = new Set();
+  for (const name of active) {
+    try {
+      const metadata = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
+      if (metadata.label) activeLabels.add(metadata.label);
+    } catch { /* retention will remove broken metadata */ }
+  }
   const writeToken = randomBytes(24).toString('base64url');
   for (let attempt = 0; attempt < 30; attempt++) {
     const code = String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, '0');
+    const adjective = diagnosticAdjectives[randomBytes(2).readUInt16BE(0) % diagnosticAdjectives.length];
+    const noun = diagnosticNouns[randomBytes(2).readUInt16BE(0) % diagnosticNouns.length];
+    const label = `${adjective}-${noun}`;
+    if (activeLabels.has(label)) continue;
     const createdAt = new Date().toISOString();
     const metadata = {
       code,
+      label,
       token_hash: diagnosticTokenHash(writeToken),
       source_hash: sourceHashFor(req),
       created_at: createdAt,
@@ -209,7 +233,7 @@ async function createDiagnosticSession(req) {
       await writeFile(join(diagnosticsDir, `${code}.json`), JSON.stringify(metadata), {
         encoding: 'utf8', mode: 0o600, flag: 'wx',
       });
-      return { code, write_token: writeToken, created_at: createdAt, expires_at: metadata.expires_at };
+      return { code, label, write_token: writeToken, created_at: createdAt, expires_at: metadata.expires_at };
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
@@ -256,6 +280,7 @@ async function readDiagnosticEvents(code) {
     }
     return {
       code: metadata.code,
+      label: metadata.label || null,
       created_at: metadata.created_at,
       expires_at: metadata.expires_at,
       last_received_at: metadata.last_received_at,
@@ -280,6 +305,26 @@ async function readLatestDiagnosticEvents(req) {
   }
   metadata.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   if (!metadata.length) throw diagnosticError(404, 'no diagnostic session found for this connection');
+  return readDiagnosticEvents(metadata[0].code);
+}
+
+async function readNamedDiagnosticEvents(req, label) {
+  await pruneExpiredDiagnostics();
+  const requester = sourceHashFor(req);
+  const metadata = [];
+  for (const name of await readdir(diagnosticsDir)) {
+    if (!/^\d{6}\.json$/.test(name)) continue;
+    try {
+      const candidate = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
+      if (candidate.label === label && candidate.source_hash === requester && Date.parse(candidate.expires_at) > Date.now()) {
+        metadata.push(candidate);
+      }
+    } catch {
+      // Ignore a session whose metadata is incomplete while retention cleans it up.
+    }
+  }
+  metadata.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (!metadata.length) throw diagnosticError(404, 'diagnostic session name not found');
   return readDiagnosticEvents(metadata[0].code);
 }
 
@@ -308,6 +353,14 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && pathname === '/diagnostics/latest') {
     try {
       return reply(res, 200, await readLatestDiagnosticEvents(req));
+    } catch (error) {
+      return reply(res, error.status || 500, { error: error.message });
+    }
+  }
+  const namedDiagnosticMatch = /^\/diagnostics\/named\/([A-Z]+-[A-Z]+)$/.exec(pathname);
+  if (req.method === 'GET' && namedDiagnosticMatch) {
+    try {
+      return reply(res, 200, await readNamedDiagnosticEvents(req, namedDiagnosticMatch[1]));
     } catch (error) {
       return reply(res, error.status || 500, { error: error.message });
     }

@@ -20,6 +20,8 @@ const overallState = $('overall-state');
 const stage = $('probe-stage');
 const results = $('probe-results');
 const rerun = $('rerun-graphics');
+const CURRENT_BUILD = document.querySelector('meta[name="diagnostics-build"]')?.content || 'dev';
+const SESSION_STORAGE_KEY = 'thunderdome-xbox-diagnostics-session-v1';
 
 let session = null;
 let sequence = 0;
@@ -47,17 +49,35 @@ function compactError(error) {
 }
 
 async function sendEvent(record) {
-  const response = await fetch(`/api/diagnostics/${session.code}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${session.write_token}`,
-    },
-    cache: 'no-store',
-    body: JSON.stringify({ events: [record] }),
-  });
-  if (!response.ok) throw new Error(`diagnostic upload returned ${response.status}`);
-  setState(uploadState, 'REPORTING LIVE', 'good');
+  let retryDelay = 500;
+  for (;;) {
+    try {
+      const response = await fetch(`/api/diagnostics/${session.code}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.write_token}`,
+        },
+        cache: 'no-store',
+        body: JSON.stringify({ events: [record] }),
+      });
+      if (response.ok) {
+        setState(uploadState, 'REPORTING LIVE', 'good');
+        return;
+      }
+      if (response.status === 404 || response.status === 410) {
+        setState(uploadState, 'SESSION RENEWING', 'pending');
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        setTimeout(() => location.reload(), 250);
+      }
+      throw new Error(`diagnostic upload returned ${response.status}`);
+    } catch (error) {
+      setState(uploadState, 'RECONNECTING…', 'pending');
+      console.warn('[xbox diagnostics] upload interrupted; retrying', error);
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+      retryDelay = Math.min(5000, retryDelay * 2);
+    }
+  }
 }
 
 function emit(type, payload = {}) {
@@ -71,6 +91,9 @@ function emit(type, payload = {}) {
     at: new Date().toISOString(),
     payload,
   };
+  try {
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...session, sequence }));
+  } catch { /* diagnostics still work without reload persistence */ }
   const task = uploadTail.then(() => sendEvent(record));
   uploadTail = task.catch(error => {
     setState(uploadState, 'UPLOAD RETRY NEEDED', 'bad');
@@ -89,16 +112,28 @@ window.addEventListener('error', event => emit('page_error', {
 window.addEventListener('unhandledrejection', event => emit('unhandled_rejection', compactError(event.reason)));
 
 async function openSession() {
-  const response = await fetch('/api/diagnostics/session', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    cache: 'no-store',
-    body: '{}',
-  });
-  if (!response.ok) throw new Error(`session service returned ${response.status}`);
-  session = await response.json();
-  codeEl.textContent = 'JUST SAY “READY”';
-  sessionDetail.textContent = `Fallback session ID: ${session.code}`;
+  let resumed = false;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY) || 'null');
+    if (saved?.code && saved?.label && saved?.write_token && Date.parse(saved.expires_at) > Date.now()) {
+      session = saved;
+      sequence = Number.isSafeInteger(saved.sequence) ? saved.sequence : 0;
+      resumed = true;
+    }
+  } catch { /* create a fresh session below */ }
+  if (!session) {
+    const response = await fetch('/api/diagnostics/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store',
+      body: '{}',
+    });
+    if (!response.ok) throw new Error(`session service returned ${response.status}`);
+    session = await response.json();
+    try { sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...session, sequence })); } catch {}
+  }
+  codeEl.textContent = session.label;
+  sessionDetail.textContent = 'Tell Codex this once. It survives automatic updates until this tab closes.';
   setState(uploadState, 'REPORTING LIVE', 'good');
   let userAgentData = null;
   if (navigator.userAgentData) {
@@ -117,7 +152,7 @@ async function openSession() {
   }
   await emit('session_started', {
     page: location.href,
-    build: import.meta.env?.VITE_BUILD_SHA || 'dev',
+    build: CURRENT_BUILD || import.meta.env?.VITE_BUILD_SHA || 'dev',
     user_agent: navigator.userAgent,
     platform: navigator.platform || '',
     vendor: navigator.vendor || '',
@@ -129,8 +164,31 @@ async function openSession() {
     viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
     screen: { width: screen.width, height: screen.height, color_depth: screen.colorDepth },
     secure_context: window.isSecureContext,
+    resumed,
   });
   for (const queued of deferredErrors.splice(0)) await emit(queued.type, queued.payload);
+}
+
+function validBuild(value) {
+  return /^[0-9a-f]{7,40}$/i.test(value || '');
+}
+
+async function checkForDeployment() {
+  if (!validBuild(CURRENT_BUILD)) return;
+  try {
+    const response = await fetch(`/xbox.html?diagnostics-version=${Date.now()}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const availableBuild = doc.querySelector('meta[name="diagnostics-build"]')?.content || '';
+    if (!validBuild(availableBuild) || availableBuild === CURRENT_BUILD) return;
+    setState(uploadState, 'UPDATING AUTOMATICALLY', 'pending');
+    overallState.textContent = 'NEW DIAGNOSTICS DEPLOYED — RELOADING THIS PAGE';
+    emit('deployment_update_detected', { from: CURRENT_BUILD, to: availableBuild });
+    setTimeout(() => location.reload(), 750);
+  } catch {
+    // A rolling deployment briefly removes the route. The next poll will reconnect.
+  }
 }
 
 function makeScene() {
@@ -584,6 +642,7 @@ rerun.addEventListener('click', () => runGraphicsProbes('manual'));
 async function boot() {
   try {
     await openSession();
+    setInterval(checkForDeployment, 5000);
     pollController();
     await runGraphicsProbes('initial');
   } catch (error) {
