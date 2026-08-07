@@ -94,6 +94,15 @@ const report = await page.evaluate(async (opts) => {
   // with total confidence. The sandbox is the right arena for this: empty, and
   // nothing shoots back while the weapon is being measured.
   g.sandbox(['pistol', 'smg', 'shotgun', 'rifle', 'dmr']);
+  // And then *wait for it*. `startMatch` now parks in a `loading` phase until the
+  // fighter model and the graphics prep have both landed, so calling this and stepping
+  // straight away runs nothing at all — which the guard below reports as "measuring
+  // nothing". Same shape as the trap recorded for `fight()` in docs/ART.md: an entry
+  // point that used to be synchronous quietly became asynchronous.
+  for (let i = 0; i < 600 && g.phase !== 'match'; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (g.phase !== 'match') throw new Error(`sandbox never reached a match (phase: ${g.phase})`);
   g.step(1 / 60, 30);
 
   const revive = () => {
