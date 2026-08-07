@@ -201,8 +201,13 @@ export class Player {
   // analog look from controller stick / touch drag — deltas already in radians
   addLook(dYaw, dPitch) {
     if (!this.alive) return;
-    this.yaw += dYaw;
-    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + dPitch));
+    // Recoil.applyLook uses screen-space degrees: +x turns right while player yaw
+    // decreases to turn right, and +y pitches up. Convert the requested analog
+    // camera delta into that same convention so mouse, touch and gamepad all spend
+    // opposing input against recoil before moving the underlying aim.
+    const look = this.recoil.applyLook(-dYaw * RAD2DEG, dPitch * RAD2DEG);
+    this.yaw -= look.x * DEG2RAD;
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + look.y * DEG2RAD));
   }
 
   onMouseDown(btn) {
@@ -639,8 +644,12 @@ export class Player {
     // The offset rides on top of the aim: +x kicks right, so the camera's yaw (which
     // increases to the left) takes it negative; +y kicks up, and pitch increases upward.
     this.recoil.update(dt);
+    // The pitch clamp above runs before the recoil offset is added, so the *sum* is
+    // clamped again here: past ±90° a YXZ euler crosses the pole and the whole view
+    // reads as flipped. Nothing legitimate ever hits this — it is the last line of
+    // defence for whatever upstream bug or input glitch gets this far.
     this.camera.rotation.set(
-      this.pitch + this.recoil.posY * DEG2RAD,
+      Math.max(-1.5, Math.min(1.5, this.pitch + this.recoil.posY * DEG2RAD)),
       this.yaw - this.recoil.posX * DEG2RAD,
       Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * 0.3,
     );
@@ -900,7 +909,7 @@ export class Player {
       if (Number.isFinite(res.dist)) nearest = Math.min(nearest, res.dist);
       this.world.fx.tracer(muzzle, res.point);
       if (res.type === 'wall') {
-        this.world.fx.sparks(res.point, dir);
+        this.world.fx.sparks(res.point, dir, res.normal);
         if (Math.random() < 0.35) audio.ricochet();
       }
     }

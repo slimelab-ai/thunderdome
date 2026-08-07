@@ -765,6 +765,16 @@ export class FighterRig {
   dispose() {
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.root);
+    // The hitbox proxies each own a BoxGeometry (built in the constructor), and a
+    // faded corpse owns private material clones from privatizeMaterials(); neither
+    // was released, which leaked sixteen geometries plus a material set per fighter
+    // per bout. Disposing the clones is safe for the program cache: the shared
+    // originals in materials.js are never disposed, so they keep the programs alive.
+    for (const box of this.hitboxes || []) box.geometry?.dispose?.();
+    for (const mesh of this.skinned) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) if (m?.userData?.__perInstance) m.dispose();
+    }
   }
 }
 

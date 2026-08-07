@@ -279,8 +279,8 @@ const fxLayers = await page.evaluate(async () => {
   });
   return {
     flash: check(f.flashes[0].sprite),
-    tracer: check(f.tracers[0].mesh),
-    decal: check(f.decals[0].mesh),
+    tracer: check(f.tracerMesh),
+    decal: check(f.decalMeshes.hole),
     hot: check(f.hot.points),
     soft: check(f.soft.points),
     casings: check(f.casings),

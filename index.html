@@ -88,6 +88,9 @@
   </div>
 
   <!-- ===================== SCREENS ===================== -->
+  <div id="graphics-prep" class="graphics-prep hidden" role="status" aria-live="polite">
+    <b>LOADING ARENA</b><span>STREAMING FIGHTERS AND WEAPONS</span>
+  </div>
   <div id="screen-menu" class="screen">
     <div class="menu-inner">
       <div class="menu-pretitle">THE UNDERGROUND KILL LEAGUE PRESENTS</div>
@@ -98,6 +101,11 @@
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
         <button id="btn-menu-settings" class="btn btn-big btn-ghost">SETTINGS</button>
+      </div>
+      <div class="xbox-controller-help">
+        <b>XBOX EDGE CONTROLLER SETUP</b>
+        Open the controller icon beside the address bar and turn <strong>CONTROLLER MODE</strong> on.
+        Edge does not expose the gamepad to this page before that switch is enabled.
       </div>
       <div class="menu-controller-guide controller-only">LEFT STICK CURSOR · <span class="pad-key pad-a">A</span> SELECT</div>
       <div class="menu-controls">
@@ -293,9 +301,9 @@
               <small>Higher values soften small stick movements</small>
             </label>
             <label for="controller-aim-assist">
-              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
+              <span>AIM ASSIST <output id="controller-aim-assist-value">35%</output></span>
               <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
-              <small>Narrow slowdown and micro-correction only</small>
+              <small>Target-volume slowdown and movement tracking; no center pull</small>
             </label>
           </div>
           <div class="controller-curve-wrap">
@@ -316,6 +324,6 @@
     </div>
   </div>
 
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/bootstrap.js"></script>
 </body>
 </html>

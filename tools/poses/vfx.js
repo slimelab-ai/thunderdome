@@ -53,7 +53,7 @@ g.step(1 / 60, 12);
 console.log('DIAG vfx ' + JSON.stringify({
   hotLive: fx.hot.state.filter((s) => s.life > 0).length,
   softLive: fx.soft.state.filter((s) => s.life > 0).length,
-  decalsVisible: fx.decals.filter((d) => d.mesh.visible).length,
+  decalsVisible: Object.values(fx.decalState).flat().filter((d) => d.life > 0).length,
   casingsLive: fx.casingState.filter((c) => c.life > 0).length,
-  tracersVisible: fx.tracers.filter((t) => t.mesh.visible).length,
+  tracersVisible: fx.tracers.filter((t) => t.life > 0).length,
 }));

@@ -1,6 +1,63 @@
 // VULTURE — the tournament master. All flavor text lives here.
+//
+// Spoken lines are pre-rendered during development and shipped as ordinary Opus
+// assets. That gives every browser the same voice and timing, without
+// asking the OS speech service to synthesize audio during a match.
+
+import { versioned } from './asset-version.js';
 
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+
+export const announcerClipUrl = (category, index) =>
+  versioned(`/assets/voice/vulture/${category}/${String(index + 1).padStart(2, '0')}.opus`);
+
+export class AnnouncerVoiceBank {
+  constructor({ AudioCtor = globalThis.Audio } = {}) {
+    this.AudioCtor = AudioCtor;
+    this.current = null;
+    this._finishTimer = null;
+  }
+
+  play(category, index, done) {
+    if (!this.AudioCtor || this.current) return false;
+    const clip = new this.AudioCtor(announcerClipUrl(category, index));
+    clip.preload = 'auto';
+    clip.volume = 0.9;
+    this.current = clip;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(this._finishTimer);
+      this._finishTimer = null;
+      if (this.current === clip) this.current = null;
+      done?.();
+    };
+    clip.addEventListener?.('ended', finish, { once: true });
+    clip.addEventListener?.('error', finish, { once: true });
+    try {
+      const started = clip.play();
+      started?.catch?.(finish);
+      // HTML media has dependable `ended` events in normal operation, but a device
+      // sleep or decoder reset must not leave all later announcer lines muted.
+      this._finishTimer = setTimeout(finish, 20000);
+    } catch {
+      finish();
+      return false;
+    }
+    return true;
+  }
+
+  stop() {
+    const clip = this.current;
+    this.current = null;
+    clearTimeout(this._finishTimer);
+    this._finishTimer = null;
+    if (!clip) return;
+    try { clip.pause(); } catch { /* already stopped */ }
+    try { clip.currentTime = 0; } catch { /* not seekable yet */ }
+  }
+}
 
 export const LINES = {
   matchStart: [
@@ -190,7 +247,7 @@ export const LINES = {
 };
 
 export class Announcer {
-  constructor() {
+  constructor({ voiceBank = new AnnouncerVoiceBank() } = {}) {
     this.wrap = document.getElementById('announcer-wrap');
     this.line = document.getElementById('announcer-line');
     this.queue = [];
@@ -198,16 +255,21 @@ export class Announcer {
     this.cooldowns = {};
     this.lastLineAt = -99;
     this._used = {};   // per-category lines already played this session (no repeats until exhausted)
+    this._speaking = false;
+    this._voiceBank = voiceBank;
   }
 
   _pickFresh(category) {
     const pool = LINES[category] || ['...'];
     const used = this._used[category] = this._used[category] || new Set();
-    let fresh = pool.filter(l => !used.has(l));
-    if (!fresh.length) { used.clear(); fresh = pool; }
-    const text = pick(fresh);
-    used.add(text);
-    return text;
+    let fresh = pool.map((text, index) => ({ text, index })).filter(line => !used.has(line.index));
+    if (!fresh.length) {
+      used.clear();
+      fresh = pool.map((text, index) => ({ text, index }));
+    }
+    const line = pick(fresh);
+    used.add(line.index);
+    return line;
   }
 
   say(category, vars = {}, { force = false, minGap = 4 } = {}) {
@@ -217,13 +279,14 @@ export class Announcer {
       if (this.showing > 0 || this.queue.length) return;
       if (now - this.lastLineAt < 6) return;
       if (this.cooldowns[category] && now - this.cooldowns[category] < minGap) return;
-      try { if (window.speechSynthesis?.speaking) return; } catch { /* fine */ }
+      if (this._speaking) return;
     }
     this.cooldowns[category] = now;
-    let text = this._pickFresh(category);
+    const selected = this._pickFresh(category);
+    let text = selected.text;
     for (const [k, v] of Object.entries(vars)) text = text.replaceAll(`{${k}}`, v);
     if (force) this.queue.length = 0;
-    if (this.queue.length < 2) this.queue.push({ text, force });
+    if (this.queue.length < 2) this.queue.push({ text, category, index: selected.index, force });
   }
 
   update(dt) {
@@ -231,43 +294,56 @@ export class Announcer {
       this.showing -= dt;
       if (this.showing <= 0) this.wrap.classList.remove('show');
     } else if (this.queue.length) {
-      const { text, force } = this.queue.shift();
+      const { text, category, index, force } = this.queue.shift();
       this.line.textContent = `“${text}”`;
       this.wrap.classList.add('show');
       this.showing = 2.2 + text.length * 0.03;
       this.lastLineAt = performance.now() / 1000;
-      this._speak(text, force);
+      // Starting media stays off the frame path. The generation check keeps a line
+      // queued just before clear() from speaking into the next screen.
+      const gen = this._gen || 0;
+      setTimeout(() => {
+        if ((this._gen || 0) === gen) this._speak(category, index, force);
+      }, 0);
     }
   }
 
-  // VULTURE's voice: Web Speech API — zero assets, maximum carnival barker
-  _speak(text, force) {
-    try {
-      if (!window.speechSynthesis) return;
-      // never interrupt himself mid-sentence for color commentary
-      if (speechSynthesis.speaking) {
-        if (!force) return;
-        speechSynthesis.cancel();
+  _speak(category, index, force) {
+    if (this._speaking) {
+      if (force) this._pendingSpeech = { category, index, gen: this._gen || 0 };
+      return;
+    }
+    this._utter(category, index);
+  }
+
+  _utter(category, index) {
+    const token = (this._utterToken = (this._utterToken || 0) + 1);
+    const done = () => {
+      if (this._utterToken !== token) return;
+      this._speaking = false;
+      const pending = this._pendingSpeech;
+      this._pendingSpeech = null;
+      if (pending && pending.gen === (this._gen || 0)) {
+        setTimeout(() => this._utter(pending.category, pending.index), 0);
       }
-      if (!this._voice) {
-        const vs = speechSynthesis.getVoices();
-        this._voice = vs.find(v => /^en/i.test(v.lang) && /male|david|mark|daniel|guy|george/i.test(v.name))
-          || vs.find(v => /^en/i.test(v.lang)) || null;
-      }
-      const u = new SpeechSynthesisUtterance(text.replace(/[“”"]/g, ''));
-      u.rate = 1.2;
-      u.pitch = 0.55;
-      u.volume = 0.9;
-      if (this._voice) u.voice = this._voice;
-      speechSynthesis.speak(u);
-      this._spokeCount = (this._spokeCount || 0) + 1;
-    } catch { /* no voice, no problem */ }
+    };
+    this._speaking = true;
+    const started = performance.now();
+    const playing = this._voiceBank.play(category, index, done);
+    this._lastVoiceStartMs = performance.now() - started;
+    this._lastVoiceStartAt = started;
+    if (!playing) done();
+    else this._spokeCount = (this._spokeCount || 0) + 1;
   }
 
   clear() {
+    this._gen = (this._gen || 0) + 1;   // invalidates any deferred _speak in flight
     this.queue.length = 0;
+    this._pendingSpeech = null;
     this.showing = 0;
     this.wrap.classList.remove('show');
-    try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
+    this._utterToken = (this._utterToken || 0) + 1;
+    this._voiceBank.stop();
+    this._speaking = false;
   }
 }

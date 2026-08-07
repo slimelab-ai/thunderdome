@@ -39,6 +39,10 @@ function makeAnalytics(storage, fetchImpl = async () => ({
     randomUUID: () => `generated-${++id}`,
     now: () => new Date('2026-07-24T06:00:00.000Z'),
     autoStart: false,
+    // Zero-delay coalescing so `settle()` drains the persist timer; the production
+    // default only stretches the window, it does not change the write-once property
+    // these tests pin down.
+    persistDelayMs: 0,
   });
 }
 

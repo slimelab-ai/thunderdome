@@ -14,13 +14,15 @@ import {
   LANE_TEST, laneTestColliders, buildLaneTestMeshes, buildLaneTestMarkers, spotAt,
 } from './lane-test.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
+import { NO_OCCLUDE_LAYER } from './layers.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
 import { preloadViewmodel } from './viewmodel.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
-  ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
+  ammoInGrid, ammoInPack, addAmmoToPack, extractAmmoFromPack, takeAmmoFromGrid, consumeAmmo,
+  bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
 import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
@@ -30,6 +32,9 @@ import { MenuNavigator } from './ui-nav.js';
 import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
 import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
+import { isXboxBrowser, requestBrowserFullscreen } from './platform.js';
+import { showGraphicsStartupFailure } from './graphics-startup.js';
+import { createRuntimeDiagnostics } from './runtime-diagnostics.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -45,7 +50,7 @@ import {
   normalizeCrewDeployment, shouldBenchNewHire,
 } from './roster.js';
 import {
-  orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
+  AUTO_AMMO_STACKS, orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
 } from './squad-auto.js';
 
 // ============================================================ sandbox
@@ -96,6 +101,9 @@ function enterSandbox(weapons = null, { god = true } = {}) {
 
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
+const xboxBrowser = isXboxBrowser();
+if (xboxBrowser) document.body.classList.add('xbox-browser');
+const runtimeDiagnostics = createRuntimeDiagnostics();
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.
@@ -122,25 +130,43 @@ scene.background = new THREE.Color(0x07080b);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 scene.add(camera);
 
-const pipeline = new RenderPipeline(scene, camera, {
-  quality: loadGraphicsQuality(),
-  container: document.getElementById('app'),
-});
+let pipeline;
+try {
+  pipeline = new RenderPipeline(scene, camera, {
+    quality: loadGraphicsQuality(),
+    container: document.getElementById('app'),
+  });
+} catch (error) {
+  console.error('[graphics] WebGL startup failed', error);
+  showGraphicsStartupFailure(error, { xbox: xboxBrowser });
+  throw error;
+}
 const renderer = pipeline.renderer;
 
-const arena = buildArena(scene);
+// On Xbox, keep the controller handoff and main menu completely free of GLTF
+// parsing/GPU uploads. Selecting a career reveals the fight card or market first,
+// then opens this gate on the next task while a persistent loading status is visible.
+let resolveCombatAssetGate;
+let combatAssetLoadingStarted = !xboxBrowser;
+const combatAssetGate = xboxBrowser
+  ? new Promise(resolve => { resolveCombatAssetGate = resolve; })
+  : Promise.resolve();
+function beginCombatAssetLoading() {
+  if (combatAssetLoadingStarted) return;
+  combatAssetLoadingStarted = true;
+  showGraphicsPrep('LOADING ARENA', 'STREAMING FIGHTERS AND WEAPONS');
+  resolveCombatAssetGate?.();
+}
+
+const arena = buildArena(scene, { loadGate: combatAssetGate });
 pipeline.onShadowMapSize = (size) => arena.setShadowMapSize(size);
 pipeline.onShadowMapSize(pipeline.tier.shadowMap);
 
-// The reflection probe has to run after the arena exists, and again once the
-// streamed prop GLBs have landed — the first bake sees a pit with no props in it.
-requestAnimationFrame(() => pipeline.bakeEnvironment());
-arena.propsReady.then(() => pipeline.bakeEnvironment());
-
-// Fighters and weapons stream in behind the menu, so the first bout never waits.
-const assetsReady = Promise.all([
+// Desktop streams combat assets behind the menu. Xbox waits for an explicit career
+// selection so browser-level controller setup never competes with model parsing.
+const assetsReady = combatAssetGate.then(() => Promise.all([
   arena.propsReady, preloadFighter(), preloadWeapons(), preloadViewmodel(),
-]);
+]));
 // A core asset failing to load used to be swallowed by the loaders, and the game
 // carried on with invisible weapons or bare hands — the failure only surfaced as a
 // gameplay bug report. The loaders now rethrow, and this is the one place the
@@ -154,6 +180,147 @@ assetsReady.catch((err) => {
   el.textContent = `ASSET LOAD FAILED: ${err?.message || err} — see the console.`;
   document.body.appendChild(el);
 });
+/**
+ * Compile every program the first match will need, behind the menu.
+ *
+ * Nothing else ever calls renderer.compile(), so before this the first frame of the
+ * first match compiled every fighter, gun and effect program at once — a stall of
+ * hundreds of ms that also drove the adaptive scaler through a staircase of
+ * resolution steps (each of which used to paint a black frame; see render.js).
+ * Small representative groups are parked far below the pit one at a time —
+ * compile() ignores the frustum and the menu camera never sees them — and compiled
+ * in the driver's own threads where KHR_parallel_shader_compile allows.
+ *
+ * The muzzle-flash sprites are built invisible and compile() skips invisible
+ * objects, so they are flipped visible for their own small compile job.
+ *
+ * Nothing staged here is disposed afterwards: disposing a material drops the
+ * cached program's refcount and can delete the very program this exists to keep.
+ * The stage is simply removed and the JS objects go to the collector, which leaves
+ * the program cache alone.
+ *
+ * Out of reach: shadow-depth and GTAO-override variants only compile when their
+ * pass first draws a fighter, so the first match frame still pays for two or three
+ * skinned variants — small, and the deferred resize keeps it invisible — against
+ * the dozens removed here.
+ */
+async function warmShaderCache({ between = async () => {} } = {}) {
+  const eventProps = () => {
+    const bounty = makeBountyMarker();
+    bounty.visible = true;
+    return [
+      new THREE.Mesh(ZONE_GEO, ZONE_MATS.fire),
+      new THREE.Mesh(ZONE_GEO, ZONE_MATS.gas),
+      bounty,
+      new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({ color: 0x8a6d2f, roughness: 0.8, metalness: 0.1 })),
+      new THREE.Mesh(NADE_GEO, NADE_MAT),
+    ];
+  };
+  const jobs = [
+    { label: 'fighter', objects: () => [new FighterRig({ uniformColor: 0x3a4a5f }).group] },
+    ...WEAPON_ORDER.map(id => ({ label: `weapon-${id}`, objects: () => [buildHeldGun(id)] })),
+    { label: 'events', objects: eventProps },
+    { label: 'effects', objects: () => [] },
+  ];
+
+  for (let index = 0; index < jobs.length; index++) {
+    const job = jobs[index];
+    const stage = new THREE.Group();
+    stage.position.set(0, -80, 0);
+    stage.add(...job.objects());
+    scene.add(stage);
+    const restore = [];
+    if (job.label === 'effects') {
+      const show = (o) => { restore.push([o, o.visible]); o.visible = true; };
+      for (const f of fx.flashes) show(f.sprite);
+    }
+
+    try {
+      await renderer.compileAsync(scene, camera);
+    } catch {
+      try { renderer.compile(scene, camera); } catch { /* lazy compile remains the backstop */ }
+    } finally {
+      for (const [o, v] of restore) o.visible = v;
+      scene.remove(stage);
+    }
+    await between(job.label, index + 1, jobs.length);
+  }
+}
+
+// Controller detection must stay cheap. The last Xbox trace showed that tying these
+// jobs to the first visible gamepad made a successful Edge handoff look like a
+// twelve-second crash. Preparation starts independently as soon as assets arrive,
+// advertises real progress, yields between small jobs, and pauses during a bout.
+let graphicsPrepScheduled = false;
+let graphicsPrepStage = 'not-scheduled';
+let lastControllerActivityAt = -Infinity;
+const graphicsPrepEl = document.getElementById('graphics-prep');
+function showGraphicsPrep(stage, detail) {
+  if (!graphicsPrepEl) return;
+  graphicsPrepEl.classList.remove('hidden', 'complete');
+  graphicsPrepEl.querySelector('b').textContent = stage;
+  graphicsPrepEl.querySelector('span').textContent = detail;
+}
+function finishGraphicsPrepStatus(detail = 'REFLECTIONS AND SHADERS READY') {
+  if (!graphicsPrepEl) return;
+  graphicsPrepEl.classList.add('complete');
+  graphicsPrepEl.querySelector('b').textContent = 'ARENA READY';
+  graphicsPrepEl.querySelector('span').textContent = detail;
+  setTimeout(() => graphicsPrepEl.classList.add('hidden'), 1800);
+}
+function scheduleBackgroundGraphicsPrep() {
+  if (graphicsPrepScheduled) return;
+  graphicsPrepScheduled = true;
+  graphicsPrepStage = 'waiting-for-assets';
+  if (xboxBrowser && !combatAssetLoadingStarted) {
+    showGraphicsPrep('CONTROLLER SETUP', 'SELECT A CAREER TO LOAD THE ARENA');
+  } else {
+    showGraphicsPrep('LOADING ARENA', 'STREAMING FIGHTERS AND WEAPONS');
+  }
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const idle = () => new Promise(resolve => {
+    if (window.requestIdleCallback) window.requestIdleCallback(resolve, { timeout: 800 });
+    else setTimeout(resolve, 0);
+  });
+  const prepTurn = async (stage, detail) => {
+    graphicsPrepStage = stage;
+    showGraphicsPrep('PREPARING ARENA', detail);
+    while (phase === 'match' || phase === 'paused'
+      || (xboxBrowser && performance.now() - lastControllerActivityAt < 1200)) {
+      await delay(250);
+    }
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await idle();
+    if (phase === 'match' || phase === 'paused') return prepTurn(stage, detail);
+  };
+  assetsReady.then(async () => {
+    await prepTurn('environment', 'BAKING REFLECTIONS · 0/6');
+    await pipeline.bakeEnvironment({
+      size: xboxBrowser ? 64 : 128,
+      incremental: xboxBrowser,
+      shadows: !xboxBrowser,
+      yieldTurn: async label => {
+        const face = label.match(/reflection-face-(\d)/)?.[1];
+        await prepTurn(label, face ? `BAKING REFLECTIONS · ${face}/6` : 'FILTERING REFLECTIONS');
+      },
+    });
+    if (!xboxBrowser) {
+      await prepTurn('shaders', 'COMPILING FIGHTERS AND EFFECTS');
+      await warmShaderCache({
+        between: async (label, done, total) => prepTurn(
+          `shaders-${label}`,
+          `COMPILING SHADERS · ${done}/${total}`,
+        ),
+      });
+    }
+    graphicsPrepStage = 'complete';
+    finishGraphicsPrepStatus(xboxBrowser
+      ? 'REFLECTIONS READY · SHADERS STREAM ON DEMAND'
+      : 'REFLECTIONS AND SHADERS READY');
+  }).catch(() => { /* assetsReady already reported */ });
+}
+
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
@@ -263,7 +430,7 @@ const spectatorCamera = new SpectatorCamera(camera, arena, {
 });
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
-const touchMode = isTouchDevice();
+const touchMode = isTouchDevice({ excluded: xboxBrowser });
 if (touchMode) document.body.classList.add('touch-mode');
 const onCycleSpectator = (dir) => { if (phase === 'match' && match?.spectating) cycleSpectator(dir); };
 const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch(), onCycleSpectator }) : null;
@@ -273,7 +440,10 @@ const input = new InputHub(player, world, camera, {
   onResume: () => resumeFromPause(),
   onCycleSpectator,
   onMenuInput: (action) => menuNavigator.handle(action),
-  onControllerActive: () => menuNavigator.activate(),
+  onControllerActive: () => {
+    lastControllerActivityAt = performance.now();
+    menuNavigator.activate();
+  },
 });
 new TouchSettingsPanel(touch, input);
 const controllerSettingsPanel = new ControllerSettingsPanel(input);
@@ -436,6 +606,7 @@ const DEATH_LINES = [
 
 // ============================================================ match state
 let phase = 'menu'; // menu | settings | intro | match | shop | dead | champion
+scheduleBackgroundGraphicsPrep();
 let settingsReturnPhase = 'menu';
 let locked = false;
 let match = null;
@@ -709,18 +880,28 @@ function clearCombatants() {
 
 function startMatch() {
   // Fighters are skinned GLB instances now, so a bout cannot begin until the model
-  // is in memory. In practice it loads during the menu; this only ever fires if a
-  // player clicks FIGHT within the first second on a cold cache.
+  // is in memory. Desktop normally has it by now; Xbox may still be showing the
+  // explicit arena-loading status after a cold career selection.
   if (!fighterReady()) {
     // If the load failed, do not start a match with no fighters in it — the banner
     // from the `assetsReady` catch is already up and says why.
-    preloadFighter().then(() => startMatch(), () => {});
+    beginCombatAssetLoading();
+    if (!startMatch.assetWait) {
+      startMatch.assetWait = true;
+      assetsReady.then(() => {
+        startMatch.assetWait = false;
+        startMatch();
+      }, () => { startMatch.assetWait = false; });
+    }
     return;
   }
   if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
     openShop();
     return;
   }
+  // Request fullscreen while the trusted FIGHT click still owns browser activation;
+  // the rest of match setup is intentionally substantial.
+  enterCombatMode();
   clearCombatants();
   installWorldHooks();
   match = makeMatch();
@@ -894,7 +1075,6 @@ function startMatch() {
   phase = 'match';
   ui.hideSpectator();
   ui.showHUDOnly();
-  enterCombatMode();
 }
 
 // ============================================================ kills / damage
@@ -1247,8 +1427,25 @@ function acquireZoneLight(zone, color, intensity) {
   zone.lightSlot = slot;
 }
 
+// One unit cylinder for every zone haze, scaled per zone; the materials are cloned
+// off these templates so each zone keeps its own opacity fade while every clone
+// shares the template's compiled program. The templates also give the shader
+// warm-up (see warmShaderCache) something to compile before the first event fires —
+// this material combination appears nowhere else in the scene, so without it the
+// first molotov of a session paid a mid-match compile.
+const ZONE_GEO = new THREE.CylinderGeometry(1, 1, 1, 20, 1, true);
+const ZONE_MATS = {
+  fire: new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+  gas: new THREE.MeshBasicMaterial({ color: 0x39b32a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+};
+
 function removeZoneVisual(z) {
-  if (z.mesh) scene.remove(z.mesh);
+  if (z.mesh) {
+    scene.remove(z.mesh);
+    // The geometry is shared and stays; the material is this zone's clone.
+    z.mesh.material.dispose();
+    z.mesh = null;
+  }
   // The light goes back to the pool rather than out of the scene: removing it would
   // change the light count and recompile every shader, exactly as adding it does.
   if (z.lightSlot) {
@@ -1261,10 +1458,11 @@ function removeZoneVisual(z) {
 function spawnZone(type, x, z, r, ttl, dps) {
   const isGas = type === 'gas';
   const color = isGas ? 0x39b32a : 0xff6a1a;
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(r, r, isGas ? 2.6 : 0.5, 20, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false })
-  );
+  const mesh = new THREE.Mesh(ZONE_GEO, ZONE_MATS[isGas ? 'gas' : 'fire'].clone());
+  mesh.scale.set(r, isGas ? 2.6 : 0.5, r);
+  // A translucent haze has no business in GTAO's prepass: the override material
+  // renders it as solid geometry and the cylinder occludes its own interior.
+  mesh.layers.set(NO_OCCLUDE_LAYER);
   mesh.position.set(x, isGas ? 1.3 : 0.25, z);
   scene.add(mesh);
   const zone = { type, x, z, r, ttl, dps, mesh, lightSlot: null };
@@ -1717,7 +1915,7 @@ function autoShopPlans() {
       type: fighter.who === 'player' ? PLAYER_TYPE : fighter.member.type,
       progress: fighter.who === 'player' ? career.playerProgress : fighter.member.progress,
     }))),
-    ammo: planSquadAmmo(fighters, career.money, autoQuote),
+    ammo: planSquadAmmo(fighters, career.money, autoQuote, AUTO_AMMO_STACKS, career.stash),
   };
 }
 
@@ -1796,20 +1994,43 @@ function executeAutoAmmo(earnings) {
   if (draftShopState().locked) return;
   const plan = autoShopPlans().ammo;
   let changed = false;
-  for (const purchase of plan.purchases) {
-    const cost = market.quoteBuy(purchase.type, 1, priceMult());
-    if (!Number.isFinite(cost) || cost > career.money) break;
-    const fighter = shopSquad().find(entry => String(entry.who) === String(purchase.who));
+  let spent = false;
+  for (const step of plan.steps) {
+    const fighter = shopSquad().find(entry => String(entry.who) === String(step.who));
     if (!fighter) continue;
-    const item = makeItem(purchase.type);
-    if (!autoPlace(fighter.ch.pack, item)) break;
-    market.buy(purchase.type);
+
+    if (step.source === 'pack') {
+      const returned = extractAmmoFromPack(fighter.ch, step.uid, step.rounds);
+      if (!returned) continue;
+      autoPlace(career.stash, returned);
+      changed = true;
+      continue;
+    }
+
+    const ammoType = ITEM_TYPES[step.type].ammoType;
+    if (step.source === 'stash') {
+      const available = ammoInGrid(career.stash, ammoType);
+      const added = addAmmoToPack(fighter.ch, ammoType, Math.min(step.rounds, available));
+      if (added <= 0) continue;
+      takeAmmoFromGrid(career.stash, ammoType, added);
+      changed = true;
+      continue;
+    }
+
+    const cost = market.quoteBuy(step.type, 1, priceMult());
+    if (!Number.isFinite(cost) || cost > career.money) break;
+    const item = makeItem(step.type);
+    const added = addAmmoToPack(fighter.ch, ammoType, Math.min(step.rounds, item.rounds));
+    item.rounds -= added;
+    if (item.rounds > 0) autoPlace(career.stash, item);
+    market.buy(step.type);
     career.money -= cost;
-    if (career.mode === 'liquidation') recordPlayerMarket('buy', purchase.type, cost);
+    if (career.mode === 'liquidation') recordPlayerMarket('buy', step.type, cost);
     changed = true;
+    spent = true;
   }
   if (!changed) return;
-  audio.cashRegister();
+  if (spent) audio.cashRegister();
   save();
   renderShop(earnings);
 }
@@ -1967,6 +2188,7 @@ function openShop(earnings = null) {
   phase = 'shop';
   ui.showScreen('shop');
   renderShop(earnings);
+  if (xboxBrowser) setTimeout(beginCombatAssetLoading, 0);
 }
 
 function ensureLiquidationRoundFunding() {
@@ -2181,11 +2403,19 @@ function showIntro() {
   }, liquidationBets);
   rerender();
   ui.showScreen('intro');
+  if (xboxBrowser) setTimeout(beginCombatAssetLoading, 0);
 }
 
 // ============================================================ input
+// One mousemove can arrive carrying a whole stall's worth of motion: when a frame
+// hangs (a shader compile, speech synthesis blocking), the browser sums every
+// pointer-lock delta it queued into a single event on resume. At base sensitivity
+// ~750 px is a 90° snap and ~1500 px is 180° — the "view teleported" bug. No human
+// flick delivers 200 px in one 8 ms event, so past that it is clipped, not believed.
+const MAX_MOUSE_STEP = 200;
+const clampMouseStep = (v) => Math.max(-MAX_MOUSE_STEP, Math.min(MAX_MOUSE_STEP, v || 0));
 document.addEventListener('mousemove', (e) => {
-  if (locked && phase === 'match') player.onMouseMove(e.movementX, e.movementY);
+  if (locked && phase === 'match') player.onMouseMove(clampMouseStep(e.movementX), clampMouseStep(e.movementY));
 });
 document.addEventListener('mousedown', (e) => {
   if (locked && phase === 'match') player.onMouseDown(e.button);
@@ -2237,15 +2467,22 @@ window.addEventListener('pagehide', () => {
 });
 
 // if focus ever leaves (browser dialog, alt-tab, lock loss), drop all held keys so we never get stuck walking
-window.addEventListener('blur', () => player.clearInput());
-document.addEventListener('visibilitychange', () => { if (document.hidden) player.clearInput(); });
+window.addEventListener('blur', () => { player.clearInput(); input.resetGamepadState(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { player.clearInput(); input.resetGamepadState(); }
+});
 
 // fullscreen + keyboard lock: inside fullscreen, Keyboard Lock captures even Ctrl+W / Esc-adjacent combos
 async function enterCombatMode() {
-  try {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-  } catch { /* user denied or unsupported — playable regardless */ }
-  if (touchMode) return; // no pointer to lock; the touch layer drives input
+  // Fullscreen benefits every input mode. Controller players only skip the
+  // keyboard and pointer capture calls that can reopen Edge's controller popup.
+  const fullscreen = await requestBrowserFullscreen();
+  runtimeDiagnostics?.emit('game_fullscreen_result', {
+    entered: fullscreen,
+    already_fullscreen: !!document.fullscreenElement,
+    controller_connected: input.gamepadConnected,
+  });
+  if (touchMode || input.gamepadConnected) return;
   try {
     if (navigator.keyboard?.lock) await navigator.keyboard.lock([...GAME_KEYS]);
   } catch { /* unsupported — fine */ }
@@ -2259,7 +2496,7 @@ document.addEventListener('pointerlockchange', () => {
   player.clearInput();
   if (!locked && phase === 'match' && (player.alive || match.spectating) && !match.ended) {
     // pointer-lock loss only pauses mouse players; a controller plays unlocked
-    if (input.gamepadActive) return;
+    if (input.gamepadConnected) return;
     ui.showScreen('pause');
     phase = 'paused';
   }
@@ -2352,6 +2589,13 @@ if (saved) {
 market = createMarket(career.mode, career.liquidation?.market);
 matchLifecycle.recoverIncomplete();
 ui.showScreen('menu');
+runtimeDiagnostics?.emit('game_runtime_started', {
+  build: import.meta.env?.VITE_BUILD_SHA || 'dev',
+  xbox_browser: xboxBrowser,
+  touch_mode: touchMode,
+  viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+  quality: pipeline.quality,
+});
 
 // idle backdrop camera for menu
 camera.position.set(0, 8, 20);
@@ -3102,7 +3346,7 @@ function updateSpectatorCamera(dt) {
 function stepMatch(dt) {
   match.time += dt;
   world.simTime += dt;
-  player.update(dt, locked || touchMode || input.gamepadActive, !!match.spectating);
+  player.update(dt, locked || touchMode || input.gamepadConnected, !!match.spectating);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);
@@ -3203,6 +3447,7 @@ window.__game = {
    * off nothing at all.
    */
   fight(mode = 'circuits', rank = 15) {
+    beginCombatAssetLoading();
     return assetsReady.then(() => {
       career = newCareer(mode);
       career.rank = rank;
@@ -3217,6 +3462,7 @@ window.__game = {
 {
   const params = new URLSearchParams(location.search);
   if (params.has('sandbox')) {
+    beginCombatAssetLoading();
     assetsReady.then(() => enterSandbox(params.get('sandbox'), { god: params.get('god') !== '0' }));
   }
 }
@@ -3224,8 +3470,30 @@ window.__game = {
 function tick() {
   requestAnimationFrame(tick);
   window.__frames = (window.__frames || 0) + 1;
-  const dt = Math.min(0.05, clock.getDelta());
+  const rawDt = clock.getDelta();
+  const dt = Math.min(0.05, rawDt);
   const t = clock.elapsedTime;
+
+  if (rawDt >= 0.12 && t - (tick.lastHitchAt || -99) >= 1.5) {
+    tick.lastHitchAt = t;
+    const now = performance.now();
+    runtimeDiagnostics?.emit('game_frame_hitch', {
+      duration_ms: Math.round(rawDt * 1000),
+      phase,
+      match_time: match ? +match.time.toFixed(2) : null,
+      controller_connected: input.gamepadConnected,
+      graphics_prep: graphicsPrepStage,
+      announcer: {
+        speaking: announcer._speaking,
+        backend: 'prerendered-opus',
+        last_start_ms: Math.round(announcer._lastVoiceStartMs || 0),
+        last_start_age_ms: announcer._lastVoiceStartAt
+          ? Math.round(now - announcer._lastVoiceStartAt)
+          : null,
+      },
+      render: pipeline.stats(),
+    });
+  }
 
   updateArenaAmbience(arena, t);
   fx.update(dt);

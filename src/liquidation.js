@@ -29,7 +29,17 @@ export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), r
 
 export function recordMarketRound(state, round = state.round) {
   state.marketLog ||= [];
-  if (!state.marketLog.some(entry => entry.kind === 'round' && entry.round === round)) {
+  let latestRound = null;
+  for (let i = state.marketLog.length - 1; i >= 0; i--) {
+    if (state.marketLog[i].kind === 'round') {
+      latestRound = state.marketLog[i];
+      break;
+    }
+  }
+  // The tape is append-only. If a restored or delayed action arrives for a round
+  // already present earlier in history, give it a fresh header at the tail instead
+  // of making it look as though it was inserted beneath the old header.
+  if (latestRound?.round !== round) {
     state.marketLog.push({ kind: 'round', round });
   }
   return state.marketLog;
@@ -337,7 +347,14 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   const inv = state.enemy.inventory;
   const risk = liquidationRiskModel(state, playerSignals);
   const reserveTarget = risk.reserveTarget;
-  const spendable = Math.max(0, state.enemyMoney - reserveTarget);
+  // A reserve only has strategic value while it is attainable. Once repeated losses
+  // or a real power deficit make the rival an underdog, cash above the next stake is
+  // comeback capital: armor, medicine and usable weapons improve the probability of
+  // ever earning that runway. The old policy froze $400-$500 beneath a $2,700-$5,700
+  // target and walked the same under-equipped squad into five consecutive losses.
+  const comebackMode = (state.enemyLossStreak || 0) >= 2 || risk.confidence < 0.48;
+  const strategicFloor = comebackMode ? Math.max(250, risk.expectedStake) : reserveTarget;
+  const spendable = Math.max(0, state.enemyMoney - strategicFloor);
   const price = t => market.quoteBuy(t);
   const pressure = t => market.info(t)?.pressure || 1;
   const affordable = t => Number.isFinite(price(t)) && price(t) <= spendable;
@@ -482,11 +499,11 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
     return {
       kind: 'hold',
       reason: spendable <= 0 ? 'cash_reserve' : 'no_purchase_inside_reserve',
-      reserveTarget,
+      reserveTarget, strategicFloor, comebackMode,
       risk,
       cash: state.enemyMoney,
       spendable,
-      action: `HOLD: keeping $${state.enemyMoney} cash (reserve target $${reserveTarget})`,
+      action: `HOLD: keeping $${state.enemyMoney} cash (spending floor $${strategicFloor}, reserve target $${reserveTarget})`,
     };
   }
   const cost = market.buy(target);
@@ -494,7 +511,7 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   inv[target] = owned(target) + 1;
   const action = `${state.enemy.strategy.toUpperCase()}: bought ${ITEM_TYPES[target].name} for $${cost}`;
   recordMarketTrade(state, 'rival', 'buy', target, cost);
-  return { kind: 'buy', type: target, cost, reserveTarget, risk, action };
+  return { kind: 'buy', type: target, cost, reserveTarget, strategicFloor, comebackMode, risk, action };
 }
 
 export function enemyRoster(state) {

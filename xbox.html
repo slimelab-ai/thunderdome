@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="diagnostics-build" content="__DIAGNOSTICS_BUILD__" />
+  <title>THUNDERDOME — Xbox Diagnostics</title>
+  <link rel="stylesheet" href="/src/xbox-diagnostics.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">THUNDERDOME</div>
+      <h1>XBOX DIAGNOSTICS</h1>
+      <p>No typing after this page. Leave it open and follow the controller prompts.</p>
+    </header>
+
+    <section class="session-card">
+      <div>
+        <span class="label">YOUR DIAGNOSTIC NAME</span>
+        <strong id="session-code">CONNECTING…</strong>
+        <small id="session-detail">Tell Codex this once. It survives automatic updates until this tab closes.</small>
+      </div>
+      <div id="upload-state" class="state pending">OPENING DIAGNOSTIC SESSION</div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div><span class="step">1</span><h2>GRAPHICS PROBES</h2></div>
+        <span id="graphics-state" class="state pending">WAITING</span>
+      </div>
+      <p class="instruction">These run automatically. A white probe is useful evidence—leave the page open even if one fails.</p>
+      <div id="probe-stage" aria-label="Active graphics probe"></div>
+      <div id="probe-results" class="probe-results"></div>
+      <button id="rerun-graphics" class="action" type="button" disabled>RUN GRAPHICS PROBES AGAIN</button>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div><span class="step">2</span><h2>CONTROLLER PROBE</h2></div>
+        <span id="controller-state" class="state pending">NOT VISIBLE TO PAGE</span>
+      </div>
+      <p class="instruction">
+        Open Edge’s controller icon and turn <b>CONTROLLER MODE</b> on. Then move both sticks and press
+        <b>A</b>, <b>B</b>, <b>START</b>, <b>RT</b>, and <b>Y</b>. If the first graphics run failed,
+        the page retries it automatically as soon as the controller appears.
+      </p>
+      <div id="controller-checks" class="checks">
+        <span data-check="left-stick">LEFT STICK</span>
+        <span data-check="right-stick">RIGHT STICK</span>
+        <span data-check="a">A</span>
+        <span data-check="b">B</span>
+        <span data-check="start">START</span>
+        <span data-check="rt">RT</span>
+        <span data-check="y">Y / VOICE</span>
+      </div>
+      <pre id="controller-readout">Waiting for Edge to expose a gamepad…</pre>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div><span class="step">3</span><h2>ANNOUNCER PROBE</h2></div>
+        <span id="voice-state" class="state pending">NOT PLAYED</span>
+      </div>
+      <p class="instruction">Press <b>Y</b> on the controller or use this button. This plays the same pre-rendered VULTURE clip shipped by the game.</p>
+      <button id="voice-test" class="action" type="button">PLAY ANNOUNCER TEST</button>
+    </section>
+
+    <footer>
+      <strong id="overall-state">KEEP THIS PAGE OPEN</strong>
+      <span>Diagnostic sessions expire automatically after six hours.</span>
+    </footer>
+  </main>
+  <script type="module" src="/src/xbox-diagnostics.js"></script>
+</body>
+</html>

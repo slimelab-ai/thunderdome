@@ -122,6 +122,35 @@ test('over-pulling past the climb does move the aim, by the excess only', () => 
   assert.equal(r.posY, -3);
 });
 
+test('absorption is capped: a hitch-sized input cannot ride the offset past maxOffset', () => {
+  // A frame stall makes the browser coalesce pointer-lock deltas into one giant
+  // event — at base sensitivity, 90-180 degrees in a single applyLook call. Absorbed
+  // uncapped, that lands the camera past the pitch pole and the drawback then swings
+  // the view back from somewhere the player never aimed. The cap keeps the offset
+  // inside maxOffset and hands the rest to the aim, where the pitch clamp holds it.
+  const r = new Recoil();
+  r.posY = 2;
+  const look = r.applyLook(0, -170);
+  assert.equal(r.posY, -RECOIL_TUNING.maxOffset, 'offset should stop at the cap');
+  assert.equal(look.y, -170 + 2 + RECOIL_TUNING.maxOffset, 'the rest should go to the aim');
+
+  r.reset();
+  r.posX = -1;
+  const lookX = r.applyLook(120, 0);
+  assert.equal(r.posX, RECOIL_TUNING.maxOffset);
+  assert.equal(lookX.x, 120 - 1 - RECOIL_TUNING.maxOffset);
+});
+
+test('the cap never engages for ordinary corrections', () => {
+  const r = new Recoil();
+  r.posY = 6;
+  // A hard but human flick down: all of it is absorbed, none leaks to the aim,
+  // exactly as before the cap existed.
+  const look = r.applyLook(0, -9);
+  assert.equal(look.y, 0);
+  assert.equal(r.posY, -3);
+});
+
 test('input in the same direction as the kick moves the aim untouched', () => {
   const r = new Recoil();
   r.posY = 2;

@@ -21,6 +21,29 @@ html, body {
 
 #app, #app canvas { position: fixed; inset: 0; }
 
+#graphics-startup-failure {
+  position: fixed; inset: 0; z-index: 10000; overflow: auto;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: clamp(28px, 7vw, 90px); background:
+    radial-gradient(circle at 75% 20%, rgba(227,36,43,0.18), transparent 38%),
+    #09090c; color: #eee;
+}
+#graphics-startup-failure .graphics-failure-eyebrow {
+  color: var(--blood); font: 800 12px/1.4 monospace; letter-spacing: 2px;
+}
+#graphics-startup-failure h1 {
+  max-width: 900px; margin: 10px 0 18px;
+  font: 700 clamp(30px, 6vw, 70px)/0.98 Impact, "Arial Black", sans-serif;
+  letter-spacing: 2px;
+}
+#graphics-startup-failure p,
+#graphics-startup-failure ol,
+#graphics-startup-failure strong { max-width: 760px; font-size: clamp(16px, 2.2vw, 24px); line-height: 1.45; }
+#graphics-startup-failure ol { margin: 22px 0 20px 1.5em; }
+#graphics-startup-failure li { margin: 8px 0; padding-left: 8px; }
+#graphics-startup-failure strong { color: var(--gold); }
+#graphics-startup-failure small { max-width: 760px; margin-top: 28px; color: #777; font: 11px/1.4 monospace; }
+
 .hidden { display: none !important; }
 .dim { opacity: 0.5; font-weight: normal; font-size: 11px; }
 
@@ -295,6 +318,26 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .game-title span { color: var(--blood); text-shadow: 0 4px 0 #000, 0 0 40px rgba(227,36,43,0.8); }
 .menu-tagline { color: #b9b9c2; margin: 14px 0 30px; font-style: italic; }
 .menu-buttons { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-bottom: 18px; }
+.xbox-controller-help {
+  display: none; max-width: 720px; margin: -4px auto 18px; padding: 10px 14px;
+  border: 1px solid rgba(255,185,46,0.65); border-radius: 4px;
+  background: rgba(34,25,8,0.88); color: #d7c79f;
+  font-size: 12px; line-height: 1.45; letter-spacing: 0.4px;
+}
+.xbox-browser .xbox-controller-help { display: block; }
+.xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
+.xbox-controller-help strong { color: #fff; }
+.graphics-prep {
+  display: none; position: fixed; left: 50%; bottom: 16px; z-index: 170;
+  transform: translateX(-50%); width: min(520px, 88vw); margin: 0; padding: 7px 11px;
+  border: 1px solid rgba(255,185,46,0.5); background: rgba(255,185,46,0.07);
+  font: 10px/1.35 var(--font-mono); letter-spacing: 1px; color: var(--muted);
+}
+.xbox-browser .graphics-prep { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.graphics-prep b { color: var(--gold); }
+.graphics-prep.complete { border-color: rgba(74,222,128,0.55); background: rgba(74,222,128,0.07); }
+.graphics-prep.complete b { color: #68ee91; }
+.xbox-browser .graphics-prep.hidden { display: none; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }
@@ -493,7 +536,7 @@ body.touch-mode #touch-settings { display: block; }
 }
 #next-bout b { color: var(--blood); font-size: 16px; }
 #market-tape {
-  padding: 5px 8px 8px;
+  max-height: min(240px, 28vh); overflow-y: auto; padding: 5px 8px 8px;
   border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; background: rgba(4,4,6,0.76);
   scrollbar-color: #4b4b55 transparent; scrollbar-width: thin;
 }
@@ -1172,7 +1215,15 @@ body.touch-mode .spec-hint-touch { display: inline; }
   .executed-pre { letter-spacing: 3px; }
 }
 
-@media (max-width: 1050px) and (orientation: landscape) {
+@media (max-width: 1200px) and (orientation: landscape) {
+  .menu-inner { width: min(100%, 920px); padding: 10px 14px; }
+  .game-title { font-size: clamp(52px, 8vw, 72px); line-height: 0.92; }
+  .menu-pretitle { margin-bottom: 4px; }
+  .menu-tagline { margin: 8px 0 14px; }
+  .menu-buttons { gap: 8px; margin-bottom: 10px; }
+  .menu-buttons .btn { padding: 9px 15px; }
+  .xbox-controller-help { margin: 0 auto 10px; padding: 7px 11px; }
+  .menu-controls { font-size: 10px; line-height: 1.55; }
   #screen-shop { padding: 0; }
   .shop-inner { height: 100dvh; padding: 7px 10px; overflow: hidden; }
   .shop-header {

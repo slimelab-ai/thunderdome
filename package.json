@@ -16,6 +16,8 @@
     "fightercheck": "node tools/fightercheck.mjs",
     "sightcheck": "node tools/sightcheck.mjs",
     "collisioncheck": "node tools/collisioncheck.mjs",
+    "decalcheck": "node tools/decalcheck.mjs",
+    "voice:generate": "node tools/voice/generate.mjs",
     "simulate:liquidation": "node tools/liquidation-sim/run.mjs"
     ,"simulate:liquidation:real": "node tools/headless-liquidation.mjs"
   },
