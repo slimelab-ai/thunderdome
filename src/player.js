@@ -29,6 +29,13 @@ const EYE_CROUCH = 1.08;
 const BASE_FOV = 75;
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
+// Camera roll per metre of lean offset. At 0.5 a full 0.55 m peek rolls about sixteen
+// degrees, which is the range cover shooters use: the horizon tilting is the only
+// feedback a first-person player gets that they are leaning at all. It was 0.3 — nine
+// and a half degrees — which reads as the camera sliding sideways rather than as the
+// body going with it, and is most of why the fighters looked like they leaned further
+// when in fact they lean half as far.
+const LEAN_ROLL = 0.5;
 
 export class Player {
   constructor(camera, world) {
@@ -650,9 +657,20 @@ export class Player {
     if (this.shakeT > 0) this.shakeT -= dt;
 
     // ---- lean (Q/E, toggle) ----
+    //
+    // Measured, the player already leans 0.55 m against a fighter's 0.27 m, and gets
+    // the full amount in 97% of stances in the pit — so the complaint that the bots
+    // lean further is not about distance. It is about *reading* as a lean: a fighter
+    // visibly tilts his whole body out of cover, while the player got a camera slide
+    // with nine and a half degrees of roll, no body to see, and a quarter of a second
+    // of easing that took the snap out of it.
+    //
+    // So the reach is unchanged and the presentation is not. The roll goes to about
+    // sixteen degrees, which is the range every cover shooter uses, and the onset is
+    // quicker: a peek is a commitment and it should feel like one.
     if (this.sprinting) this.leanToggle = 0;
     const leanTarget = this.leanToggle || 0;
-    this.lean += (leanTarget - this.lean) * Math.min(1, dt * 9);
+    this.lean += (leanTarget - this.lean) * Math.min(1, dt * 14);
     // right vector at current yaw
     const rX = cos, rZ = -sin;
     let leanDist = Math.abs(this.lean) * 0.55;
@@ -691,7 +709,7 @@ export class Player {
     this.camera.rotation.set(
       Math.max(-1.5, Math.min(1.5, this.pitch + this.recoil.posY * DEG2RAD)),
       this.yaw - this.recoil.posX * DEG2RAD,
-      Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * 0.3,
+      Math.sin(this.bobT) * 0.006 * limpMult - this.leanAmount * LEAN_ROLL,
     );
 
     // ---- viewmodel pose ----
