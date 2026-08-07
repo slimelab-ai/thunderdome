@@ -84,7 +84,11 @@ export class Player {
     // after being carried low through a sprint. Both from DogEater, whose rule is that
     // every action costs time and the state you were in decides how much.
     this.swapT = 0;
+    this.holsterT = 0;
+    this._swapDur = 0;
+    this._swapFrom = WEAPONS.pistol;   // what is being put away, for its `holster`
     this.raiseT = 0;
+    this.reloadFromEmpty = false;      // did this reload begin with a dead chamber?
     this.fireCooldown = 0;
     this.triggerHeld = false;
     this.triggerQueued = false;
@@ -181,7 +185,8 @@ export class Player {
     this.armDmg = 0; this.legDmg = 0;
     this.mag = this.weapon.mag;
     this.reloading = 0; this.shellLoading = false; this.pumpT = 0;
-    this.swapT = 0; this.raiseT = 0;
+    this.swapT = 0; this.holsterT = 0; this._swapDur = 0; this.raiseT = 0;
+    this.reloadFromEmpty = false;
     this.fireCooldown = 0; this.bloom = 0;
     this.recoil.reset();
     this.deathT = 0;
@@ -320,13 +325,29 @@ export class Player {
     this.mag = this.magBySlot[n] ?? 0;
     this.reloading = 0;
     this.shellLoading = false;
-    // The weapon has to come up before it does anything. A swap used to be free, which
-    // made a sidearm a magazine you could reach in no time at all: run the rifle dry,
-    // tap 1, keep shooting without a pause. Now it costs `draw`.
-    this.swapT = (this.weapon.draw ?? 0.4) * (this.progressStats.swapMult || 1);
+    this._beginSwap();
     this.kickTarget = 0.6;
     this._mountViewmodel();
     audio.reload(0);
+  }
+
+  /**
+   * Charge a swap: the outgoing weapon goes away, then the incoming one comes up.
+   *
+   * Called *after* `slotIdx` moves, so `this.weapon` is already the new one and
+   * `_swapFrom` is whatever was in hand. A swap used to be free, which made a sidearm
+   * a magazine you could reach in no time — run the rifle dry, tap 1, keep shooting.
+   * Now it costs the old weapon's `holster` plus the new one's `draw`, and the two
+   * halves are what make the numbers worth balancing: a DMR is slow to put down as
+   * well as slow to bring up.
+   */
+  _beginSwap() {
+    const mult = this.progressStats.swapMult || 1;
+    const out = this._swapFrom || this.weapon;
+    this.holsterT = (out.holster ?? 0.3) * mult;
+    this.swapT = this.holsterT + (this.weapon.draw ?? 0.4) * mult;
+    this._swapDur = this.swapT;
+    this._swapFrom = this.weapon;
   }
 
   drawKnife() {
@@ -335,7 +356,7 @@ export class Player {
     this.knifeOut = true;
     this.reloading = 0;
     this.shellLoading = false;
-    this.swapT = (WEAPONS.knife.draw ?? 0.25) * (this.progressStats.swapMult || 1);
+    this._beginSwap();
     this.kickTarget = 0.8;
     this._mountViewmodel();
     audio.slash(0.4);
@@ -353,6 +374,7 @@ export class Player {
       // Shell by shell. Each round is its own timer and its own animation, and the
       // player can break off and fire whatever is already in the tube.
       this.shellLoading = true;
+      this.reloadFromEmpty = this.mag <= 0;
       this.reloading = this.weapon.shellReload * mult;
       this.reloadDur = this.reloading;
       this.arms.loadShell(this.reloading);
@@ -361,7 +383,11 @@ export class Player {
     }
     // Empty guns take longer: there is a bolt to send home as well as a magazine to
     // change. `planReload` owns that rule and the round-count that goes with it.
-    this.reloading = planReload(w, this.mag, this.reserve(), mult).duration;
+    const plan = planReload(w, this.mag, this.reserve(), mult);
+    // Racking is gated on this. A gun reloaded with a round still up does not need it;
+    // one reloaded dry cannot fire without it.
+    this.reloadFromEmpty = !plan.chambered;
+    this.reloading = plan.duration;
     this.reloadDur = this.reloading;
     this.arms.reload(this.reloading);
     audio.reload(0);
@@ -599,7 +625,10 @@ export class Player {
           } else {
             this.shellLoading = false;
             this.reloading = 0;
-            if (w.pump) { this.pumpT = w.pump; this.arms.pump(w.pump); }  // chamber the first round
+            // Only when the tube started empty. Shells fed on top of a chambered round
+            // need no stroke, and pumping anyway throws a live shell on the floor —
+            // which is exactly what it looked like, because it is what it did.
+            if (w.pump && this.reloadFromEmpty) { this.pumpT = w.pump; this.arms.pump(w.pump); }
           }
         } else {
           // `planReload` decided the capacity when the reload started, and it depends
@@ -631,6 +660,7 @@ export class Player {
     if (this.sprinting) this.raiseT = w.raise ?? 0.22;
     else if (this.raiseT > 0) this.raiseT -= dt;
     if (this.swapT > 0) this.swapT -= dt;
+    if (this.holsterT > 0) this.holsterT -= dt;
     const weaponUp = this.swapT <= 0 && this.raiseT <= 0 && !this.sprinting;
 
     if (wantFire && this.fireCooldown <= 0 && this.pumpT <= 0 && weaponUp
@@ -740,8 +770,12 @@ export class Player {
     // The gun drops and rolls out of the aiming line, which is the same language every
     // other shooter uses for "not ready".
     const w2 = this.weapon;
+    // Low while sprinting, low through a swap, easing up as either ends.
+    const swapLow = this.swapT > 0 && this._swapDur > 0
+      ? Math.min(1, this.swapT / this._swapDur) : 0;
     const lowTarget = this.sprinting ? 1
-      : (this.raiseT > 0 ? this.raiseT / Math.max(1e-4, w2.raise ?? 0.22) : 0);
+      : Math.max(swapLow, this.raiseT > 0
+        ? this.raiseT / Math.max(1e-4, w2.raise ?? 0.22) : 0);
     this.lowK = (this.lowK || 0) + (lowTarget - (this.lowK || 0)) * Math.min(1, dt * 12);
     if (this.lowK > 0.001) {
       vm.position.y -= 0.16 * this.lowK;
@@ -811,8 +845,13 @@ export class Player {
       : 0;
     // The slide cycles either from recoil or from being racked during a reload,
     // whichever is further along.
-    const rack = w.slideRack && reloadK > w.slideRack[0] && reloadK < w.slideRack[1]
-      ? Math.sin((reloadK - w.slideRack[0]) / (w.slideRack[1] - w.slideRack[0]) * Math.PI)
+    // The bolt, slide or charging handle, worked once near the end of a reload — and
+    // only on a reload that began with a dead chamber. The pistol used to rack on every
+    // reload including ones where a round was already up, and the magazine guns never
+    // racked at all: an AK going from empty to firing without the handle ever moving.
+    const win = this.reloadFromEmpty ? w.emptyRack : null;
+    const rack = win && reloadK > win[0] && reloadK < win[1]
+      ? Math.sin((reloadK - win[0]) / (win[1] - win[0]) * Math.PI)
       : 0;
     animateWeaponParts(
       this.currentVM,

@@ -19,9 +19,18 @@ import { bindAuthoredMaterials } from './materials.js';
 // carries it down where it cannot be fired, so closing ground fast costs a moment of
 // helplessness at the end of it rather than being strictly free.
 //
-// **`draw`** is how long the weapon takes to come up after a swap. Nothing fires,
-// reloads or aims until it has. Swapping used to be instantaneous, so the pistol was
-// a free extra magazine you could reach in zero time.
+// **`holster` and `draw`** are the two halves of a swap: putting this weapon away and
+// bringing the next one up. A swap costs the outgoing weapon's `holster` plus the
+// incoming weapon's `draw`, so pistol-to-pistol is about half a second and dropping a
+// DMR for a shotgun is over one. The spread is the point — a sidearm you can get onto
+// a target while a rifle is still coming up is what a sidearm is *for*, and it is the
+// only reason to keep one once you can afford something better.
+//
+// **`emptyRack`** is when the bolt, slide or charging handle is worked during a
+// reload, as a fraction of that reload's duration — and it happens only on a reload
+// that began with an empty chamber, because that is the only time there is anything to
+// chamber. A gun reloaded with a round still up does not need racking; one reloaded
+// dry cannot fire without it. It is the visible half of the chambered-round rule.
 //
 // `suppression` is how hard a round from this weapon pins the people it is fired at,
 // relative to the rifle. Not a damage number — a *threat* number, which is why the
@@ -46,14 +55,15 @@ import { bindAuthoredMaterials } from './materials.js';
 export const WEAPONS = {
   pistol: {
     id: 'pistol', name: 'P9 SIDEARM', price: 0, tier: 0,
-    dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25, reloadEmpty: 1.70, draw: 0.35, raise: 0.16,
+    dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25, reloadEmpty: 1.70, draw: 0.30, holster: 0.22, raise: 0.16,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
     // When the slide is worked during the reload, as a fraction of the reload's
     // duration. Matches the frames in `anim_reload_pistol` where the support hand is
     // over the top of the weapon — without this the hand mimes a rack the slide never
     // performs, which is what made the reload read as a rifle's.
-    slideRack: [0.66, 0.82],
+    // The slide, released off its lock. Late in the reload, and only when dry.
+    emptyRack: [0.66, 0.86],
     // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
@@ -68,11 +78,12 @@ export const WEAPONS = {
   },
   smg: {
     id: 'smg', name: 'SKORPION K', price: 650, tier: 1,
-    dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6, reloadEmpty: 2.15, draw: 0.45, raise: 0.2,
+    dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6, reloadEmpty: 2.15, draw: 0.48, holster: 0.30, raise: 0.20,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
     // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
     // rather than climbing straight — this is a weapon you walk onto a target.
+    emptyRack: [0.70, 0.90],
     recoilPattern: [
       [0, 1], [0.05, 1], [0.12, 0.95], [0.2, 0.85], [0.28, 0.7], [0.3, 0.55],
       [0.22, 0.45], [0.05, 0.4], [-0.18, 0.4], [-0.35, 0.35], [-0.45, 0.3],
@@ -86,7 +97,7 @@ export const WEAPONS = {
   },
   shotgun: {
     id: 'shotgun', name: 'PIT BOSS 12G', price: 950, tier: 2,
-    dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4, reloadEmpty: 2.4, draw: 0.60, raise: 0.26,
+    dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4, reloadEmpty: 2.4, draw: 0.72, holster: 0.42, raise: 0.26,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
     // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
@@ -103,11 +114,12 @@ export const WEAPONS = {
   },
   rifle: {
     id: 'rifle', name: 'AK VULTURE', price: 1500, tier: 3,
-    dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9, reloadEmpty: 2.55, draw: 0.55, raise: 0.24,
+    dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9, reloadEmpty: 2.55, draw: 0.64, holster: 0.38, raise: 0.24,
     spread: 1.7, adsSpread: 0.4, recoil: 1.5, pellets: 1,
     aiRange: 20, adsFov: 55, sound: 'rifle',
     // The one worth learning. Six rounds nearly straight up, then a hard break right
     // and a slower drift back across — hold the trigger and you spell out the shape.
+    emptyRack: [0.72, 0.92],
     recoilPattern: [
       [0, 1], [0.02, 1], [0.06, 0.98], [0.1, 0.92], [0.16, 0.84], [0.22, 0.72],
       [0.32, 0.56], [0.42, 0.44], [0.48, 0.34], [0.46, 0.28], [0.34, 0.24],
@@ -123,10 +135,11 @@ export const WEAPONS = {
   },
   dmr: {
     id: 'dmr', name: 'LONGPIG DMR', price: 2500, tier: 4,
-    dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1, reloadEmpty: 2.80, draw: 0.70, raise: 0.3,
+    dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1, reloadEmpty: 2.80, draw: 0.88, holster: 0.52, raise: 0.30,
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
     // A single hard punch straight up. You lose the sight picture and get it back.
+    emptyRack: [0.70, 0.90],
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
     recoilVelocity: 19.55, recoilRandom: 1.0, recoilCooldown: 0.8,
     recoilImpulse: 0.048, viewKick: 0.86,
@@ -138,7 +151,8 @@ export const WEAPONS = {
 // the knife is innate — every fighter carries one, nobody sells it
 WEAPONS.knife = {
   id: 'knife', name: 'PIT SHANK', price: 0, tier: -1,
-  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0, reloadEmpty: 0, draw: 0.25,
+  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0, reloadEmpty: 0,
+  draw: 0.22, holster: 0.18, raise: 0.12,
   spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
   recoilPattern: [], recoilVelocity: 0.0,
   aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4,

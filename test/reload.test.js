@@ -82,3 +82,45 @@ test('a heavier weapon is slower to bring up than a sidearm', () => {
   assert.ok(WEAPONS.rifle.draw < WEAPONS.dmr.draw);
   assert.ok(WEAPONS.pistol.raise < WEAPONS.dmr.raise);
 });
+
+// ---- swap timing and racking ----
+
+test('a swap costs the outgoing holster plus the incoming draw, and is directional', () => {
+  const cost = (a, b) => WEAPONS[a].holster + WEAPONS[b].draw;
+  // Directional: putting a DMR away is not the same as putting a shotgun away, so the
+  // two orders of the same pair differ. If they did not, `holster` would be decoration.
+  assert.notEqual(cost('dmr', 'shotgun').toFixed(2), cost('shotgun', 'dmr').toFixed(2));
+  // A sidearm has to be genuinely quicker to get onto a target, or there is no reason
+  // to carry one once you can afford a rifle.
+  assert.ok(cost('rifle', 'pistol') < cost('pistol', 'rifle'));
+  assert.ok(cost('pistol', 'pistol') < cost('dmr', 'dmr'));
+});
+
+test('the swap spread is wide enough to be a decision', () => {
+  const ids = ['pistol', 'smg', 'shotgun', 'rifle', 'dmr'];
+  const costs = ids.flatMap((a) => ids.map((b) => WEAPONS[a].holster + WEAPONS[b].draw));
+  const lo = Math.min(...costs), hi = Math.max(...costs);
+  // They were all within 0.35 s of each other and read as identical. Better than twice
+  // the range, or the numbers are not carrying any weight.
+  assert.ok(hi / lo >= 2, `swap costs span only ${lo.toFixed(2)}–${hi.toFixed(2)} s`);
+  assert.ok(lo >= 0.3, `a ${lo.toFixed(2)} s swap is effectively instant`);
+  assert.ok(hi <= 1.6, `a ${hi.toFixed(2)} s swap is a punishment, not a cost`);
+});
+
+test('every magazine weapon can rack, and the window sits late in the reload', () => {
+  for (const w of Object.values(WEAPONS)) {
+    if (w.melee || !w.mag || w.shellReload) continue;   // pump guns cycle their pump
+    assert.ok(Array.isArray(w.emptyRack), `${w.id}: no emptyRack window`);
+    const [a, b] = w.emptyRack;
+    assert.ok(a > 0.5 && b <= 1, `${w.id}: rack at ${a}–${b} is not late in the reload`);
+    assert.ok(b > a, `${w.id}: rack window is inverted`);
+  }
+});
+
+test('the pump gun reloads shell by shell and has no magazine rack', () => {
+  // Its cycling part is the pump, worked once at the end and only from empty — there
+  // is no slide to release, so a rack window would animate nothing.
+  assert.ok(WEAPONS.shotgun.shellReload > 0);
+  assert.equal(WEAPONS.shotgun.emptyRack, undefined);
+  assert.ok(WEAPONS.shotgun.pump > 0);
+});

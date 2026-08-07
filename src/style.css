@@ -1383,3 +1383,18 @@ body.touch-mode .spec-hint-touch { display: inline; }
   }
   #spectator-banner { top: 58px; min-width: 0; width: min(310px, 58vw); padding: 6px 9px; }
 }
+
+/* Chambered-round indicator.
+   Sits against the magazine count because that is the number it modifies: `+1` when a
+   round is up over a full magazine, and a hollow mark when the chamber is dead and the
+   next reload will therefore be the slow one. Without it the chambered round is a rule
+   the player is subject to and cannot see. */
+#ammo-chamber {
+  font-size: 0.42em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: super;
+  margin-left: 0.12em;
+  color: var(--acid, #86ff3c);
+}
+#ammo-chamber.empty { color: var(--blood, #ff2833); }

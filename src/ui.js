@@ -157,6 +157,26 @@ export class UI {
       this.el.ammoMag._last = magTxt;
       this.el.ammoMag.textContent = magTxt;
     }
+    // Chambered round.
+    //
+    // The rule decides both how many rounds a reload gives and how long it takes, so
+    // the player has to be able to see which side of it they are on. `+1` means a round
+    // is up over a full magazine; the hollow mark means the chamber is dead and the next
+    // reload is the slow one. In between needs no marker — the magazine simply is not
+    // full, and reloading now keeps the chambered round regardless.
+    this.el.ammoChamber = this.el.ammoChamber || $('ammo-chamber');
+    const chEl = this.el.ammoChamber;
+    if (chEl) {
+      const capacity = player.weapon.mag || 0;
+      const chTxt = melee || !capacity ? ''
+        : (player.mag > capacity ? '+1' : (player.mag === 0 ? '○' : ''));
+      if (chEl._last !== chTxt) {
+        chEl._last = chTxt;
+        chEl.textContent = chTxt;
+        chEl.classList.toggle('empty', chTxt === '○');
+      }
+    }
+
     const res = player.reserve();
     this.el.ammoReserve = this.el.ammoReserve || $('ammo-reserve');
     const resEl = this.el.ammoReserve;
