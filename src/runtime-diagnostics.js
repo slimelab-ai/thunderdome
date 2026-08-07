@@ -1,5 +1,9 @@
 import { DIAGNOSTIC_SESSION_STORAGE_KEY } from './diagnostic-session.js';
 
+export function runtimeDiagnosticsEnabled(search = globalThis.location?.search || '') {
+  return new URLSearchParams(search).get('diagnostics') !== '0';
+}
+
 export function createRuntimeDiagnostics({
   storage = globalThis.sessionStorage,
   fetchImpl = globalThis.fetch?.bind(globalThis),

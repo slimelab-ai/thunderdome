@@ -34,7 +34,7 @@ import { analytics } from './analytics.js';
 import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
 import { isXboxBrowser, requestBrowserFullscreen } from './platform.js';
 import { showGraphicsStartupFailure } from './graphics-startup.js';
-import { createRuntimeDiagnostics } from './runtime-diagnostics.js';
+import { createRuntimeDiagnostics, runtimeDiagnosticsEnabled } from './runtime-diagnostics.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -203,15 +203,15 @@ function enterSandbox(weapons = null, { god = true, publicRange = false } = {}) 
 const QUALITY_KEY = 'thunderdome-quality';
 const xboxBrowser = isXboxBrowser();
 if (xboxBrowser) document.body.classList.add('xbox-browser');
-const diagnosticsSetting = new URLSearchParams(location.search).get('diagnostics');
-const developmentHost = /^dev\d*-thunderdome\.slimelab\.ai$/i.test(location.hostname);
 const runtimeDiagnostics = createRuntimeDiagnostics({
-  autoCreate: diagnosticsSetting === '1' || (diagnosticsSetting !== '0' && developmentHost),
+  // Detailed timing is normal operational telemetry now, not a debug mode that a
+  // player has to discover and activate. Keep one emergency URL opt-out.
+  autoCreate: runtimeDiagnosticsEnabled(location.search),
 });
 runtimeDiagnostics?.ready.then(session => {
   if (!session?.label) return;
   const label = document.getElementById('diagnostic-session-label');
-  label.textContent = `LIVE DIAGNOSTICS · ${session.label} · RETAINED 14 DAYS`;
+  label.textContent = `DIAG · ${session.label}`;
   label.classList.remove('hidden');
 });
 
@@ -253,18 +253,19 @@ try {
 }
 const renderer = pipeline.renderer;
 
-// On Xbox, keep the controller handoff and every menu completely free of GLTF
-// parsing/GPU uploads. The gate opens only after FIGHT or FIRING RANGE: expensive
-// work belongs behind an unmistakable transition, never underneath a usable menu.
+// Keep every menu completely free of GLTF parsing, GPU uploads, audio decoding and
+// shader compilation. The NIMBLE-WOMBAT trace caught a 2.1 s shader-prep long task
+// over the live PC menu; this gate now opens only after FIGHT or FIRING RANGE on
+// every platform, behind an unmistakable loading screen.
 let resolveCombatAssetGate;
-let combatAssetLoadingStarted = !xboxBrowser;
-const combatAssetGate = xboxBrowser
-  ? new Promise(resolve => { resolveCombatAssetGate = resolve; })
-  : Promise.resolve();
+let combatAssetLoadingStarted = false;
+let voiceReady = Promise.resolve();
+const combatAssetGate = new Promise(resolve => { resolveCombatAssetGate = resolve; });
 function beginCombatAssetLoading() {
   if (combatAssetLoadingStarted) return;
   combatAssetLoadingStarted = true;
   showGraphicsPrep('LOADING ARENA', 'STREAMING FIGHTERS AND WEAPONS');
+  voiceReady = announcer.prepare();
   resolveCombatAssetGate?.();
 }
 
@@ -272,8 +273,8 @@ const arena = buildArena(scene, { loadGate: combatAssetGate });
 pipeline.onShadowMapSize = (size) => arena.setShadowMapSize(size);
 pipeline.onShadowMapSize(pipeline.tier.shadowMap);
 
-// Desktop streams combat assets behind the menu. Xbox waits for an explicit career
-// selection so browser-level controller setup never competes with model parsing.
+// Combat assets start only from the explicit transition above. This keeps both
+// mouse and controller menus responsive while the player is choosing what to do.
 const assetsReady = combatAssetGate.then(() => Promise.all([
   arena.propsReady, preloadFighter(), preloadWeapons(), preloadViewmodel(),
 ]));
@@ -358,10 +359,9 @@ async function warmShaderCache({ between = async () => {} } = {}) {
   }
 }
 
-// Controller detection must stay cheap. The last Xbox trace showed that tying these
-// jobs to the first visible gamepad made a successful Edge handoff look like a
-// twelve-second crash. Preparation starts independently as soon as assets arrive,
-// advertises real progress, yields between small jobs, and pauses during a bout.
+// Preparation is armed at boot but blocked by combatAssetGate until the player
+// explicitly starts a bout. It advertises real progress, yields between small jobs,
+// and pauses during a bout.
 let graphicsPrepScheduled = false;
 let graphicsPrepStage = 'not-scheduled';
 let lastControllerActivityAt = -Infinity;
@@ -402,10 +402,14 @@ function scheduleBackgroundGraphicsPrep() {
     if (phase === 'match' || phase === 'paused') return prepTurn(stage, detail);
   };
   assetsReady.then(async () => {
+    await voiceReady;
     await prepTurn('environment', 'BAKING REFLECTIONS · 0/6');
     await pipeline.bakeEnvironment({
       size: xboxBrowser ? 64 : 128,
-      incremental: xboxBrowser,
+      // Six identical-quality faces, yielded between frames. Desktop used to bake
+      // all six in one synchronous call; splitting the work changes scheduling,
+      // not the resulting reflection map.
+      incremental: true,
       shadows: !xboxBrowser,
       yieldTurn: async label => {
         const face = label.match(/reflection-face-(\d)/)?.[1];
@@ -1000,7 +1004,7 @@ function clearCombatants() {
   world.zones.length = 0;
   clearAirdrop();
   if (world.grenades) {
-    for (const g of world.grenades) scene.remove(g.mesh);
+    for (const g of world.grenades) releaseGrenadeMesh(g.mesh);
     world.grenades.length = 0;
   }
 }
@@ -1421,12 +1425,37 @@ import { hasLoS } from './combat.js';
 
 const NADE_GEO = new THREE.SphereGeometry(0.09, 8, 6);
 const NADE_MAT = new THREE.MeshStandardMaterial({ color: 0x2c3a2c, roughness: 0.55, metalness: 0.35 });
+const GRENADE_POOL_SIZE = 24;
+const grenadeMeshPool = Array.from({ length: GRENADE_POOL_SIZE }, () => {
+  const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
+  mesh.visible = false;
+  scene.add(mesh);
+  return mesh;
+});
+let grenadeMeshCursor = 0;
+function acquireGrenadeMesh() {
+  for (let offset = 0; offset < GRENADE_POOL_SIZE; offset++) {
+    const index = (grenadeMeshCursor + offset) % GRENADE_POOL_SIZE;
+    if (grenadeMeshPool[index].visible) continue;
+    grenadeMeshCursor = (index + 1) % GRENADE_POOL_SIZE;
+    grenadeMeshPool[index].visible = true;
+    return grenadeMeshPool[index];
+  }
+  // More than 24 simultaneous live grenades is outside any current roster, but
+  // reusing the oldest pooled visual is still safer than allocating in combat.
+  const mesh = grenadeMeshPool[grenadeMeshCursor];
+  grenadeMeshCursor = (grenadeMeshCursor + 1) % GRENADE_POOL_SIZE;
+  mesh.visible = true;
+  return mesh;
+}
+function releaseGrenadeMesh(mesh) {
+  if (mesh) mesh.visible = false;
+}
 
 world.grenades = [];
 world.throwGrenade = (origin, vel, thrower) => {
-  const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
+  const mesh = acquireGrenadeMesh();
   mesh.position.copy(origin);
-  scene.add(mesh);
   world.grenades.push({ pos: origin.clone(), vel: vel.clone(), fuse: 2.8, mesh, thrower });
   // The spoon, the grunt, the arc: throwing gives away roughly where you threw from.
   if (thrower) world.emitNoise?.(thrower, origin, 'grenade');
@@ -1545,7 +1574,7 @@ function updateGrenades(dt) {
 
     g.mesh.position.copy(g.pos);
     if (g.fuse <= 0) {
-      scene.remove(g.mesh);
+      releaseGrenadeMesh(g.mesh);
       world.grenades.splice(i, 1);
       explode(g.pos, g.thrower);
     }
@@ -2704,7 +2733,13 @@ function closeSettings() {
 }
 
 // ============================================================ buttons
-const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.init(); audio.resume(); audio.uiClick(); fn(); });
+const on = (id, fn) => document.getElementById(id).addEventListener('click', () => {
+  audio.init();
+  audio.resume();
+  announcer.unlock();
+  audio.uiClick();
+  fn();
+});
 
 on('btn-new', () => { career = newCareer('circuits'); market = createMarket('circuits'); save(); showIntro(); });
 on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });

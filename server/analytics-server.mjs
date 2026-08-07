@@ -16,6 +16,7 @@ const diagnosticsRetentionMs = Math.max(
   Number(process.env.DIAGNOSTICS_RETENTION_MS || 14 * 24 * 60 * 60 * 1000),
 );
 const diagnosticsMaxEvents = Math.max(100, Number(process.env.DIAGNOSTICS_MAX_EVENTS || 10_000));
+const diagnosticsMaxActive = Math.max(1, Number(process.env.DIAGNOSTICS_MAX_ACTIVE || 5_000));
 const diagnosticAdjectives = [
   'AMBER', 'BRAVE', 'BRIGHT', 'CALM', 'COBALT', 'COPPER', 'COSMIC', 'CRIMSON',
   'ELECTRIC', 'FROSTY', 'GOLDEN', 'IRON', 'JADE', 'LUCKY', 'LUNAR', 'MELLOW',
@@ -212,16 +213,19 @@ async function loadDiagnosticSession(code, { allowInactive = false } = {}) {
 async function createDiagnosticSession(req) {
   await pruneExpiredDiagnostics();
   const retained = (await readdir(diagnosticsDir)).filter(name => /^\d{6}\.json$/.test(name));
+  const sourceHash = sourceHashFor(req);
   const activeLabels = new Set();
   let activeCount = 0;
   for (const name of retained) {
     try {
       const metadata = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
       if (Date.parse(metadata.expires_at) > Date.now()) activeCount++;
-      if (metadata.label) activeLabels.add(metadata.label);
+      // Named lookup is source-scoped, so unrelated players may safely receive the
+      // same mnemonic. Only prevent ambiguity within one connection's reports.
+      if (metadata.label && metadata.source_hash === sourceHash) activeLabels.add(metadata.label);
     } catch { /* retention will remove broken metadata */ }
   }
-  if (activeCount >= 250) throw diagnosticError(503, 'too many active diagnostic sessions');
+  if (activeCount >= diagnosticsMaxActive) throw diagnosticError(503, 'too many active diagnostic sessions');
   const writeToken = randomBytes(24).toString('base64url');
   for (let attempt = 0; attempt < 30; attempt++) {
     const code = String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, '0');
@@ -234,7 +238,7 @@ async function createDiagnosticSession(req) {
       code,
       label,
       token_hash: diagnosticTokenHash(writeToken),
-      source_hash: sourceHashFor(req),
+      source_hash: sourceHash,
       created_at: createdAt,
       expires_at: new Date(Date.now() + diagnosticsTtlMs).toISOString(),
       retained_until: new Date(Date.now() + diagnosticsRetentionMs).toISOString(),

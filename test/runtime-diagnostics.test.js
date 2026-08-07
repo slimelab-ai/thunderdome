@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DIAGNOSTIC_SESSION_STORAGE_KEY } from '../src/diagnostic-session.js';
-import { createRuntimeDiagnostics } from '../src/runtime-diagnostics.js';
+import { createRuntimeDiagnostics, runtimeDiagnosticsEnabled } from '../src/runtime-diagnostics.js';
+
+test('runtime diagnostics are on for every game build unless explicitly disabled', () => {
+  assert.equal(runtimeDiagnosticsEnabled(''), true);
+  assert.equal(runtimeDiagnosticsEnabled('?diagnostics=1'), true);
+  assert.equal(runtimeDiagnosticsEnabled('?diagnostics=0'), false);
+  assert.equal(runtimeDiagnosticsEnabled('?mode=circuits&diagnostics=0'), false);
+});
 
 test('game runtime resumes the existing one-time diagnostic session', async () => {
   const writes = [];

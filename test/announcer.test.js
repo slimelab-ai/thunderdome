@@ -77,3 +77,28 @@ test('voice bank releases a finished HTML audio clip', async () => {
   assert.equal(ended, 1);
   assert.equal(bank.current, null);
 });
+
+test('voice bank pre-decodes clips and starts buffered playback without an HTML media element', async () => {
+  let source;
+  class FakeAudioContext {
+    constructor() { this.destination = {}; }
+    resume() { return Promise.resolve(); }
+    decodeAudioData(encoded) { return Promise.resolve({ bytes: encoded.byteLength }); }
+    createBufferSource() {
+      source = { connect() {}, start() { this.started = true; }, stop() {}, disconnect() {} };
+      return source;
+    }
+    createGain() { return { gain: { value: 0 }, connect() {}, disconnect() {} }; }
+  }
+  const bank = new AnnouncerVoiceBank({
+    AudioCtor: null,
+    AudioContextCtor: FakeAudioContext,
+    fetchImpl: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(12) }),
+  });
+
+  assert.equal(await bank.preload('playerHeadshot', 3), true);
+  assert.deepEqual(bank.readyIndices('playerHeadshot'), [3]);
+  assert.equal(bank.play('playerHeadshot', 3), true);
+  assert.equal(source.started, true);
+  assert.equal(source.buffer.bytes, 12);
+});
