@@ -12,14 +12,116 @@ export const announcerClipUrl = (category, index) =>
   versioned(`/assets/voice/vulture/${category}/${String(index + 1).padStart(2, '0')}.opus`);
 
 export class AnnouncerVoiceBank {
-  constructor({ AudioCtor = globalThis.Audio } = {}) {
+  constructor({
+    AudioCtor = globalThis.Audio,
+    AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext,
+    fetchImpl = globalThis.fetch?.bind(globalThis),
+  } = {}) {
     this.AudioCtor = AudioCtor;
+    this.AudioContextCtor = AudioContextCtor;
+    this.fetchImpl = fetchImpl;
+    this.context = null;
+    this.buffers = new Map();
+    this.pending = new Map();
     this.current = null;
     this._finishTimer = null;
   }
 
+  _key(category, index) { return `${category}:${index}`; }
+
+  _context() {
+    if (!this.AudioContextCtor) return null;
+    if (!this.context) this.context = new this.AudioContextCtor();
+    return this.context;
+  }
+
+  unlock() {
+    try { this._context()?.resume?.(); } catch { /* unsupported or already running */ }
+  }
+
+  async preload(category, index) {
+    const key = this._key(category, index);
+    if (this.buffers.has(key)) return true;
+    if (this.pending.has(key)) return this.pending.get(key);
+    const context = this._context();
+    if (!context || !this.fetchImpl) return false;
+    const pending = this.fetchImpl(announcerClipUrl(category, index), { cache: 'force-cache' })
+      .then(response => {
+        if (!response.ok) throw new Error(`voice clip HTTP ${response.status}`);
+        return response.arrayBuffer();
+      })
+      // decodeAudioData is asynchronous and keeps codec initialization off the
+      // animation callback. The measured 5.4-second Chrome stall landed when a
+      // headshot line was due; this removes synchronous first-use media setup from
+      // that path entirely.
+      .then(encoded => context.decodeAudioData(encoded.slice(0)))
+      .then(buffer => {
+        this.buffers.set(key, buffer);
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => this.pending.delete(key));
+    this.pending.set(key, pending);
+    return pending;
+  }
+
+  readyIndices(category) {
+    const prefix = `${category}:`;
+    return [...this.buffers.keys()]
+      .filter(key => key.startsWith(prefix))
+      .map(key => Number(key.slice(prefix.length)));
+  }
+
+  async prepare(catalog, { yieldTurn = () => new Promise(resolve => setTimeout(resolve, 0)) } = {}) {
+    // One randomly selected line per category makes every first event cheap without
+    // decoding the entire 6.5 MB / 294-line catalog into tens of MB of PCM. Any
+    // other selected variation is decoded asynchronously on demand by play().
+    for (const [category, lines] of Object.entries(catalog)) {
+      await this.preload(category, (Math.random() * lines.length) | 0);
+      await yieldTurn();
+    }
+  }
+
+  _playBuffer(buffer, done) {
+    const context = this._context();
+    if (!context || this.current) return false;
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    gain.gain.value = 0.9;
+    source.connect(gain);
+    gain.connect(context.destination);
+    const active = { source, gain };
+    this.current = active;
+    source.onended = () => {
+      if (this.current === active) this.current = null;
+      done?.();
+    };
+    source.start();
+    return true;
+  }
+
   play(category, index, done) {
-    if (!this.AudioCtor || this.current) return false;
+    if (this.current) return false;
+    const key = this._key(category, index);
+    const ready = this.buffers.get(key);
+    if (ready) return this._playBuffer(ready, done);
+
+    // Reserve the channel while the chosen variation is fetched and decoded. The
+    // subtitle appears immediately; audio follows as soon as the async decoder is
+    // ready, with no synchronous codec startup on the game frame.
+    if (this._context() && this.fetchImpl) {
+      const pending = { pending: true };
+      this.current = pending;
+      this.preload(category, index).then(ok => {
+        if (this.current !== pending) return;
+        this.current = null;
+        if (!ok || !this._playBuffer(this.buffers.get(key), done)) done?.();
+      });
+      return true;
+    }
+
+    if (!this.AudioCtor) return false;
     const clip = new this.AudioCtor(announcerClipUrl(category, index));
     clip.preload = 'auto';
     clip.volume = 0.9;
@@ -54,6 +156,13 @@ export class AnnouncerVoiceBank {
     clearTimeout(this._finishTimer);
     this._finishTimer = null;
     if (!clip) return;
+    if (clip.source) {
+      try { clip.source.stop(); } catch { /* already stopped */ }
+      try { clip.source.disconnect(); } catch { /* already disconnected */ }
+      try { clip.gain.disconnect(); } catch { /* already disconnected */ }
+      return;
+    }
+    if (clip.pending) return;
     try { clip.pause(); } catch { /* already stopped */ }
     try { clip.currentTime = 0; } catch { /* not seekable yet */ }
   }
@@ -419,6 +528,14 @@ export class Announcer {
     this._onVoiceStart = onVoiceStart;
   }
 
+  prepare(options) {
+    return this._voiceBank.prepare?.(LINES, options) || Promise.resolve();
+  }
+
+  unlock() {
+    this._voiceBank.unlock?.();
+  }
+
   _pickFresh(category) {
     const pool = LINES[category] || ['...'];
     const used = this._used[category] = this._used[category] || new Set();
@@ -427,7 +544,12 @@ export class Announcer {
       used.clear();
       fresh = pool.map((text, index) => ({ text, index }));
     }
-    const line = pick(fresh);
+    // Prefer the line decoded during the loading screen for the first occurrence of
+    // a category. Later occurrences still range across the full authored catalog;
+    // uncached choices are decoded asynchronously by the voice bank.
+    const ready = new Set(this._voiceBank.readyIndices?.(category) || []);
+    const readyFresh = fresh.filter(line => ready.has(line.index));
+    const line = pick(used.size === 0 && readyFresh.length ? readyFresh : fresh);
     used.add(line.index);
     return line;
   }

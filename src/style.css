@@ -328,10 +328,12 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
 .xbox-controller-help strong { color: #fff; }
 .diagnostic-session-label {
-  width: fit-content; margin: 0 auto 12px; padding: 5px 9px;
-  border: 1px solid rgba(134,255,60,0.3); border-radius: 3px;
-  background: rgba(8,18,10,0.78); color: #86ff3c;
-  font-size: 8px; font-weight: 800; letter-spacing: 1px;
+  position: fixed; left: 7px; bottom: 6px; z-index: 240;
+  width: fit-content; padding: 2px 4px; pointer-events: none;
+  border: 0; border-radius: 2px;
+  background: rgba(5,7,8,0.34); color: rgba(185,195,185,0.52);
+  font: 600 6px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.55px;
 }
 .loading-screen { z-index: 180; overflow: hidden; }
 .loading-screen::before {
