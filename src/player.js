@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  WEAPONS, buildViewmodel, animateWeaponParts, solveSightAlignment, adsRelief,
+  WEAPONS, buildViewmodel, animateWeaponParts, solveSightAlignment, adsRelief, planReload,
 } from './weapons.js';
 import { Recoil, RecoilPattern } from './recoil.js';
 import { ViewModel } from './viewmodel.js';
@@ -73,6 +73,11 @@ export class Player {
     this.reloading = 0;
     this.shellLoading = false;   // shotgun-style: feeding one round at a time
     this.pumpT = 0;              // pump-action stroke in progress
+    // Seconds until the weapon in hand is usable after a swap, and until it is back up
+    // after being carried low through a sprint. Both from DogEater, whose rule is that
+    // every action costs time and the state you were in decides how much.
+    this.swapT = 0;
+    this.raiseT = 0;
     this.fireCooldown = 0;
     this.triggerHeld = false;
     this.triggerQueued = false;
@@ -167,6 +172,7 @@ export class Player {
     this.armDmg = 0; this.legDmg = 0;
     this.mag = this.weapon.mag;
     this.reloading = 0; this.shellLoading = false; this.pumpT = 0;
+    this.swapT = 0; this.raiseT = 0;
     this.fireCooldown = 0; this.bloom = 0;
     this.recoil.reset();
     this.deathT = 0;
@@ -304,6 +310,11 @@ export class Player {
     this.slotIdx = n;
     this.mag = this.magBySlot[n] ?? 0;
     this.reloading = 0;
+    this.shellLoading = false;
+    // The weapon has to come up before it does anything. A swap used to be free, which
+    // made a sidearm a magazine you could reach in no time at all: run the rifle dry,
+    // tap 1, keep shooting without a pause. Now it costs `draw`.
+    this.swapT = (this.weapon.draw ?? 0.4) * (this.progressStats.swapMult || 1);
     this.kickTarget = 0.6;
     this._mountViewmodel();
     audio.reload(0);
@@ -314,13 +325,19 @@ export class Player {
     if (this.slots.length) this.magBySlot[this.slotIdx] = this.mag;
     this.knifeOut = true;
     this.reloading = 0;
+    this.shellLoading = false;
+    this.swapT = (WEAPONS.knife.draw ?? 0.25) * (this.progressStats.swapMult || 1);
     this.kickTarget = 0.8;
     this._mountViewmodel();
     audio.slash(0.4);
   }
 
   startReload() {
-    if (this.weapon.melee || this.reloading > 0 || this.mag >= this.weapon.mag || !this.alive) return;
+    const w = this.weapon;
+    // A reload with a round chambered tops up to `mag + 1`, so "full" is not `w.mag`.
+    const full = this.mag >= w.mag + (this.mag > 0 ? 1 : 0);
+    if (w.melee || this.reloading > 0 || full || !this.alive) return;
+    if (this.swapT > 0 || this.raiseT > 0) return;   // the weapon is not up yet
     if (this.reserve() <= 0) { audio.dryFire(); return; } // nothing left in the pack
     const mult = this.progressStats.reloadMult || 1;
     if (this.weapon.shellReload) {
@@ -333,7 +350,9 @@ export class Player {
       audio.reload(0);
       return;
     }
-    this.reloading = this.weapon.reload * mult;
+    // Empty guns take longer: there is a bolt to send home as well as a magazine to
+    // change. `planReload` owns that rule and the round-count that goes with it.
+    this.reloading = planReload(w, this.mag, this.reserve(), mult).duration;
     this.reloadDur = this.reloading;
     this.arms.reload(this.reloading);
     audio.reload(0);
@@ -545,7 +564,8 @@ export class Player {
     }
 
     // ---- ADS ----
-    const adsTarget = this.adsHeld && this.reloading <= 0 && !this.healing ? 1 : 0;
+    const adsTarget = this.adsHeld && this.reloading <= 0 && !this.healing
+      && this.swapT <= 0 && !this.sprinting ? 1 : 0;
     this.ads += (adsTarget - this.ads) * Math.min(1, dt * (9 + (this.skills.cardio || 0) * 2));
     const targetFov = THREE.MathUtils.lerp(BASE_FOV, w.adsFov, this.ads);
     if (Math.abs(this.camera.fov - targetFov) > 0.1) {
@@ -573,7 +593,11 @@ export class Player {
             if (w.pump) { this.pumpT = w.pump; this.arms.pump(w.pump); }  // chamber the first round
           }
         } else {
-          this.mag += t ? consumeAmmo(this.character, t, w.mag - this.mag) : (w.mag - this.mag);
+          // `planReload` decided the capacity when the reload started, and it depends
+          // on whether a round was chambered *then* — so it is asked again here with
+          // the same magazine count and gives the same answer.
+          const plan = planReload(w, this.mag, this.reserve());
+          this.mag += t ? consumeAmmo(this.character, t, plan.taken) : plan.taken;
           this.reloading = 0;
         }
       }
@@ -586,7 +610,16 @@ export class Player {
     // Pulling the trigger mid-shell-reload breaks off and shoots what is loaded —
     // the whole point of feeding one at a time is that you can stop early.
     if (wantFire && this.shellLoading && this.mag > 0 && this.pumpT <= 0) this.cancelShellReload();
-    if (wantFire && this.fireCooldown <= 0 && this.pumpT <= 0
+    // Sprinting carries the weapon down: you cannot fire from there, and it takes a
+    // moment to bring it back up. DogEater's rule, and it is what stops a sprint from
+    // being strictly better than a walk — the cost of closing ground fast is that you
+    // arrive unable to shoot for a quarter of a second.
+    if (this.sprinting) this.raiseT = w.raise ?? 0.22;
+    else if (this.raiseT > 0) this.raiseT -= dt;
+    if (this.swapT > 0) this.swapT -= dt;
+    const weaponUp = this.swapT <= 0 && this.raiseT <= 0 && !this.sprinting;
+
+    if (wantFire && this.fireCooldown <= 0 && this.pumpT <= 0 && weaponUp
         && this.reloading <= 0 && !this.healing && locked) {
       if (w.melee) {
         this._slash();
@@ -673,6 +706,23 @@ export class Player {
     } else {
       vm.position.copy(hipPos);
       vm.quaternion.copy(_hipQuat);
+    }
+
+    // Carry low while sprinting, and on the way back up.
+    //
+    // Not decoration: the weapon cannot fire in this state, and a control that stops
+    // working with nothing on screen to say why reads as a bug rather than as a rule.
+    // The gun drops and rolls out of the aiming line, which is the same language every
+    // other shooter uses for "not ready".
+    const w2 = this.weapon;
+    const lowTarget = this.sprinting ? 1
+      : (this.raiseT > 0 ? this.raiseT / Math.max(1e-4, w2.raise ?? 0.22) : 0);
+    this.lowK = (this.lowK || 0) + (lowTarget - (this.lowK || 0)) * Math.min(1, dt * 12);
+    if (this.lowK > 0.001) {
+      vm.position.y -= 0.16 * this.lowK;
+      vm.position.z += 0.06 * this.lowK;
+      vm.rotateX(-0.55 * this.lowK);
+      vm.rotateZ(0.35 * this.lowK);
     }
 
     // Scope glass: solid at the hip, gone by the time the player is looking through

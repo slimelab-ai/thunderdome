@@ -5,6 +5,24 @@ import { bindAuthoredMaterials } from './materials.js';
 
 // dmg = per bullet torso damage. spread in degrees (hipfire base).
 //
+// `reloadEmpty` and `draw` are the handling model ported from DogEater, whose rule
+// is that every action costs time and the *state you were in* decides how much.
+//
+// **A round in the chamber.** Reload with rounds left and the one already chambered
+// stays there: you finish with `mag + 1` and you only swap the magazine, which is
+// `reload`. Run the gun dry and there is nothing to chamber — you get `mag`, and you
+// pay `reloadEmpty` because the bolt has to be sent home as well. Reloading early is
+// therefore both faster and worth an extra round, which is the whole point: it gives
+// a reason to top up behind cover instead of always firing to slide-lock.
+//
+// **`raise`** is how long the weapon takes to come back up out of a sprint. Sprinting
+// carries it down where it cannot be fired, so closing ground fast costs a moment of
+// helplessness at the end of it rather than being strictly free.
+//
+// **`draw`** is how long the weapon takes to come up after a swap. Nothing fires,
+// reloads or aims until it has. Swapping used to be instantaneous, so the pistol was
+// a free extra magazine you could reach in zero time.
+//
 // `suppression` is how hard a round from this weapon pins the people it is fired at,
 // relative to the rifle. Not a damage number — a *threat* number, which is why the
 // DMR outscores the SMG it loses a straight shootout to: a lane covered by something
@@ -26,7 +44,7 @@ import { bindAuthoredMaterials } from './materials.js';
 export const WEAPONS = {
   pistol: {
     id: 'pistol', name: 'P9 SIDEARM', price: 0, tier: 0,
-    dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25,
+    dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25, reloadEmpty: 1.70, draw: 0.35, raise: 0.16,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
     // When the slide is worked during the reload, as a fraction of the reload's
@@ -47,7 +65,7 @@ export const WEAPONS = {
   },
   smg: {
     id: 'smg', name: 'SKORPION K', price: 650, tier: 1,
-    dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6,
+    dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6, reloadEmpty: 2.15, draw: 0.45, raise: 0.2,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
     // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
@@ -64,7 +82,7 @@ export const WEAPONS = {
   },
   shotgun: {
     id: 'shotgun', name: 'PIT BOSS 12G', price: 950, tier: 2,
-    dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4,
+    dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4, reloadEmpty: 2.4, draw: 0.60, raise: 0.26,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
     // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
@@ -80,7 +98,7 @@ export const WEAPONS = {
   },
   rifle: {
     id: 'rifle', name: 'AK VULTURE', price: 1500, tier: 3,
-    dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9,
+    dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9, reloadEmpty: 2.55, draw: 0.55, raise: 0.24,
     spread: 1.7, adsSpread: 0.4, recoil: 1.5, pellets: 1,
     aiRange: 20, adsFov: 55, sound: 'rifle',
     // The one worth learning. Six rounds nearly straight up, then a hard break right
@@ -99,7 +117,7 @@ export const WEAPONS = {
   },
   dmr: {
     id: 'dmr', name: 'LONGPIG DMR', price: 2500, tier: 4,
-    dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1,
+    dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1, reloadEmpty: 2.80, draw: 0.70, raise: 0.3,
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
     // A single hard punch straight up. You lose the sight picture and get it back.
@@ -113,7 +131,7 @@ export const WEAPONS = {
 // the knife is innate — every fighter carries one, nobody sells it
 WEAPONS.knife = {
   id: 'knife', name: 'PIT SHANK', price: 0, tier: -1,
-  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0,
+  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0, reloadEmpty: 0, draw: 0.25,
   spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
   recoilPattern: [], recoilVelocity: 0.0,
   aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4,
@@ -423,3 +441,35 @@ const _r = new THREE.Vector3();
 const _u = new THREE.Vector3();
 const _basis = new THREE.Matrix3();
 const _m4 = new THREE.Matrix4();
+
+/**
+ * What a reload gives you, and what it costs.
+ *
+ * Ported from DogEater, where the chambered round is the mechanic that makes reload
+ * timing a decision rather than a reflex. Reload with rounds still in the magazine and
+ * the chambered one stays put: you end at `mag + 1` and pay only the magazine swap.
+ * Run dry and there is nothing chambered, so you get `mag` and pay the longer
+ * `reloadEmpty` because the bolt has to be sent home too.
+ *
+ * Pure, because it is the sort of arithmetic that looks obviously right and is off by
+ * one: `capacity` differs between the two paths, and the reserve has to be able to
+ * short-change either of them.
+ *
+ * @param {object} w        weapon
+ * @param {number} mag      rounds currently in the weapon
+ * @param {number} reserve  rounds available in the pack
+ * @param {number} mult     reload speed multiplier from progression (lower is faster)
+ */
+export function planReload(w, mag, reserve, mult = 1) {
+  const chambered = mag > 0;
+  const capacity = w.mag + (chambered ? 1 : 0);
+  const want = Math.max(0, capacity - mag);
+  const taken = Math.min(want, Math.max(0, reserve));
+  return {
+    chambered,
+    capacity,
+    taken,
+    mag: mag + taken,
+    duration: (chambered ? w.reload : (w.reloadEmpty ?? w.reload)) * mult,
+  };
+}
