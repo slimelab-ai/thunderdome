@@ -162,6 +162,14 @@ test('short-lived diagnostic sessions require a private writer token and remain 
     assert.equal(report.events[0].payload.id, 'direct');
     assert.equal(report.write_token, undefined);
 
+    const latest = await fetch(`http://127.0.0.1:${port}/diagnostics/latest`);
+    assert.equal(latest.status, 200);
+    assert.equal((await latest.json()).code, created.body.code);
+    const otherConnection = await fetch(`http://127.0.0.1:${port}/diagnostics/latest`, {
+      headers: { 'x-forwarded-for': '203.0.113.5' },
+    });
+    assert.equal(otherConnection.status, 404, 'latest sessions are scoped to the requester connection');
+
     await stopCollector(collector);
     collector = await startCollector(dataDir, port);
     report = await fetch(`http://127.0.0.1:${port}/diagnostics/${created.body.code}`).then(response => response.json());

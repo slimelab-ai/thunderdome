@@ -265,6 +265,24 @@ async function readDiagnosticEvents(code) {
   });
 }
 
+async function readLatestDiagnosticEvents(req) {
+  await pruneExpiredDiagnostics();
+  const requester = sourceHashFor(req);
+  const metadata = [];
+  for (const name of await readdir(diagnosticsDir)) {
+    if (!/^\d{6}\.json$/.test(name)) continue;
+    try {
+      const candidate = JSON.parse(await readFile(join(diagnosticsDir, name), 'utf8'));
+      if (candidate.source_hash === requester && Date.parse(candidate.expires_at) > Date.now()) metadata.push(candidate);
+    } catch {
+      // Ignore a session whose metadata is incomplete while retention cleans it up.
+    }
+  }
+  metadata.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (!metadata.length) throw diagnosticError(404, 'no diagnostic session found for this connection');
+  return readDiagnosticEvents(metadata[0].code);
+}
+
 const server = createServer(async (req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   if (req.method === 'GET' && pathname === '/health') {
@@ -285,6 +303,13 @@ const server = createServer(async (req, res) => {
       return reply(res, 201, await createDiagnosticSession(req));
     } catch (error) {
       return reply(res, error.status || 400, { error: error.message });
+    }
+  }
+  if (req.method === 'GET' && pathname === '/diagnostics/latest') {
+    try {
+      return reply(res, 200, await readLatestDiagnosticEvents(req));
+    } catch (error) {
+      return reply(res, error.status || 500, { error: error.message });
     }
   }
   const diagnosticMatch = /^\/diagnostics\/(\d{6})$/.exec(pathname);

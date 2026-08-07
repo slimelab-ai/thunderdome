@@ -17,6 +17,7 @@ section, .session-card, footer {
 .session-card { display: flex; align-items: center; justify-content: space-between; border-color: #8f6617; }
 .label { display: block; color: #9a8b6c; font-size: 11px; font-weight: 900; letter-spacing: 2px; }
 #session-code { display: block; margin-top: 2px; color: var(--gold); font: 900 48px/1.05 Consolas, monospace; letter-spacing: 8px; }
+#session-detail { display: block; margin-top: 7px; color: #777984; font: 12px Consolas, monospace; }
 .section-head, .section-head > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h2 { margin: 0; font-size: 19px; letter-spacing: 2px; }
 .step { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #3a2910; color: var(--gold); font-weight: 900; }

@@ -10,6 +10,7 @@ import { GradeShader } from './render.js';
 
 const $ = id => document.getElementById(id);
 const codeEl = $('session-code');
+const sessionDetail = $('session-detail');
 const uploadState = $('upload-state');
 const graphicsState = $('graphics-state');
 const controllerState = $('controller-state');
@@ -96,14 +97,33 @@ async function openSession() {
   });
   if (!response.ok) throw new Error(`session service returned ${response.status}`);
   session = await response.json();
-  codeEl.textContent = session.code;
+  codeEl.textContent = 'JUST SAY “READY”';
+  sessionDetail.textContent = `Fallback session ID: ${session.code}`;
   setState(uploadState, 'REPORTING LIVE', 'good');
+  let userAgentData = null;
+  if (navigator.userAgentData) {
+    userAgentData = {
+      brands: navigator.userAgentData.brands || [],
+      mobile: navigator.userAgentData.mobile,
+      platform: navigator.userAgentData.platform,
+    };
+    try {
+      Object.assign(userAgentData, await navigator.userAgentData.getHighEntropyValues?.([
+        'architecture', 'bitness', 'model', 'platformVersion', 'uaFullVersion', 'fullVersionList',
+      ]));
+    } catch (error) {
+      userAgentData.error = compactError(error);
+    }
+  }
   await emit('session_started', {
     page: location.href,
     build: import.meta.env?.VITE_BUILD_SHA || 'dev',
     user_agent: navigator.userAgent,
     platform: navigator.platform || '',
+    vendor: navigator.vendor || '',
+    user_agent_data: userAgentData,
     language: navigator.language || '',
+    max_touch_points: navigator.maxTouchPoints || 0,
     hardware_concurrency: navigator.hardwareConcurrency || null,
     device_memory: navigator.deviceMemory || null,
     viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
@@ -152,11 +172,23 @@ function makeScene() {
 }
 
 function makeRenderer(width, height) {
-  const renderer = new THREE.WebGLRenderer({
-    antialias: false,
-    powerPreference: 'high-performance',
-    stencil: false,
+  const canvas = document.createElement('canvas');
+  const contextStatus = [];
+  canvas.addEventListener('webglcontextcreationerror', event => {
+    contextStatus.push(String(event.statusMessage || 'No status message'));
   });
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: 'high-performance',
+      stencil: false,
+    });
+  } catch (error) {
+    error.contextStatus = contextStatus;
+    throw error;
+  }
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
   renderer.shadowMap.enabled = true;
@@ -164,6 +196,81 @@ function makeRenderer(width, height) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   return renderer;
+}
+
+const RAW_CONTEXT_PROBES = [
+  {
+    id: 'game-webgl2',
+    label: 'GAME WEBGL2 CONTEXT',
+    kind: 'webgl2',
+    attributes: { antialias: false, powerPreference: 'high-performance', stencil: false },
+  },
+  { id: 'default-webgl2', label: 'DEFAULT WEBGL2 CONTEXT', kind: 'webgl2', attributes: {} },
+  { id: 'default-webgl1', label: 'DEFAULT WEBGL1 CONTEXT', kind: 'webgl', attributes: {} },
+];
+
+function rawContextInfo(gl) {
+  const parameter = value => {
+    try { return gl.getParameter(value); } catch (error) { return `ERROR: ${error.message}`; }
+  };
+  return {
+    version: parameter(gl.VERSION),
+    glsl_version: parameter(gl.SHADING_LANGUAGE_VERSION),
+    vendor: parameter(gl.VENDOR),
+    renderer: parameter(gl.RENDERER),
+    context_attributes: gl.getContextAttributes?.() || null,
+    extensions: gl.getSupportedExtensions?.() || [],
+  };
+}
+
+function addRawContextResult(test, outcome) {
+  const card = document.createElement('div');
+  card.className = 'probe-result';
+  const title = document.createElement('b');
+  title.textContent = test.label;
+  const summary = document.createElement('span');
+  summary.textContent = outcome.success
+    ? `CREATED · ${outcome.info.version}`
+    : `FAILED · ${outcome.status_messages.join(' · ') || 'NO DRIVER MESSAGE'}`;
+  card.append(title, summary);
+  results.appendChild(card);
+}
+
+async function runRawContextPreflight() {
+  const outcomes = [];
+  for (const test of RAW_CONTEXT_PROBES) {
+    const canvas = document.createElement('canvas');
+    const statusMessages = [];
+    canvas.addEventListener('webglcontextcreationerror', event => {
+      statusMessages.push(String(event.statusMessage || 'No status message'));
+      event.preventDefault();
+    });
+    let gl = null;
+    let exception = null;
+    try {
+      gl = canvas.getContext(test.kind, test.attributes);
+    } catch (error) {
+      exception = compactError(error);
+    }
+    const outcome = {
+      id: test.id,
+      kind: test.kind,
+      requested_attributes: test.attributes,
+      success: !!gl,
+      status_messages: statusMessages,
+      exception,
+      info: gl ? rawContextInfo(gl) : null,
+    };
+    outcomes.push(outcome);
+    addRawContextResult(test, outcome);
+    await emit('raw_context_probe_result', outcome);
+    if (gl) {
+      try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
+      await new Promise(resolve => setTimeout(resolve, 500));
+      break;
+    }
+  }
+  return outcomes;
 }
 
 function graphicsInfo(renderer) {
@@ -300,7 +407,7 @@ async function runProbe(test, index) {
     await emit('render_probe_result', { id: test.id, ...outcome });
     succeeded = true;
   } catch (error) {
-    const detail = compactError(error);
+    const detail = { ...compactError(error), context_status: error.contextStatus || [] };
     addProbeResult(test, null, detail);
     await emit('render_probe_error', { id: test.id, ...detail });
   } finally {
@@ -329,6 +436,7 @@ async function runGraphicsProbes(reason = 'manual') {
   results.replaceChildren();
   setState(graphicsState, 'STARTING', 'pending');
   await emit('graphics_run_started', { reason });
+  const contextPreflight = await runRawContextPreflight();
   for (let i = 0; i < PROBES.length; i++) {
     if (!(await runProbe(PROBES[i], i))) graphicsFailures++;
     await new Promise(resolve => setTimeout(resolve, 350));
@@ -340,7 +448,12 @@ async function runGraphicsProbes(reason = 'manual') {
     graphicsFailures ? `${graphicsFailures} PROBE${graphicsFailures === 1 ? '' : 'S'} FAILED` : 'ALL PROBES PASSED',
     graphicsFailures ? 'bad' : 'good');
   overallState.textContent = 'GRAPHICS COMPLETE — FINISH THE CONTROLLER CHECKS';
-  await emit('graphics_complete', { reason, failures: graphicsFailures, probes: PROBES.map(test => test.id) });
+  await emit('graphics_complete', {
+    reason,
+    failures: graphicsFailures,
+    context_preflight: contextPreflight.map(result => ({ id: result.id, success: result.success })),
+    probes: PROBES.map(test => test.id),
+  });
   maybeRerunForController();
 }
 
