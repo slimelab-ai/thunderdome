@@ -8,6 +8,7 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { GradeShader } from './render.js';
 import { DIAGNOSTIC_SESSION_STORAGE_KEY } from './diagnostic-session.js';
+import { versioned } from './asset-version.js';
 
 const $ = id => document.getElementById(id);
 const codeEl = $('session-code');
@@ -610,20 +611,27 @@ async function playVoiceTest() {
   voiceRunning = true;
   setState(voiceState, 'STARTING', 'pending');
   try {
-    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) throw new Error('Web Speech API unavailable');
-    const voices = speechSynthesis.getVoices().map(voice => ({ name: voice.name, lang: voice.lang, local: voice.localService }));
-    await emit('voice_test_requested', { voices });
-    const utterance = new SpeechSynthesisUtterance('Cameras rolling, bets locked. Welcome to the Thunderdome.');
-    utterance.rate = 1.0;
-    utterance.pitch = 0.95;
-    utterance.volume = 0.86;
-    const english = speechSynthesis.getVoices().find(voice => /^en/i.test(voice.lang));
-    if (english) utterance.voice = english;
-    utterance.onstart = () => { setState(voiceState, 'PLAYING', 'good'); emit('voice_started', { voice: utterance.voice?.name || null }); };
-    utterance.onend = event => { setState(voiceState, 'FINISHED', 'good'); voiceRunning = false; emit('voice_ended', { elapsed: event.elapsedTime || null }); };
-    utterance.onerror = event => { setState(voiceState, `ERROR: ${event.error}`, 'bad'); voiceRunning = false; emit('voice_error', { error: event.error }); };
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utterance);
+    if (!window.Audio) throw new Error('HTML audio unavailable');
+    const url = versioned('/assets/voice/vulture/matchStart/01.opus');
+    const clip = new Audio(url);
+    clip.preload = 'auto';
+    clip.volume = 0.9;
+    await emit('voice_test_requested', { backend: 'prerendered-opus', url });
+    clip.onplaying = () => {
+      setState(voiceState, 'PLAYING', 'good');
+      emit('voice_started', { backend: 'prerendered-opus', duration: clip.duration || null });
+    };
+    clip.onended = () => {
+      setState(voiceState, 'FINISHED', 'good');
+      voiceRunning = false;
+      emit('voice_ended', { duration: clip.duration || null });
+    };
+    clip.onerror = () => {
+      setState(voiceState, `ERROR: MEDIA ${clip.error?.code || '?'}`, 'bad');
+      voiceRunning = false;
+      emit('voice_error', { code: clip.error?.code || null, message: clip.error?.message || null });
+    };
+    await clip.play();
     setTimeout(() => {
       if (!voiceRunning) return;
       voiceRunning = false;
@@ -632,7 +640,7 @@ async function playVoiceTest() {
     }, 12000);
   } catch (error) {
     voiceRunning = false;
-    setState(voiceState, 'UNAVAILABLE', 'bad');
+    setState(voiceState, 'PLAYBACK FAILED', 'bad');
     await emit('voice_exception', compactError(error));
   }
 }

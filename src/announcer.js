@@ -1,17 +1,63 @@
 // VULTURE — the tournament master. All flavor text lives here.
+//
+// Spoken lines are pre-rendered during development and shipped as ordinary Opus
+// assets. That gives every browser the same voice and timing, without
+// asking the OS speech service to synthesize audio during a match.
 
-import { isXboxBrowser } from './platform.js';
-
-export function announcerSpeechProfile(nav = globalThis.navigator) {
-  // Xbox Edge uses a different system speech backend. Extreme pitch shifting on
-  // that backend turns into a gravelly, time-stretched voice, so keep it near the
-  // voice's native range. Desktop retains a little more carnival-barker colour.
-  return isXboxBrowser(nav)
-    ? { rate: 1.0, pitch: 0.95, volume: 0.86 }
-    : { rate: 1.12, pitch: 0.78, volume: 0.9 };
-}
+import { versioned } from './asset-version.js';
 
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+
+export const announcerClipUrl = (category, index) =>
+  versioned(`/assets/voice/vulture/${category}/${String(index + 1).padStart(2, '0')}.opus`);
+
+export class AnnouncerVoiceBank {
+  constructor({ AudioCtor = globalThis.Audio } = {}) {
+    this.AudioCtor = AudioCtor;
+    this.current = null;
+    this._finishTimer = null;
+  }
+
+  play(category, index, done) {
+    if (!this.AudioCtor || this.current) return false;
+    const clip = new this.AudioCtor(announcerClipUrl(category, index));
+    clip.preload = 'auto';
+    clip.volume = 0.9;
+    this.current = clip;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(this._finishTimer);
+      this._finishTimer = null;
+      if (this.current === clip) this.current = null;
+      done?.();
+    };
+    clip.addEventListener?.('ended', finish, { once: true });
+    clip.addEventListener?.('error', finish, { once: true });
+    try {
+      const started = clip.play();
+      started?.catch?.(finish);
+      // HTML media has dependable `ended` events in normal operation, but a device
+      // sleep or decoder reset must not leave all later announcer lines muted.
+      this._finishTimer = setTimeout(finish, 20000);
+    } catch {
+      finish();
+      return false;
+    }
+    return true;
+  }
+
+  stop() {
+    const clip = this.current;
+    this.current = null;
+    clearTimeout(this._finishTimer);
+    this._finishTimer = null;
+    if (!clip) return;
+    try { clip.pause(); } catch { /* already stopped */ }
+    try { clip.currentTime = 0; } catch { /* not seekable yet */ }
+  }
+}
 
 export const LINES = {
   matchStart: [
@@ -201,7 +247,7 @@ export const LINES = {
 };
 
 export class Announcer {
-  constructor() {
+  constructor({ voiceBank = new AnnouncerVoiceBank() } = {}) {
     this.wrap = document.getElementById('announcer-wrap');
     this.line = document.getElementById('announcer-line');
     this.queue = [];
@@ -209,46 +255,21 @@ export class Announcer {
     this.cooldowns = {};
     this.lastLineAt = -99;
     this._used = {};   // per-category lines already played this session (no repeats until exhausted)
-    this._voice = null;
-    this._speaking = false;   // event-tracked; never read from the speechSynthesis getter
-    this._speechProfile = announcerSpeechProfile();
-    this._protectMainThread = isXboxBrowser();
-    this._speechDisabled = false;
-    // Xbox's default voice sounded correct in the device probe. Avoid a synchronous
-    // getVoices IPC during the already-sensitive controller-mode handoff.
-    if (!this._protectMainThread) this._resolveVoice();
-  }
-
-  /**
-   * Pick VULTURE's voice once, up front. `getVoices()` is a synchronous round-trip
-   * to the browser's speech process (on Linux, an IPC to speech-dispatcher), and it
-   * used to run lazily inside `_speak` — which meant inside a match frame, and,
-   * because a not-yet-populated list left `_voice` null, on *every* line for the
-   * rest of the session. Chrome fills the list asynchronously, so ask once now and
-   * once more when the browser says it changed, and never on the frame path.
-   */
-  _resolveVoice() {
-    try {
-      if (!window.speechSynthesis) return;
-      const pickVoice = () => {
-        const vs = speechSynthesis.getVoices();
-        if (!vs.length) return;
-        this._voice = vs.find(v => /^en/i.test(v.lang) && /male|david|mark|daniel|guy|george/i.test(v.name))
-          || vs.find(v => /^en/i.test(v.lang)) || null;
-      };
-      pickVoice();
-      if (!this._voice) speechSynthesis.addEventListener?.('voiceschanged', pickVoice, { once: true });
-    } catch { /* no voice, no problem */ }
+    this._speaking = false;
+    this._voiceBank = voiceBank;
   }
 
   _pickFresh(category) {
     const pool = LINES[category] || ['...'];
     const used = this._used[category] = this._used[category] || new Set();
-    let fresh = pool.filter(l => !used.has(l));
-    if (!fresh.length) { used.clear(); fresh = pool; }
-    const text = pick(fresh);
-    used.add(text);
-    return text;
+    let fresh = pool.map((text, index) => ({ text, index })).filter(line => !used.has(line.index));
+    if (!fresh.length) {
+      used.clear();
+      fresh = pool.map((text, index) => ({ text, index }));
+    }
+    const line = pick(fresh);
+    used.add(line.index);
+    return line;
   }
 
   say(category, vars = {}, { force = false, minGap = 4 } = {}) {
@@ -258,17 +279,14 @@ export class Announcer {
       if (this.showing > 0 || this.queue.length) return;
       if (now - this.lastLineAt < 6) return;
       if (this.cooldowns[category] && now - this.cooldowns[category] < minGap) return;
-      // `_speaking` is our own event-tracked flag, not the `speechSynthesis.speaking`
-      // getter that used to sit here: that getter is a synchronous call into the
-      // browser's speech process, it ran inside the announcer tick, and on Windows it
-      // can stall the main thread while SAPI is busy. This path must not do IPC.
       if (this._speaking) return;
     }
     this.cooldowns[category] = now;
-    let text = this._pickFresh(category);
+    const selected = this._pickFresh(category);
+    let text = selected.text;
     for (const [k, v] of Object.entries(vars)) text = text.replaceAll(`{${k}}`, v);
     if (force) this.queue.length = 0;
-    if (this.queue.length < 2) this.queue.push({ text, force });
+    if (this.queue.length < 2) this.queue.push({ text, category, index: selected.index, force });
   }
 
   update(dt) {
@@ -276,80 +294,46 @@ export class Announcer {
       this.showing -= dt;
       if (this.showing <= 0) this.wrap.classList.remove('show');
     } else if (this.queue.length) {
-      const { text, force } = this.queue.shift();
+      const { text, category, index, force } = this.queue.shift();
       this.line.textContent = `“${text}”`;
       this.wrap.classList.add('show');
       this.showing = 2.2 + text.length * 0.03;
       this.lastLineAt = performance.now() / 1000;
-      // Off the frame. `speak()`/`cancel()` talk to the speech process and have
-      // stalled the rAF for hundreds of ms; a macrotask also lets any input events
-      // already queued behind this frame dispatch before the engine gets the mic.
-      // The generation check keeps a line queued just before `clear()` (match end,
-      // screen change) from speaking into the silence afterwards.
+      // Starting media stays off the frame path. The generation check keeps a line
+      // queued just before clear() from speaking into the next screen.
       const gen = this._gen || 0;
-      setTimeout(() => { if ((this._gen || 0) === gen) this._speak(text, force); }, 0);
+      setTimeout(() => {
+        if ((this._gen || 0) === gen) this._speak(category, index, force);
+      }, 0);
     }
   }
 
-  // VULTURE's voice: Web Speech API — zero assets, maximum carnival barker
-  //
-  // The engine is talked to as little as possible: speak() and cancel() only, always
-  // from a macrotask, never a getter. Whether he is mid-line is tracked on our side
-  // through utterance events (`_speaking`), because every property read on
-  // `speechSynthesis` is a synchronous round-trip to the browser's speech process
-  // and on Windows those round-trips have hung the game.
-  _speak(text, force) {
-    try {
-      if (!window.speechSynthesis) return;
-      if (this._speechDisabled) return;
-      // never interrupt himself mid-sentence for color commentary
-      if (this._speaking) {
-        if (!force) return;
-        // Chromium's cancel/speak collision is the announcer-correlated main-thread
-        // hang. Keep only the newest important line and start it after this one.
-        this._pendingSpeech = { text, gen: this._gen || 0 };
-        return;
-      }
-      this._utter(text);
-    } catch { /* no voice, no problem */ }
+  _speak(category, index, force) {
+    if (this._speaking) {
+      if (force) this._pendingSpeech = { category, index, gen: this._gen || 0 };
+      return;
+    }
+    this._utter(category, index);
   }
 
-  _utter(text) {
-    try {
-      const plain = text.replace(/[“”"]/g, '');
-      const u = new SpeechSynthesisUtterance(plain);
-      u.rate = this._speechProfile.rate;
-      u.pitch = this._speechProfile.pitch;
-      u.volume = this._speechProfile.volume;
-      if (this._voice) u.voice = this._voice;
-      this._speaking = true;
-      // The token keeps a stale fallback timer from freeing the mic under a NEWER
-      // utterance that started after this one finished.
-      const token = (this._utterToken = (this._utterToken || 0) + 1);
-      const done = () => {
-        if (this._utterToken !== token) return;
-        this._speaking = false;
-        const pending = this._pendingSpeech;
-        this._pendingSpeech = null;
-        if (!this._speechDisabled && pending && pending.gen === (this._gen || 0)) {
-          setTimeout(() => this._utter(pending.text), 0);
-        }
-      };
-      u.onend = done;
-      u.onerror = done;
-      // Chrome has lost `end` events for years; without a fallback one dropped event
-      // would mute him for the rest of the session. Generous estimate of the line's
-      // duration at rate 1.2, then assume the mic is free.
-      setTimeout(done, 1500 + plain.length * 70);
-      const started = performance.now();
-      speechSynthesis.speak(u);
-      this._lastSpeakCallMs = performance.now() - started;
-      this._lastSpeakCallAt = started;
-      // One slow browser speech IPC is enough evidence. Preserve subtitles but
-      // stop repeatedly freezing an Xbox match for subsequent voice lines.
-      if (this._protectMainThread && this._lastSpeakCallMs > 50) this._speechDisabled = true;
-      this._spokeCount = (this._spokeCount || 0) + 1;
-    } catch { /* no voice, no problem */ }
+  _utter(category, index) {
+    const token = (this._utterToken = (this._utterToken || 0) + 1);
+    const done = () => {
+      if (this._utterToken !== token) return;
+      this._speaking = false;
+      const pending = this._pendingSpeech;
+      this._pendingSpeech = null;
+      if (pending && pending.gen === (this._gen || 0)) {
+        setTimeout(() => this._utter(pending.category, pending.index), 0);
+      }
+    };
+    this._speaking = true;
+    const started = performance.now();
+    const playing = this._voiceBank.play(category, index, done);
+    this._lastVoiceStartMs = performance.now() - started;
+    this._lastVoiceStartAt = started;
+    if (!playing) done();
+    else this._spokeCount = (this._spokeCount || 0) + 1;
   }
 
   clear() {
@@ -358,11 +342,8 @@ export class Announcer {
     this._pendingSpeech = null;
     this.showing = 0;
     this.wrap.classList.remove('show');
-    // On Xbox, cancel itself can block on the speech process. Let an in-flight line
-    // finish; generation guards prevent queued speech from following it.
-    if (!this._protectMainThread) {
-      try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
-      this._speaking = false;
-    }
+    this._utterToken = (this._utterToken || 0) + 1;
+    this._voiceBank.stop();
+    this._speaking = false;
   }
 }

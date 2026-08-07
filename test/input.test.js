@@ -43,7 +43,7 @@ test('aim assist targets an enemy near the crosshair and applies friction', () =
   const { hub } = makeHub({ enemies: [enemyAt(0.8, 1.62, -12)] });
   const target = hub._assistTarget();
   assert.ok(target, 'enemy inside the slow cone should be targeted');
-  assert.ok(target.ang < AIM_ASSIST.gamepad.slowCone);
+  assert.ok(target.edgeAng < AIM_ASSIST.gamepad.slowCone);
   const mult = hub._friction(target, AIM_ASSIST.gamepad);
   assert.ok(mult < 1 && mult >= AIM_ASSIST.gamepad.friction - 1e-9);
   // no target → no slowdown
@@ -65,11 +65,11 @@ test('aim assist ignores far, off-cone, friendly, and occluded enemies', () => {
   assert.equal(occluded.hub._assistTarget(), null);
 });
 
-test('rotational pull rotates the view toward the target, capped per frame', () => {
+test('touch rotational pull rotates the view toward the target, capped per frame', () => {
   const { hub, player } = makeHub({ enemies: [enemyAt(0.5, 1.62, -12)] });
-  const target = hub._assistTarget();
+  const target = hub._assistTarget(AIM_ASSIST.touch);
   assert.ok(target);
-  hub._applyPull(target, AIM_ASSIST.gamepad, 1 / 60);
+  hub._applyPull(target, AIM_ASSIST.touch, 1 / 60);
   // enemy is to the right of center (-Z forward, +X right) → yaw decreases
   assert.ok(player.yaw < 0, `yaw should pull right (negative), got ${player.yaw}`);
   assert.ok(Math.abs(player.yaw) <= AIM_ASSIST.pullMaxRate / 60 + 1e-9);
@@ -78,7 +78,7 @@ test('rotational pull rotates the view toward the target, capped per frame', () 
   for (let i = 0; i < 30; i++) {
     const t = hub._assistTarget();
     if (!t) break;
-    hub._applyPull(t, AIM_ASSIST.gamepad, 1 / 60);
+    hub._applyPull(t, AIM_ASSIST.touch, 1 / 60);
     hub.camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
     hub.camera.updateMatrixWorld();
     const now = hub._assistTarget()?.ang ?? 0;
@@ -207,21 +207,25 @@ test('controller look settings govern turn speed and keep default magnetism cont
     `default slowdown should be perceptible but controlled, got ${friction}`);
 
   const before = player.yaw;
-  hub._applyPull({ point: new THREE.Vector3(1, 1.62, -12) }, AIM_ASSIST.gamepad, 1 / 60, 0);
-  assert.equal(player.yaw, before, 'zero magnetism must not rotate the player');
+  hub._applyTracking({ entity: {}, wantYaw: -0.1, wantPitch: 0 }, AIM_ASSIST.gamepad, 1 / 60, 0, true);
+  assert.equal(player.yaw, before, 'zero assistance must not rotate the player');
 });
 
-test('aim pull corrects the visible recoil offset instead of shifting base aim below it', () => {
-  const { hub, player, camera } = makeHub();
-  camera.rotation.x = 0.1;
-  camera.updateMatrixWorld();
-  const inputs = [];
-  player.addLook = (dYaw, dPitch) => inputs.push({ dYaw, dPitch });
+test('gamepad tracking follows target motion without pulling toward a static centre', () => {
+  const enemy = enemyAt(0.5, 1.62, -12);
+  const { hub, player } = makeHub({ enemies: [enemy] });
+  const first = hub._assistTarget();
+  hub._applyTracking(first, AIM_ASSIST.gamepad, 1 / 60, 1, true);
+  assert.equal(player.yaw, 0, 'acquiring an off-centre target must not snap toward it');
 
-  hub._applyPull({ point: new THREE.Vector3(0, 1.62, -12) }, AIM_ASSIST.gamepad, 1 / 60, 1);
+  const same = hub._assistTarget();
+  hub._applyTracking(same, AIM_ASSIST.gamepad, 1 / 60, 1, true);
+  assert.equal(player.yaw, 0, 'a stationary target must not create centre-seeking pull');
 
-  assert.equal(inputs.length, 1);
-  assert.ok(inputs[0].dPitch < 0, 'a recoil-raised camera should receive downward correction');
+  enemy.aimPoint = (out = new THREE.Vector3()) => out.set(0.8, 1.62, -12);
+  const moved = hub._assistTarget();
+  hub._applyTracking(moved, AIM_ASSIST.gamepad, 1 / 60, 1, true);
+  assert.ok(player.yaw < 0, 'rightward target motion should be partially inherited');
 });
 
 test('aim magnetism never steers an idle crosshair just because fire or ADS is held', () => {

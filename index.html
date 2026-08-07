@@ -88,6 +88,9 @@
   </div>
 
   <!-- ===================== SCREENS ===================== -->
+  <div id="graphics-prep" class="graphics-prep hidden" role="status" aria-live="polite">
+    <b>LOADING ARENA</b><span>STREAMING FIGHTERS AND WEAPONS</span>
+  </div>
   <div id="screen-menu" class="screen">
     <div class="menu-inner">
       <div class="menu-pretitle">THE UNDERGROUND KILL LEAGUE PRESENTS</div>
@@ -298,9 +301,9 @@
               <small>Higher values soften small stick movements</small>
             </label>
             <label for="controller-aim-assist">
-              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
+              <span>AIM ASSIST <output id="controller-aim-assist-value">35%</output></span>
               <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
-              <small>Narrow slowdown and micro-correction only</small>
+              <small>Target-volume slowdown and movement tracking; no center pull</small>
             </label>
           </div>
           <div class="controller-curve-wrap">

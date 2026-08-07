@@ -327,6 +327,17 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .xbox-browser .xbox-controller-help { display: block; }
 .xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
 .xbox-controller-help strong { color: #fff; }
+.graphics-prep {
+  display: none; position: fixed; left: 50%; bottom: 16px; z-index: 170;
+  transform: translateX(-50%); width: min(520px, 88vw); margin: 0; padding: 7px 11px;
+  border: 1px solid rgba(255,185,46,0.5); background: rgba(255,185,46,0.07);
+  font: 10px/1.35 var(--font-mono); letter-spacing: 1px; color: var(--muted);
+}
+.xbox-browser .graphics-prep { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.graphics-prep b { color: var(--gold); }
+.graphics-prep.complete { border-color: rgba(74,222,128,0.55); background: rgba(74,222,128,0.07); }
+.graphics-prep.complete b { color: #68ee91; }
+.xbox-browser .graphics-prep.hidden { display: none; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }

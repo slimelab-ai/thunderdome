@@ -1,58 +1,69 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Announcer } from '../src/announcer.js';
+import { access } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Announcer, AnnouncerVoiceBank, LINES, announcerClipUrl } from '../src/announcer.js';
+import { ASSET_VERSION } from '../src/asset-version.js';
 
-test('an urgent line waits for current speech without canceling the browser voice', () => {
-  const previousWindow = globalThis.window;
-  const previousSpeech = globalThis.speechSynthesis;
-  let cancellations = 0;
-  const speech = { cancel: () => cancellations++ };
-  globalThis.window = { speechSynthesis: speech };
-  globalThis.speechSynthesis = speech;
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('voice clips have stable category and line URLs', () => {
+  assert.equal(announcerClipUrl('matchStart', 0), `/assets/voice/vulture/matchStart/01.opus?v=${ASSET_VERSION}`);
+  assert.equal(announcerClipUrl('playerKill', 11), `/assets/voice/vulture/playerKill/12.opus?v=${ASSET_VERSION}`);
+});
+
+test('every authored subtitle has a pre-rendered voice clip', async () => {
+  await Promise.all(Object.entries(LINES).flatMap(([category, lines]) =>
+    lines.map((_, index) => access(path.join(
+      root, 'public/assets/voice/vulture', category, `${String(index + 1).padStart(2, '0')}.opus`,
+    )))));
+});
+
+test('an urgent line waits for the current clip without interrupting it', () => {
+  let plays = 0;
   const announcer = Object.assign(Object.create(Announcer.prototype), {
-    _speechDisabled: false,
+    _voiceBank: { play: () => { plays++; return true; } },
     _speaking: true,
     _gen: 4,
   });
 
-  try {
-    announcer._speak('FIGHT!', true);
-    assert.deepEqual(announcer._pendingSpeech, { text: 'FIGHT!', gen: 4 });
-    assert.equal(cancellations, 0);
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
-    if (previousSpeech === undefined) delete globalThis.speechSynthesis;
-    else globalThis.speechSynthesis = previousSpeech;
-  }
+  announcer._speak('matchStart', 0, true);
+  assert.deepEqual(announcer._pendingSpeech, { category: 'matchStart', index: 0, gen: 4 });
+  assert.equal(plays, 0);
 });
 
-test('Xbox clear avoids synchronous speech cancellation while desktop still cancels', () => {
-  const previousWindow = globalThis.window;
-  let cancellations = 0;
-  globalThis.window = { speechSynthesis: { cancel: () => cancellations++ } };
-  const wrap = { classList: { remove: () => {} } };
-  const makeAnnouncer = protect => Object.assign(Object.create(Announcer.prototype), {
-    _protectMainThread: protect,
+test('clear stops a pre-rendered clip on every platform', () => {
+  let stops = 0;
+  const announcer = Object.assign(Object.create(Announcer.prototype), {
+    _voiceBank: { stop: () => stops++ },
     _speaking: true,
     _gen: 0,
+    _utterToken: 2,
     queue: [],
     showing: 1,
-    wrap,
+    wrap: { classList: { remove: () => {} } },
   });
 
-  try {
-    const xbox = makeAnnouncer(true);
-    xbox.clear();
-    assert.equal(cancellations, 0);
-    assert.equal(xbox._speaking, true);
+  announcer.clear();
+  assert.equal(stops, 1);
+  assert.equal(announcer._speaking, false);
+  assert.equal(announcer._utterToken, 3);
+});
 
-    const desktop = makeAnnouncer(false);
-    desktop.clear();
-    assert.equal(cancellations, 1);
-    assert.equal(desktop._speaking, false);
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
+test('voice bank releases a finished HTML audio clip', async () => {
+  let clip;
+  class FakeAudio {
+    constructor(url) { this.url = url; clip = this; this.listeners = {}; }
+    addEventListener(name, fn) { this.listeners[name] = fn; }
+    play() { return Promise.resolve(); }
+    pause() {}
   }
+  let ended = 0;
+  const bank = new AnnouncerVoiceBank({ AudioCtor: FakeAudio });
+  assert.equal(bank.play('win', 2, () => ended++), true);
+  assert.equal(clip.url, `/assets/voice/vulture/win/03.opus?v=${ASSET_VERSION}`);
+  clip.listeners.ended();
+  assert.equal(ended, 1);
+  assert.equal(bank.current, null);
 });

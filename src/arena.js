@@ -163,7 +163,7 @@ function jumbotronTex() {
   });
 }
 
-export function buildArena(scene) {
+export function buildArena(scene, { loadGate = Promise.resolve() } = {}) {
   const { W, D, WALL_H } = ARENA;
   const colliders = [];      // THREE.Box3 solid obstacles
   const lights = [];         // dimmable lights for LIGHTS OUT
@@ -774,7 +774,7 @@ export function buildArena(scene) {
 
   // Built once the authored props have landed — before that the scene is fallback
   // primitives and the instanced batches are empty.
-  const solidsReady = props.resolve(scene).then(() => {
+  const solidsReady = Promise.resolve(loadGate).then(() => props.resolve(scene)).then(() => {
     solids.mesh = new MeshCollider(collectTriangles(scene, isSolid));
     return solids;
   });

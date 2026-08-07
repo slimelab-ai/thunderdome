@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectXboxBrowser, isXboxBrowser, requestBrowserFullscreen } from '../src/platform.js';
-import { announcerSpeechProfile } from '../src/announcer.js';
 
 test('Xbox Edge signatures enable console compatibility mode', () => {
   assert.equal(isXboxBrowser({
@@ -54,12 +53,4 @@ test('fullscreen request is available to controller and pointer entry paths', as
   doc.fullscreenElement = {};
   assert.equal(await requestBrowserFullscreen(doc), false);
   assert.equal(calls.length, 1);
-});
-
-test('Xbox announcer stays near the native voice range', () => {
-  const xbox = announcerSpeechProfile({ userAgent: 'Mozilla/5.0 (Xbox; Xbox One)' });
-  const desktop = announcerSpeechProfile({ userAgent: 'Mozilla/5.0 (Windows NT 10.0)' });
-  assert.ok(xbox.pitch >= 0.9);
-  assert.ok(xbox.rate <= desktop.rate);
-  assert.ok(desktop.pitch > 0.55, 'desktop voice also avoids the old extreme pitch shift');
 });

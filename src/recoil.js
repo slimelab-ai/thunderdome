@@ -42,7 +42,7 @@ export function cosAlpha(a) {
  * patterns in src/weapons.js are written in.
  */
 export const RECOIL_TUNING = {
-  multiplier: 1,
+  multiplier: 1.12,
   recoverySpeed: 5,        // how fast the kick velocity bleeds off
   drawbackThreshold: 1.2,  // deg/s below which the offset starts easing home
   drawbackSpeed: 1,        // degrees per second of drawback, before clamping

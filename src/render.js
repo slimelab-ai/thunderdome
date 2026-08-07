@@ -276,8 +276,14 @@ export class RenderPipeline {
    * Called again once streamed props have arrived, since the first bake happens
    * before they exist.
    */
-  bakeEnvironment(at = new THREE.Vector3(0, 2.6, 0)) {
-    const cubeTarget = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
+  async bakeEnvironment({
+    at = new THREE.Vector3(0, 2.6, 0),
+    size = 128,
+    incremental = false,
+    shadows = true,
+    yieldTurn = async () => {},
+  } = {}) {
+    const cubeTarget = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
     const cubeCam = new THREE.CubeCamera(0.3, 60, cubeTarget);
     cubeCam.position.copy(at);
     this.scene.add(cubeCam);
@@ -286,11 +292,56 @@ export class RenderPipeline {
     const vmVisible = [];
     this.camera.traverse((o) => { if (o !== this.camera) { vmVisible.push([o, o.visible]); o.visible = false; } });
     const prevEnv = this.scene.environment;
-    this.scene.environment = null;
-    cubeCam.update(this.renderer, this.scene);
-    this.scene.environment = prevEnv;
-    for (const [o, v] of vmVisible) o.visible = v;
-    this.scene.remove(cubeCam);
+    const renderFace = (face) => {
+      const renderer = this.renderer;
+      const previousTarget = renderer.getRenderTarget();
+      const previousFace = renderer.getActiveCubeFace();
+      const previousMip = renderer.getActiveMipmapLevel();
+      const previousXr = renderer.xr.enabled;
+      const previousShadows = renderer.shadowMap.enabled;
+      const mipmaps = cubeTarget.texture.generateMipmaps;
+      try {
+        this.scene.environment = null;
+        renderer.xr.enabled = false;
+        renderer.shadowMap.enabled = shadows && previousShadows;
+        cubeTarget.texture.generateMipmaps = face === 5 ? mipmaps : false;
+        renderer.setRenderTarget(cubeTarget, face, 0);
+        renderer.render(this.scene, cubeCam.children[face]);
+      } finally {
+        cubeTarget.texture.generateMipmaps = mipmaps;
+        renderer.setRenderTarget(previousTarget, previousFace, previousMip);
+        renderer.xr.enabled = previousXr;
+        renderer.shadowMap.enabled = previousShadows;
+        this.scene.environment = prevEnv;
+      }
+    };
+
+    try {
+      if (incremental) {
+        cubeCam.updateMatrixWorld();
+        cubeCam.coordinateSystem = this.renderer.coordinateSystem;
+        cubeCam.updateCoordinateSystem();
+        for (let face = 0; face < 6; face++) {
+          renderFace(face);
+          await yieldTurn(`reflection-face-${face + 1}`);
+        }
+        cubeTarget.texture.needsPMREMUpdate = true;
+      } else {
+        const previousShadows = this.renderer.shadowMap.enabled;
+        try {
+          this.scene.environment = null;
+          this.renderer.shadowMap.enabled = shadows && previousShadows;
+          cubeCam.update(this.renderer, this.scene);
+        } finally {
+          this.renderer.shadowMap.enabled = previousShadows;
+          this.scene.environment = prevEnv;
+        }
+      }
+      await yieldTurn('reflection-filter');
+    } finally {
+      for (const [o, v] of vmVisible) o.visible = v;
+      this.scene.remove(cubeCam);
+    }
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     pmrem.compileCubemapShader();
