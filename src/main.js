@@ -32,8 +32,9 @@ import { MenuNavigator } from './ui-nav.js';
 import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
 import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
-import { isXboxBrowser } from './platform.js';
+import { isXboxBrowser, requestBrowserFullscreen } from './platform.js';
 import { showGraphicsStartupFailure } from './graphics-startup.js';
+import { createRuntimeDiagnostics } from './runtime-diagnostics.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -102,6 +103,7 @@ function enterSandbox(weapons = null, { god = true } = {}) {
 const QUALITY_KEY = 'thunderdome-quality';
 const xboxBrowser = isXboxBrowser();
 if (xboxBrowser) document.body.classList.add('xbox-browser');
+const runtimeDiagnostics = createRuntimeDiagnostics();
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.
@@ -133,9 +135,6 @@ try {
   pipeline = new RenderPipeline(scene, camera, {
     quality: loadGraphicsQuality(),
     container: document.getElementById('app'),
-    // Timing queries are optional instrumentation, not part of the image. Keep
-    // them out of the console path while preserving its complete render stack.
-    gpuTiming: !xboxBrowser,
   });
 } catch (error) {
   console.error('[graphics] WebGL startup failed', error);
@@ -147,11 +146,6 @@ const renderer = pipeline.renderer;
 const arena = buildArena(scene);
 pipeline.onShadowMapSize = (size) => arena.setShadowMapSize(size);
 pipeline.onShadowMapSize(pipeline.tier.shadowMap);
-
-// The reflection probe has to run after the arena exists, and again once the
-// streamed prop GLBs have landed — the first bake sees a pit with no props in it.
-requestAnimationFrame(() => pipeline.bakeEnvironment());
-arena.propsReady.then(() => pipeline.bakeEnvironment());
 
 // Fighters and weapons stream in behind the menu, so the first bout never waits.
 const assetsReady = Promise.all([
@@ -170,9 +164,6 @@ assetsReady.catch((err) => {
   el.textContent = `ASSET LOAD FAILED: ${err?.message || err} — see the console.`;
   document.body.appendChild(el);
 });
-// Warm the shader cache while the menu is up.
-assetsReady.then(() => warmShaderCache()).catch(() => { /* assetsReady already reported */ });
-
 /**
  * Compile every program the first match will need, behind the menu.
  *
@@ -230,6 +221,48 @@ async function warmShaderCache() {
     for (const [o, v] of restore) o.visible = v;
     scene.remove(stage);
   }
+}
+
+// Reflection baking and shader compilation are deliberate stalls. On Xbox they
+// used to land during Edge's controller-mode handoff, making the browser appear
+// frozen before its cursor finally arrived. Wait until the gamepad is visible, then
+// split the two jobs across idle turns and never start one during a bout.
+let graphicsPrepScheduled = false;
+let graphicsPrepStage = 'not-scheduled';
+function scheduleBackgroundGraphicsPrep() {
+  if (graphicsPrepScheduled) return;
+  graphicsPrepScheduled = true;
+  graphicsPrepStage = 'waiting-for-assets';
+  const idle = (callback) => {
+    if (window.requestIdleCallback) window.requestIdleCallback(callback, { timeout: 2000 });
+    else setTimeout(callback, 0);
+  };
+  const outsideMatch = (task) => {
+    const attempt = () => {
+      if (phase === 'match' || phase === 'paused') {
+        setTimeout(attempt, 1500);
+        return;
+      }
+      idle(() => {
+        if (phase === 'match' || phase === 'paused') attempt();
+        else task();
+      });
+    };
+    attempt();
+  };
+  assetsReady.then(() => {
+    graphicsPrepStage = 'waiting-for-idle';
+    setTimeout(() => outsideMatch(() => {
+      graphicsPrepStage = 'environment';
+      pipeline.bakeEnvironment();
+      graphicsPrepStage = 'waiting-for-shaders';
+      outsideMatch(async () => {
+        graphicsPrepStage = 'shaders';
+        await warmShaderCache();
+        graphicsPrepStage = 'complete';
+      });
+    }), xboxBrowser ? 1400 : 0);
+  }).catch(() => { /* assetsReady already reported */ });
 }
 
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
@@ -341,7 +374,7 @@ const spectatorCamera = new SpectatorCamera(camera, arena, {
 });
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
-const touchMode = isTouchDevice();
+const touchMode = isTouchDevice({ excluded: xboxBrowser });
 if (touchMode) document.body.classList.add('touch-mode');
 const onCycleSpectator = (dir) => { if (phase === 'match' && match?.spectating) cycleSpectator(dir); };
 const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch(), onCycleSpectator }) : null;
@@ -351,7 +384,10 @@ const input = new InputHub(player, world, camera, {
   onResume: () => resumeFromPause(),
   onCycleSpectator,
   onMenuInput: (action) => menuNavigator.handle(action),
-  onControllerActive: () => menuNavigator.activate(),
+  onControllerActive: () => {
+    menuNavigator.activate();
+    scheduleBackgroundGraphicsPrep();
+  },
 });
 new TouchSettingsPanel(touch, input);
 const controllerSettingsPanel = new ControllerSettingsPanel(input);
@@ -514,6 +550,7 @@ const DEATH_LINES = [
 
 // ============================================================ match state
 let phase = 'menu'; // menu | settings | intro | match | shop | dead | champion
+if (!xboxBrowser) scheduleBackgroundGraphicsPrep();
 let settingsReturnPhase = 'menu';
 let locked = false;
 let match = null;
@@ -799,6 +836,9 @@ function startMatch() {
     openShop();
     return;
   }
+  // Request fullscreen while the trusted FIGHT click still owns browser activation;
+  // the rest of match setup is intentionally substantial.
+  enterCombatMode();
   clearCombatants();
   installWorldHooks();
   match = makeMatch();
@@ -972,7 +1012,6 @@ function startMatch() {
   phase = 'match';
   ui.hideSpectator();
   ui.showHUDOnly();
-  enterCombatMode();
 }
 
 // ============================================================ kills / damage
@@ -2370,13 +2409,15 @@ document.addEventListener('visibilitychange', () => {
 
 // fullscreen + keyboard lock: inside fullscreen, Keyboard Lock captures even Ctrl+W / Esc-adjacent combos
 async function enterCombatMode() {
-  // Controller players do not need any of these mouse/keyboard capture APIs. On
-  // Xbox Edge, requesting them can reopen the browser's own controller-mode popup
-  // and take focus straight back from the game after Start was pressed.
+  // Fullscreen benefits every input mode. Controller players only skip the
+  // keyboard and pointer capture calls that can reopen Edge's controller popup.
+  const fullscreen = await requestBrowserFullscreen();
+  runtimeDiagnostics?.emit('game_fullscreen_result', {
+    entered: fullscreen,
+    already_fullscreen: !!document.fullscreenElement,
+    controller_connected: input.gamepadConnected,
+  });
   if (touchMode || input.gamepadConnected) return;
-  try {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-  } catch { /* user denied or unsupported — playable regardless */ }
   try {
     if (navigator.keyboard?.lock) await navigator.keyboard.lock([...GAME_KEYS]);
   } catch { /* unsupported — fine */ }
@@ -2483,6 +2524,13 @@ if (saved) {
 market = createMarket(career.mode, career.liquidation?.market);
 matchLifecycle.recoverIncomplete();
 ui.showScreen('menu');
+runtimeDiagnostics?.emit('game_runtime_started', {
+  build: import.meta.env?.VITE_BUILD_SHA || 'dev',
+  xbox_browser: xboxBrowser,
+  touch_mode: touchMode,
+  viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+  quality: pipeline.quality,
+});
 
 // idle backdrop camera for menu
 camera.position.set(0, 8, 20);
@@ -3355,8 +3403,30 @@ window.__game = {
 function tick() {
   requestAnimationFrame(tick);
   window.__frames = (window.__frames || 0) + 1;
-  const dt = Math.min(0.05, clock.getDelta());
+  const rawDt = clock.getDelta();
+  const dt = Math.min(0.05, rawDt);
   const t = clock.elapsedTime;
+
+  if (rawDt >= 0.12 && t - (tick.lastHitchAt || -99) >= 1.5) {
+    tick.lastHitchAt = t;
+    const now = performance.now();
+    runtimeDiagnostics?.emit('game_frame_hitch', {
+      duration_ms: Math.round(rawDt * 1000),
+      phase,
+      match_time: match ? +match.time.toFixed(2) : null,
+      controller_connected: input.gamepadConnected,
+      graphics_prep: graphicsPrepStage,
+      speech: {
+        speaking: announcer._speaking,
+        disabled: announcer._speechDisabled,
+        last_call_ms: Math.round(announcer._lastSpeakCallMs || 0),
+        last_call_age_ms: announcer._lastSpeakCallAt
+          ? Math.round(now - announcer._lastSpeakCallAt)
+          : null,
+      },
+      render: pipeline.stats(),
+    });
+  }
 
   updateArenaAmbience(arena, t);
   fx.update(dt);

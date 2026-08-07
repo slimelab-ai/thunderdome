@@ -212,7 +212,11 @@ export class Announcer {
     this._voice = null;
     this._speaking = false;   // event-tracked; never read from the speechSynthesis getter
     this._speechProfile = announcerSpeechProfile();
-    this._resolveVoice();
+    this._protectMainThread = isXboxBrowser();
+    this._speechDisabled = false;
+    // Xbox's default voice sounded correct in the device probe. Avoid a synchronous
+    // getVoices IPC during the already-sensitive controller-mode handoff.
+    if (!this._protectMainThread) this._resolveVoice();
   }
 
   /**
@@ -297,16 +301,13 @@ export class Announcer {
   _speak(text, force) {
     try {
       if (!window.speechSynthesis) return;
+      if (this._speechDisabled) return;
       // never interrupt himself mid-sentence for color commentary
       if (this._speaking) {
         if (!force) return;
-        speechSynthesis.cancel();
-        this._speaking = false;
-        // cancel-then-speak in one task is a long-standing Chrome stall (and on
-        // some engines the new utterance is silently dropped); give the engine a
-        // beat to actually stop before handing it the next line.
-        const gen = this._gen || 0;
-        setTimeout(() => { if ((this._gen || 0) === gen) this._utter(text); }, 40);
+        // Chromium's cancel/speak collision is the announcer-correlated main-thread
+        // hang. Keep only the newest important line and start it after this one.
+        this._pendingSpeech = { text, gen: this._gen || 0 };
         return;
       }
       this._utter(text);
@@ -325,14 +326,28 @@ export class Announcer {
       // The token keeps a stale fallback timer from freeing the mic under a NEWER
       // utterance that started after this one finished.
       const token = (this._utterToken = (this._utterToken || 0) + 1);
-      const done = () => { if (this._utterToken === token) this._speaking = false; };
+      const done = () => {
+        if (this._utterToken !== token) return;
+        this._speaking = false;
+        const pending = this._pendingSpeech;
+        this._pendingSpeech = null;
+        if (!this._speechDisabled && pending && pending.gen === (this._gen || 0)) {
+          setTimeout(() => this._utter(pending.text), 0);
+        }
+      };
       u.onend = done;
       u.onerror = done;
       // Chrome has lost `end` events for years; without a fallback one dropped event
       // would mute him for the rest of the session. Generous estimate of the line's
       // duration at rate 1.2, then assume the mic is free.
       setTimeout(done, 1500 + plain.length * 70);
+      const started = performance.now();
       speechSynthesis.speak(u);
+      this._lastSpeakCallMs = performance.now() - started;
+      this._lastSpeakCallAt = started;
+      // One slow browser speech IPC is enough evidence. Preserve subtitles but
+      // stop repeatedly freezing an Xbox match for subsequent voice lines.
+      if (this._protectMainThread && this._lastSpeakCallMs > 50) this._speechDisabled = true;
       this._spokeCount = (this._spokeCount || 0) + 1;
     } catch { /* no voice, no problem */ }
   }
@@ -340,9 +355,14 @@ export class Announcer {
   clear() {
     this._gen = (this._gen || 0) + 1;   // invalidates any deferred _speak in flight
     this.queue.length = 0;
+    this._pendingSpeech = null;
     this.showing = 0;
-    this._speaking = false;
     this.wrap.classList.remove('show');
-    try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
+    // On Xbox, cancel itself can block on the speech process. Let an in-flight line
+    // finish; generation guards prevent queued speech from following it.
+    if (!this._protectMainThread) {
+      try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
+      this._speaking = false;
+    }
   }
 }

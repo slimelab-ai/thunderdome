@@ -144,6 +144,7 @@ export class MenuNavigator {
   }
 
   activate() {
+    if (this.doc.body.classList.contains('controller-mode')) return;
     this.doc.body.classList.add('controller-mode');
     this._updateHint();
   }

@@ -27,6 +27,27 @@ test('directional UI navigation reports no candidate beyond an edge', () => {
   assert.equal(directionalCandidate([], -1, 'down'), -1);
 });
 
+test('controller activation only performs the expensive menu handoff once', () => {
+  const classes = new Set();
+  const navigator = Object.create(MenuNavigator.prototype);
+  navigator.doc = {
+    body: {
+      classList: {
+        contains: name => classes.has(name),
+        add: name => classes.add(name),
+      },
+    },
+  };
+  let hintUpdates = 0;
+  navigator._updateHint = () => hintUpdates++;
+
+  navigator.activate();
+  navigator.activate();
+
+  assert.equal(hintUpdates, 1);
+  assert.equal(classes.has('controller-mode'), true);
+});
+
 test('analog cursor magnetism captures nearby controls without ordering them', () => {
   const controls = [
     rect(100, 100, 60, 60),

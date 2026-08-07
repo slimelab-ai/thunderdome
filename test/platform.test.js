@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectXboxBrowser, isXboxBrowser } from '../src/platform.js';
+import { detectXboxBrowser, isXboxBrowser, requestBrowserFullscreen } from '../src/platform.js';
 import { announcerSpeechProfile } from '../src/announcer.js';
 
 test('Xbox Edge signatures enable console compatibility mode', () => {
@@ -41,6 +41,19 @@ test('denied client hints leave ordinary desktop Edge unchanged', async () => {
     userAgentData: { async getHighEntropyValues() { throw new Error('denied'); } },
   };
   assert.equal(await detectXboxBrowser(nav), false);
+});
+
+test('fullscreen request is available to controller and pointer entry paths', async () => {
+  const calls = [];
+  const doc = {
+    fullscreenElement: null,
+    documentElement: { async requestFullscreen(options) { calls.push(options); } },
+  };
+  assert.equal(await requestBrowserFullscreen(doc), true);
+  assert.deepEqual(calls, [{ navigationUI: 'hide' }]);
+  doc.fullscreenElement = {};
+  assert.equal(await requestBrowserFullscreen(doc), false);
+  assert.equal(calls.length, 1);
 });
 
 test('Xbox announcer stays near the native voice range', () => {

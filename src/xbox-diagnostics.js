@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { GradeShader } from './render.js';
+import { DIAGNOSTIC_SESSION_STORAGE_KEY } from './diagnostic-session.js';
 
 const $ = id => document.getElementById(id);
 const codeEl = $('session-code');
@@ -21,7 +22,7 @@ const stage = $('probe-stage');
 const results = $('probe-results');
 const rerun = $('rerun-graphics');
 const CURRENT_BUILD = document.querySelector('meta[name="diagnostics-build"]')?.content || 'dev';
-const SESSION_STORAGE_KEY = 'thunderdome-xbox-diagnostics-session-v1';
+const SESSION_STORAGE_KEY = DIAGNOSTIC_SESSION_STORAGE_KEY;
 
 let session = null;
 let sequence = 0;

@@ -201,8 +201,13 @@ export class Player {
   // analog look from controller stick / touch drag — deltas already in radians
   addLook(dYaw, dPitch) {
     if (!this.alive) return;
-    this.yaw += dYaw;
-    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + dPitch));
+    // Recoil.applyLook uses screen-space degrees: +x turns right while player yaw
+    // decreases to turn right, and +y pitches up. Convert the requested analog
+    // camera delta into that same convention so mouse, touch and gamepad all spend
+    // opposing input against recoil before moving the underlying aim.
+    const look = this.recoil.applyLook(-dYaw * RAD2DEG, dPitch * RAD2DEG);
+    this.yaw -= look.x * DEG2RAD;
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch + look.y * DEG2RAD));
   }
 
   onMouseDown(btn) {

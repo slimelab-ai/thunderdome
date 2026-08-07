@@ -1204,7 +1204,15 @@ body.touch-mode .spec-hint-touch { display: inline; }
   .executed-pre { letter-spacing: 3px; }
 }
 
-@media (max-width: 1050px) and (orientation: landscape) {
+@media (max-width: 1200px) and (orientation: landscape) {
+  .menu-inner { width: min(100%, 920px); padding: 10px 14px; }
+  .game-title { font-size: clamp(52px, 8vw, 72px); line-height: 0.92; }
+  .menu-pretitle { margin-bottom: 4px; }
+  .menu-tagline { margin: 8px 0 14px; }
+  .menu-buttons { gap: 8px; margin-bottom: 10px; }
+  .menu-buttons .btn { padding: 9px 15px; }
+  .xbox-controller-help { margin: 0 auto 10px; padding: 7px 11px; }
+  .menu-controls { font-size: 10px; line-height: 1.55; }
   #screen-shop { padding: 0; }
   .shop-inner { height: 100dvh; padding: 7px 10px; overflow: hidden; }
   .shop-header {

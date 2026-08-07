@@ -31,3 +31,13 @@ export async function detectXboxBrowser(nav = globalThis.navigator, loc = global
   }
   return false;
 }
+
+export async function requestBrowserFullscreen(doc = globalThis.document) {
+  if (doc?.fullscreenElement || !doc?.documentElement?.requestFullscreen) return false;
+  try {
+    await doc.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    return true;
+  } catch {
+    return false;
+  }
+}

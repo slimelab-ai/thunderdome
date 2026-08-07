@@ -193,7 +193,7 @@ test('looking with the right stick turns the view and aim assist slows it near a
     `friction should slow the turn: ${assisted.player.yaw} vs ${clean.player.yaw}`);
 });
 
-test('controller look settings govern turn speed and keep default magnetism subtle', () => {
+test('controller look settings govern turn speed and keep default magnetism controlled', () => {
   const { hub, player } = makeHub();
   const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
   hub._pad = () => ({ connected: true, mapping: 'standard', axes: [0, 0, 1, 0], buttons });
@@ -203,11 +203,25 @@ test('controller look settings govern turn speed and keep default magnetism subt
 
   const centered = { ang: 0 };
   const friction = hub._friction(centered, AIM_ASSIST.gamepad, hub.controllerSettings.aimAssist);
-  assert.ok(friction > 0.9, `default slowdown should be mild, got ${friction}`);
+  assert.ok(friction < 0.9 && friction > 0.8,
+    `default slowdown should be perceptible but controlled, got ${friction}`);
 
   const before = player.yaw;
   hub._applyPull({ point: new THREE.Vector3(1, 1.62, -12) }, AIM_ASSIST.gamepad, 1 / 60, 0);
   assert.equal(player.yaw, before, 'zero magnetism must not rotate the player');
+});
+
+test('aim pull corrects the visible recoil offset instead of shifting base aim below it', () => {
+  const { hub, player, camera } = makeHub();
+  camera.rotation.x = 0.1;
+  camera.updateMatrixWorld();
+  const inputs = [];
+  player.addLook = (dYaw, dPitch) => inputs.push({ dYaw, dPitch });
+
+  hub._applyPull({ point: new THREE.Vector3(0, 1.62, -12) }, AIM_ASSIST.gamepad, 1 / 60, 1);
+
+  assert.equal(inputs.length, 1);
+  assert.ok(inputs[0].dPitch < 0, 'a recoil-raised camera should receive downward correction');
 });
 
 test('aim magnetism never steers an idle crosshair just because fire or ADS is held', () => {

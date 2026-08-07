@@ -24,7 +24,7 @@ export const AIM_ASSIST = {
   // rotation: fraction of the remaining angular error closed per second.
   // Gamepad deliberately stays Halo-like: a narrow, mild slowdown with only
   // enough rotational pull to soften micro-corrections, never steer the aim.
-  gamepad: { friction: 0.78, rotation: 1.0, slowCone: 0.105, pullCone: 0.04 },
+  gamepad: { friction: 0.55, rotation: 4.0, slowCone: 0.16, pullCone: 0.09 },
   // Touch gets a slightly wider slowdown window, but no longer receives the
   // strong magnetic pull that used to steer fights for the player.
   touch: { friction: 0.7, rotation: 2.2, slowCone: 0.115, pullCone: 0.038 },
@@ -372,15 +372,19 @@ export class InputHub {
 
   _applyPull(target, cfg, dt, strength = 1) {
     const p = this.player;
-    const cam = this.camera.position;
+    const camera = this.camera;
+    const cam = camera.position;
     const dx = target.point.x - cam.x;
     const dy = target.point.y - cam.y;
     const dz = target.point.z - cam.z;
     const wantYaw = Math.atan2(-dx, -dz);          // yaw 0 faces -Z
     const wantPitch = Math.atan2(dy, Math.hypot(dx, dz));
-    let dYaw = wantYaw - p.yaw;
+    // Compare with the visible camera, not the recoil-free base aim. Otherwise a
+    // climbing weapon makes the assist pull base pitch down and recovery later
+    // carries the crosshair below the target.
+    let dYaw = wantYaw - camera.rotation.y;
     dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
-    const dPitch = wantPitch - p.pitch;
+    const dPitch = wantPitch - camera.rotation.x;
     const k = Math.min(1, cfg.rotation * strength * dt);
     const cap = AIM_ASSIST.pullMaxRate * strength * dt;
     const clamp = (v) => Math.max(-cap, Math.min(cap, v));
