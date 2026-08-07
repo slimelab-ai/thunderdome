@@ -142,6 +142,10 @@ function setupFiringRange() {
   player.hideKnifeSlot = true;
   player.magBySlot = player.slots.map(id => WEAPONS[id].mag);
   player.mag = WEAPONS[player.slots[0]].mag;
+  // A weapon handed over loaded has a round up as well as a full magazine. Setting the
+  // magazine without the chamber leaves the gun unable to fire until it is racked.
+  player.chamberBySlot = player.slots.map(() => true);
+  player.chambered = true;
   player._mountViewmodel();
   sandbox.hits = 0; sandbox.headshots = 0; sandbox.damage = 0;
   [
@@ -1867,6 +1871,7 @@ function updateEvents(dt) {
         player.hp = player.maxHp;
         player.healLimbs();
         player.mag = player.weapon.mag;
+        player.chambered = true;
         const amt = payout(250);
         if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); }
         ui.eventBanner('PACKAGE CLAIMED', 'Full patch-up. Back to work.', '#86ff3c');
@@ -3624,6 +3629,14 @@ window.__game = {
   get pipeline() { return pipeline; },
   THREE,                                  // capture/diagnostic poses need constructors
   FighterRig,                             // tools/fightercheck.mjs drives a rig alone
+  /**
+   * Open the combat asset gate and resolve once the streamed assets are in.
+   *
+   * `assetsReady` alone is a trap for tooling: it sits behind the gate, so awaiting it
+   * before starting anything waits forever. A bench that measures a model rather than a
+   * match has no reason to run a bout just to open the door, so here is the door.
+   */
+  loadCombatAssets() { beginCombatAssetLoading(); return assetsReady; },
   buildHeldGun, SUPPORT_GRIP,             // ...and puts a real weapon in its fist
   items: { makeItem, autoPlace },         // capture poses stock a pack to test reloads
   assetsReady,                            // tools/shot.mjs waits on this before posing

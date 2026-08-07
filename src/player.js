@@ -399,8 +399,12 @@ export class Player {
    */
   _loadChamber() {
     if (this.chambered) return;
-    if (this.infiniteAmmo) { this.chambered = true; return; }
     if (this.mag <= 0) return;
+    // Always out of the magazine, including on the firing range. `infiniteAmmo` means
+    // the *pack* never runs out, so reloading costs nothing — it does not mean the
+    // magazine never empties. Short-circuiting here left the range with a magazine
+    // that never moved, which hid the entire mechanic in the one place built for
+    // trying weapons out.
     this.mag--;
     this.chambered = true;
   }

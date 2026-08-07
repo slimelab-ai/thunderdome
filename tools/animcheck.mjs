@@ -61,7 +61,14 @@ const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('!!window.__game', { timeout: 30000 });
-await page.evaluate('window.__game.assetsReady');
+// Deliberately *not* `await window.__game.assetsReady` here.
+//
+// Combat assets now sit behind a gate that only opens when a match is actually
+// started (`beginCombatAssetLoading`, wired into `buildArena` as `loadGate`), so
+// `arena.propsReady` — and therefore `assetsReady` — stays pending forever on the
+// menu. Every bench used to wait on it before starting anything, and after that
+// change they all hung until puppeteer's protocol timeout killed them with a stack
+// trace that said nothing about loading. Start the match, then wait for the phase.
 
 const report = await page.evaluate(async (opts) => {
   const g = window.__game;
@@ -77,7 +84,16 @@ const report = await page.evaluate(async (opts) => {
   // Every measurement then comes back zero and the bench reports a static scene as a
   // catalogue of faults. The guard below is the part that matters: it makes that a
   // failure rather than a report.
-  await g.fight('circuits', 8);
+  g.fight('circuits', 8);
+  // Wait for the match rather than awaiting the call. `startMatch` parks in a
+  // `loading` phase until the fighter model and the graphics prep land, and on a busy
+  // machine that promise can outlive the harness's protocol timeout — the bench then
+  // dies with a puppeteer stack trace and no clue that it was simply still loading.
+  // sightcheck carries the same wait for the same reason.
+  for (let i = 0; i < 900 && g.phase !== 'match'; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (g.phase !== 'match') throw new Error(`match never started (phase: ${g.phase})`);
   g.step(1 / 60, 20);
   {
     let ran = 0;
