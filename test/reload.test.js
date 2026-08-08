@@ -7,7 +7,9 @@
 // player's update.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WEAPONS, planReload, cycleTime, CHAMBER_LEAD } from '../src/weapons.js';
+import {
+  WEAPONS, planReload, cycleTime, CHAMBER_LEAD, rackTime, magDropAt, MAG_OUT_AT, MAG_IN_AT,
+} from '../src/weapons.js';
 
 const rifle = WEAPONS.rifle;
 
@@ -32,11 +34,16 @@ test('reloading with a dead chamber fills the magazine and nothing more', () => 
 });
 
 test('an empty gun takes longer, because the bolt has to go home too', () => {
-  const dry = planReload(rifle, 0, 999).duration;
-  const tactical = planReload(rifle, 5, 999).duration;
-  assert.ok(dry > tactical, `dry ${dry} should exceed tactical ${tactical}`);
-  assert.equal(tactical, rifle.reload);
-  assert.equal(dry, rifle.reloadEmpty);
+  const dry = planReload(rifle, 0, 999);
+  const tactical = planReload(rifle, 5, 999);
+  assert.ok(dry.time > tactical.time, `dry ${dry.time} should exceed tactical ${tactical.time}`);
+  assert.equal(tactical.time, rifle.reload);
+  assert.equal(dry.time, rifle.reloadEmpty);
+  // The magazine change itself costs the same either way. The difference is entirely the
+  // rack, which is a separate stage — that is what lets a shot fired mid-swap add one.
+  assert.equal(dry.duration, tactical.duration);
+  assert.equal(tactical.rack, 0);
+  assert.equal(dry.rack, rackTime(rifle));
 });
 
 test('reloading early is strictly better: more rounds, less time', () => {
@@ -45,7 +52,7 @@ test('reloading early is strictly better: more rounds, less time', () => {
   const early = planReload(rifle, 1, 999, true);
   const late = planReload(rifle, 0, 999, false);
   assert.ok(early.total > late.total, 'topping up should end with more rounds');
-  assert.ok(early.duration < late.duration, 'topping up should be quicker');
+  assert.ok(early.time < late.time, 'topping up should be quicker');
 });
 
 test('the reserve short-changes both paths, and never goes negative', () => {
@@ -64,7 +71,7 @@ test('a full magazine asks for nothing', () => {
 
 test('the progression multiplier scales the duration, not the round count', () => {
   const fast = planReload(rifle, 5, 999, true, 0.5);
-  assert.equal(fast.duration, rifle.reload * 0.5);
+  assert.equal(fast.time, rifle.reload * 0.5);
   assert.equal(fast.mag, planReload(rifle, 5, 999, true, 1).mag);
 });
 
@@ -111,22 +118,48 @@ test('the swap spread is wide enough to be a decision', () => {
   assert.ok(hi <= 1.6, `a ${hi.toFixed(2)} s swap is a punishment, not a cost`);
 });
 
-test('every magazine weapon can rack, and the window sits late in the reload', () => {
+test('every magazine weapon has a rack worth watching', () => {
+  // The stroke is the difference between the two reload times, so a weapon whose
+  // `reloadEmpty` is not meaningfully longer than its `reload` racks in no time and the
+  // player never sees the charging handle move.
   for (const w of Object.values(WEAPONS)) {
     if (w.melee || !w.mag || w.shellReload) continue;   // pump guns cycle their pump
-    assert.ok(Array.isArray(w.emptyRack), `${w.id}: no emptyRack window`);
-    const [a, b] = w.emptyRack;
-    assert.ok(a > 0.5 && b <= 1, `${w.id}: rack at ${a}–${b} is not late in the reload`);
-    assert.ok(b > a, `${w.id}: rack window is inverted`);
+    const rack = rackTime(w);
+    assert.ok(rack >= 0.3, `${w.id}: a ${rack.toFixed(2)} s rack is over before it reads`);
+    assert.ok(rack <= 0.9, `${w.id}: a ${rack.toFixed(2)} s rack is a punishment`);
+    assert.ok(rack < w.reload, `${w.id}: the rack outlasts the magazine change`);
   }
 });
 
-test('the pump gun reloads shell by shell and has no magazine rack', () => {
+test('the pump gun reloads shell by shell and has no rack', () => {
   // Its cycling part is the pump, worked once at the end and only from empty — there
-  // is no slide to release, so a rack window would animate nothing.
+  // is no slide to release, so a rack stage would animate nothing.
   assert.ok(WEAPONS.shotgun.shellReload > 0);
-  assert.equal(WEAPONS.shotgun.emptyRack, undefined);
+  assert.equal(rackTime(WEAPONS.shotgun), 0);
   assert.ok(WEAPONS.shotgun.pump > 0);
+});
+
+// ---- the magazine out of the well ----
+
+test('the magazine is out of the weapon over the middle of a magazine change', () => {
+  assert.ok(MAG_OUT_AT > 0 && MAG_OUT_AT < MAG_IN_AT && MAG_IN_AT < 1);
+  // Long enough to be a window the player can be caught in, rather than a frame.
+  assert.ok(MAG_IN_AT - MAG_OUT_AT >= 0.25, 'the magazine-out window is too short to matter');
+});
+
+test('the magazine is visibly clear of the well for the whole window it is out', () => {
+  // The drive and the rule share these thresholds so they cannot drift: a magazine on
+  // screen the gun will not feed from, or one gone that it will, is the same bug.
+  assert.equal(magDropAt(0), 0);
+  assert.equal(magDropAt(MAG_OUT_AT), 1, 'still in the well when the rules say it is out');
+  assert.equal(magDropAt((MAG_OUT_AT + MAG_IN_AT) / 2), 1);
+  assert.equal(magDropAt(MAG_IN_AT), 0, 'still out when the rules say it is seated');
+  assert.equal(magDropAt(1), 0);
+});
+
+test('the magazine travels rather than teleporting out of the well', () => {
+  const before = magDropAt(MAG_OUT_AT - 0.06);
+  assert.ok(before > 0 && before < 1, `mid-travel should be partial, got ${before}`);
 });
 
 // ---- the chamber cycle ----

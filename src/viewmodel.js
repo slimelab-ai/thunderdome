@@ -59,9 +59,13 @@ const SUPPORT_TARGET = {
     mag: [0.012, -0.130, 0.060],     // magazine well, below the grip
     rack: [0, 0.055, 0.040],         // over the top of the slide, at its rear
   },
-  smg: { mag: [0, -0.070, -0.055] },
-  rifle: { mag: [0, -0.078, -0.02] },
-  dmr: { mag: [0, -0.075, -0.01] },
+  // `rack` is the charging handle itself, taken from where `tools/blender/weapons.py`
+  // puts the `bolt` mesh on each weapon rather than guessed at: the hand goes to the
+  // handle, and then travels with it. Without these three entries the magazine guns
+  // racked with no hand anywhere near the handle — the bolt flew back on its own.
+  smg: { mag: [0, -0.070, -0.055], rack: [0.030, 0.100, 0.052] },
+  rifle: { mag: [0, -0.078, -0.02], rack: [0.028, 0.100, 0.058] },
+  dmr: { mag: [0, -0.075, -0.01], rack: [0.029, 0.100, 0.058] },
   shotgun: { port: [0, -0.012, -0.02] },   // loading port, under the receiver
 };
 for (const [id, grip] of Object.entries(SUPPORT_GRIP)) {
@@ -70,11 +74,13 @@ for (const [id, grip] of Object.entries(SUPPORT_GRIP)) {
 
 /** Phase windows within a reload clip, as fractions of its duration. */
 const RELOAD_PHASES = {
+  // No rack phase in here any more. The slide being worked is its own stage now, played
+  // only when the chamber is actually dead, so a pistol reloaded with a round still up
+  // no longer sends the hand over the top to mime one.
   reload_pistol: [
     { until: 0.30, target: 'mag' },   // hand to the magazine well
     { until: 0.42, target: 'away' },  // out of frame for a fresh magazine
-    { until: 0.60, target: 'mag' },   // seat it
-    { until: 0.90, target: 'rack' },  // over the top, work the slide
+    { until: 0.66, target: 'mag' },   // seat it
   ],
   reload_shell: [
     { until: 0.32, target: 'away' },  // down to the belt for a shell
@@ -237,6 +243,7 @@ export class ViewModel {
     this.idle.play();
     this.current = null;         // the full-body clip currently overriding idle
     this.idleWeight = 1;
+    this.rackK = 0;              // 0..1 stroke of the rack, driven by the player
     this.pinWeight = 1;
     // Weights are driven every frame rather than crossfaded. Two normal-blend actions
     // touching the same bones at weight 1 blend 50/50, so an override clip has to
@@ -295,13 +302,17 @@ export class ViewModel {
    * Reload times vary per weapon (1.25 s to 2.4 s); the clip is authored once and
    * time-scaled to fit, so the mag seats when the weapon says it does.
    */
-  play(name, seconds = null) {
+  play(name, seconds = null, at = 0) {
     if (!this.ready) return;
     const action = this.actions.get(name);
     if (!action) return;
     const prev = this.current;
     action.reset();
     action.timeScale = seconds ? action.getClip().duration / seconds : 1;
+    // Start part way in. A reload broken off half done and picked back up has to carry
+    // on from where the hands were, not replay the magazine coming out of a well it is
+    // already out of.
+    if (at > 0) action.time = action.getClip().duration * Math.min(1, at);
     action.setEffectiveWeight(1);
     action.play();
     // Blend, do not cut. Stopping the old clip and starting the new one on the same
@@ -333,7 +344,16 @@ export class ViewModel {
   }
 
   /** Reload, using whichever clip this weapon's action calls for. */
-  reload(seconds) { this.play(this.reloadClip || 'reload', seconds); }
+  reload(seconds, at = 0) { this.play(this.reloadClip || 'reload', seconds, at); }
+
+  /**
+   * Freeze the clip in hand where it is.
+   *
+   * An interrupted reload has to *stop*, not run on silently to a completion the rules
+   * are no longer going to grant. Whatever plays next crossfades away from the frozen
+   * pose; `play` resets the action it starts, so nothing stays paused by accident.
+   */
+  pauseClip() { if (this.current) this.current.paused = true; }
   melee(seconds) { this.play('melee', seconds); }
   /** One shell into the tube; called once per round on a shell-loaded weapon. */
   loadShell(seconds) { this.play('reload_shell', seconds); }
@@ -364,7 +384,12 @@ export class ViewModel {
     let key = 'carry';
     const clipName = this.current?.getClip().name;
     const phases = clipName && RELOAD_PHASES[clipName];
-    if (phases) {
+    // The rack is a stage the player drives, not a window inside a clip, so it wins over
+    // whatever the body animation happens to be doing — which by then is the tail of the
+    // reload, held on its last frame.
+    if (this.rackK > 0) {
+      key = 'rack';
+    } else if (phases) {
       const clip = this.current.getClip();
       const t = clip.duration > 0 ? this.current.time / clip.duration : 0;
       for (const phase of phases) {
@@ -386,8 +411,12 @@ export class ViewModel {
       // Targets on a moving part track that part, so the hand travels *with* the
       // mechanism rather than watching it slide out from under itself.
       _ikTarget.z = this.parts.pump.position.z + PUMP_GRIP_Z;
-    } else if (key === 'rack' && this.parts?.slide) {
-      _ikTarget.z = local[2] + (this.parts.slide.position.z - this.parts.slide.userData.restZ);
+    } else if (key === 'rack') {
+      // Travel with the part being worked, whichever this weapon has: a pistol's slide
+      // or a magazine gun's charging handle. A hand that stays put while the handle goes
+      // back is a hand that is not racking anything.
+      const part = this.parts?.slide || this.parts?.bolt;
+      if (part) _ikTarget.z = local[2] + (part.position.z - part.userData.restZ);
     }
 
     // Smoothing happens in the *weapon's* space, not the world's.

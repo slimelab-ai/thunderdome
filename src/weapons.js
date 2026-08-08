@@ -26,11 +26,12 @@ import { bindAuthoredMaterials } from './materials.js';
 // a target while a rifle is still coming up is what a sidearm is *for*, and it is the
 // only reason to keep one once you can afford something better.
 //
-// **`emptyRack`** is when the bolt, slide or charging handle is worked during a
-// reload, as a fraction of that reload's duration — and it happens only on a reload
-// that began with an empty chamber, because that is the only time there is anything to
-// chamber. A gun reloaded with a round still up does not need racking; one reloaded
-// dry cannot fire without it. It is the visible half of the chambered-round rule.
+// **The rack** is the difference between the two reload times. `reload` buys the
+// magazine change and nothing else; a weapon whose chamber is dead when the fresh
+// magazine seats then works its bolt, slide or charging handle, and that tail is
+// `reloadEmpty - reload` (see `rackTime`). It is its own stage rather than a window
+// inside the reload because whether it is needed is not known when the reload starts:
+// fire the chambered round mid-magazine-change and a tactical reload grows a rack.
 //
 // `suppression` is how hard a round from this weapon pins the people it is fired at,
 // relative to the rifle. Not a damage number — a *threat* number, which is why the
@@ -58,12 +59,6 @@ export const WEAPONS = {
     dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25, reloadEmpty: 1.70, draw: 0.30, holster: 0.22, raise: 0.16,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
-    // When the slide is worked during the reload, as a fraction of the reload's
-    // duration. Matches the frames in `anim_reload_pistol` where the support hand is
-    // over the top of the weapon — without this the hand mimes a rack the slide never
-    // performs, which is what made the reload read as a rifle's.
-    // The slide, released off its lock. Late in the reload, and only when dry.
-    emptyRack: [0.66, 0.86],
     // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
@@ -83,7 +78,6 @@ export const WEAPONS = {
     aiRange: 13, adsFov: 62, sound: 'smg',
     // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
     // rather than climbing straight — this is a weapon you walk onto a target.
-    emptyRack: [0.70, 0.90],
     recoilPattern: [
       [0, 1], [0.05, 1], [0.12, 0.95], [0.2, 0.85], [0.28, 0.7], [0.3, 0.55],
       [0.22, 0.45], [0.05, 0.4], [-0.18, 0.4], [-0.35, 0.35], [-0.45, 0.3],
@@ -119,7 +113,6 @@ export const WEAPONS = {
     aiRange: 20, adsFov: 55, sound: 'rifle',
     // The one worth learning. Six rounds nearly straight up, then a hard break right
     // and a slower drift back across — hold the trigger and you spell out the shape.
-    emptyRack: [0.72, 0.92],
     recoilPattern: [
       [0, 1], [0.02, 1], [0.06, 0.98], [0.1, 0.92], [0.16, 0.84], [0.22, 0.72],
       [0.32, 0.56], [0.42, 0.44], [0.48, 0.34], [0.46, 0.28], [0.34, 0.24],
@@ -139,7 +132,6 @@ export const WEAPONS = {
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
     // A single hard punch straight up. You lose the sight picture and get it back.
-    emptyRack: [0.70, 0.90],
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
     recoilVelocity: 19.55, recoilRandom: 1.0, recoilCooldown: 0.8,
     recoilImpulse: 0.048, viewKick: 0.86,
@@ -493,11 +485,58 @@ export function planReload(w, mag, reserve, chambered = mag > 0, mult = 1) {
     taken,
     mag: mag + taken,
     total: mag + taken + (chambered ? 1 : 0),
-    // A gun with a round still up needs only the magazine changed. One with a dead
-    // chamber needs the bolt sent home too: the longer animation, and the only time the
-    // rack is played.
-    duration: (chambered ? w.reload : (w.reloadEmpty ?? w.reload)) * mult,
+    // The magazine change alone. Every reload pays this and only this — the rack is a
+    // separate stage that follows, because whether it is needed depends on the state of
+    // the chamber when the fresh magazine seats, not on the state it was in when the
+    // player pressed the button. Firing the chambered round during the swap grows a
+    // rack onto a reload that started tactical.
+    duration: (w.reload ?? 0) * mult,
+    rack: chambered ? 0 : rackTime(w) * mult,
+    // What the whole thing costs if nothing interrupts it, which is the number the
+    // handling model is balanced on: `reload` with a round up, `reloadEmpty` without.
+    time: ((chambered ? w.reload : (w.reloadEmpty ?? w.reload)) ?? 0) * mult,
   };
+}
+
+/**
+ * The rack: bolt, slide or charging handle worked once, in seconds.
+ *
+ * Derived rather than authored, so there is one number per weapon to balance instead of
+ * two that can disagree. An empty reload costs `reloadEmpty`; the magazine change inside
+ * it costs `reload`; the difference is the stroke, and it is what the player watches.
+ */
+export function rackTime(w) {
+  return Math.max(0, (w.reloadEmpty ?? w.reload ?? 0) - (w.reload ?? 0));
+}
+
+/**
+ * Where the magazine leaves the well and where the fresh one seats, as fractions of a
+ * magazine change.
+ *
+ * These are read off the authored reload clip — `anim_reload` drops the magazine at
+ * 0.30 and has the new one seated by 0.66 — so the rules and the animation agree by
+ * construction. Between them the weapon has no magazine in it: the chambered round is
+ * all there is, the action cannot feed, and a shot taken there is a shot taken on the
+ * last round in the gun.
+ */
+export const MAG_OUT_AT = 0.30;
+export const MAG_IN_AT = 0.66;
+
+/**
+ * How far the magazine is out of the well, 0..1, at fraction `k` of a magazine change.
+ *
+ * Clear of the well for the whole window the rules call "magazine out", with a short
+ * travel either side for the hand that pulls it and the hand that seats it. Keeping this
+ * next to the thresholds is the point: the drive and the rule cannot drift apart, so the
+ * player never has a magazine on screen that the gun will not feed from, or the reverse.
+ */
+const MAG_TRAVEL = 0.12;
+export function magDropAt(k) {
+  if (k <= 0) return 0;
+  if (k < MAG_OUT_AT) return Math.max(0, (k - (MAG_OUT_AT - MAG_TRAVEL)) / MAG_TRAVEL);
+  if (k < MAG_IN_AT - MAG_TRAVEL) return 1;
+  if (k < MAG_IN_AT) return (MAG_IN_AT - k) / MAG_TRAVEL;
+  return 0;
 }
 
 /**

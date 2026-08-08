@@ -159,28 +159,7 @@ export class UI {
       this.el.ammoMag._last = magTxt;
       this.el.ammoMag.textContent = magTxt;
     }
-    // Chambered round.
-    //
-    // The rule decides both how many rounds a reload gives and how long it takes, so
-    // the player has to be able to see which side of it they are on. `+1` means a round
-    // is up over a full magazine; the hollow mark means the chamber is dead and the next
-    // reload is the slow one. In between needs no marker — the magazine simply is not
-    // full, and reloading now keeps the chambered round regardless.
-    this.el.ammoChamber = this.el.ammoChamber || $('ammo-chamber');
-    const chEl = this.el.ammoChamber;
-    if (chEl) {
-      const capacity = player.weapon.mag || 0;
-      // `+1` when the magazine is full *and* a round is up — the state a tactical
-      // reload leaves you in. The hollow mark means the chamber is empty: the trigger
-      // will not answer, and the reload that fixes it is the slow one with the rack.
-      const chTxt = melee || !capacity ? ''
-        : (!player.chambered ? '○' : (player.mag >= capacity ? '+1' : ''));
-      if (chEl._last !== chTxt) {
-        chEl._last = chTxt;
-        chEl.textContent = chTxt;
-        chEl.classList.toggle('empty', chTxt === '○');
-      }
-    }
+    this._drawRounds(player, melee);
 
     const res = player.reserve();
     this.el.ammoReserve = this.el.ammoReserve || $('ammo-reserve');
@@ -194,7 +173,19 @@ export class UI {
       this.el.weaponName._last = player.weapon.name;
       this.el.weaponName.textContent = player.weapon.name;
     }
-    this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
+    // Three states, not two. A reload that was broken off part way is not "reloading" —
+    // it is a gun in a state the player has to decide what to do about, and the one that
+    // matters is a magazine lying out of the well with a single round in the chamber.
+    const hint = player.magazineOut && player.reloadPaused ? 'MAG OUT — [R]'
+      : player.reloadPaused && (player.reloading > 0 || player.rackT > 0) ? 'RELOAD PAUSED — [R]'
+      : player.rackT > 0 ? 'CHARGING…'
+      : player.reloading > 0 ? 'RELOADING…' : '';
+    this.el.reloadHint.classList.toggle('hidden', !hint);
+    this.el.reloadHint.classList.toggle('paused', !!player.reloadPaused);
+    if (hint && this.el.reloadHint._last !== hint) {
+      this.el.reloadHint._last = hint;
+      this.el.reloadHint.textContent = hint;
+    }
 
     // weapon slots: guns on 1/2, the knife pinned on 3
     const slotsKey = player.slots.join(',') + player.slotIdx + (player.knifeOut ? 'K' : '')
@@ -269,6 +260,51 @@ export class UI {
         ? `<div class="sq-card">${c.name}<span class="sq-hp"><i style="width:${(c.hp / c.maxHp) * 100}%"></i></span></div>`
         : `<div class="sq-card dead">${c.name}</div>`
       ).join('');
+    }
+  }
+
+  /**
+   * The magazine, drawn as rounds, with the chambered one separate and larger.
+   *
+   * A number cannot show the two things the handling model actually turns on: that the
+   * round in the chamber is not in the magazine, and that during a magazine change it is
+   * the only round in the gun. As rounds it is one glance — the strip empties as you
+   * shoot, goes dark the moment the magazine leaves the well, and the big one on the end
+   * is the shot you still have. It goes hollow and red when the chamber is dead, which
+   * is the same instant the trigger stops answering.
+   *
+   * Pips are pooled and only their classes change; the strip is rebuilt only when the
+   * capacity does, which is on a weapon swap.
+   */
+  _drawRounds(player, melee) {
+    const magEl = this.el.ammoMagRounds ||= $('ammo-mag-rounds');
+    const chEl = this.el.ammoChamberRound ||= $('ammo-chamber-round');
+    if (!magEl || !chEl) return;
+    const capacity = melee ? 0 : (player.weapon.mag || 0);
+    if (magEl._cap !== capacity) {
+      magEl._cap = capacity;
+      magEl.innerHTML = capacity ? '<i class="rnd"></i>'.repeat(capacity) : '';
+      chEl.innerHTML = capacity ? '<i class="rnd chamber"></i>' : '';
+      magEl._pips = [...magEl.children];
+      magEl._loaded = -1;
+    }
+    if (!capacity) return;
+    // Nothing to draw from while the magazine is out of the weapon: the strip goes dark
+    // rather than empty, because those rounds are not gone, they are in your other hand.
+    const out = player.magazineOut;
+    const loaded = out ? 0 : player.mag;
+    if (magEl._loaded !== loaded) {
+      magEl._loaded = loaded;
+      // Fed from the back, so the rounds that go first are the ones nearest the chamber.
+      for (let i = 0; i < capacity; i++) {
+        magEl._pips[i].classList.toggle('spent', capacity - i > loaded);
+      }
+    }
+    if (magEl._out !== out) { magEl._out = out; magEl.classList.toggle('out', out); }
+    const ch = chEl.firstChild;
+    if (ch && ch._up !== player.chambered) {
+      ch._up = player.chambered;
+      ch.classList.toggle('spent', !player.chambered);
     }
   }
 

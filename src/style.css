@@ -1392,17 +1392,43 @@ body.touch-mode .spec-hint-touch { display: inline; }
   #spectator-banner { top: 58px; min-width: 0; width: min(310px, 58vw); padding: 6px 9px; }
 }
 
-/* Chambered-round indicator.
-   Sits against the magazine count because that is the number it modifies: `+1` when a
-   round is up over a full magazine, and a hollow mark when the chamber is dead and the
-   next reload will therefore be the slow one. Without it the chambered round is a rule
-   the player is subject to and cannot see. */
-#ammo-chamber {
-  font-size: 0.42em;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  vertical-align: super;
-  margin-left: 0.12em;
-  color: var(--acid, #86ff3c);
+/* The magazine as rounds, and the chambered one on its own.
+   A number cannot show the two things the handling model actually turns on: that the
+   round in the chamber is not in the magazine, and that during a magazine change it is
+   the only round in the gun. The strip is read at a glance, never counted. */
+#ammo-rounds {
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  gap: 7px; margin-bottom: 5px; min-height: 21px;
 }
-#ammo-chamber.empty { color: var(--blood, #ff2833); }
+#ammo-mag-rounds {
+  display: flex; flex-wrap: wrap-reverse; justify-content: flex-end; align-items: flex-end;
+  /* Wide enough for the biggest magazine in the game (the SMG's 32) on one row:
+     32 x 4px + 31 x 2px. A strip that wraps two rounds onto a second row reads as a
+     glitch rather than as a quantity. */
+  gap: 2px; max-width: 190px;
+  transition: opacity 0.12s linear;
+}
+/* Magazine out of the well. Dimmed rather than emptied: those rounds are not spent,
+   they are in the player's other hand — and none of them can be fired. */
+#ammo-mag-rounds.out { opacity: 0.16; }
+.rnd {
+  display: block; width: 4px; height: 13px; border-radius: 2px 2px 1px 1px;
+  background: linear-gradient(#e8c88a 0 34%, var(--gold, #d9a441) 34% 100%);
+  box-shadow: 0 1px 2px #000;
+}
+.rnd.spent { background: #26262b; box-shadow: none; }
+#ammo-chamber-round .rnd.chamber {
+  width: 7px; height: 21px; border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(#fff2cf 0 34%, var(--acid, #86ff3c) 34% 100%);
+}
+/* A dead chamber is the instant the trigger stops answering, so it reads as an alarm
+   rather than as one more dark pip. */
+#ammo-chamber-round .rnd.chamber.spent {
+  background: none;
+  border: 1.5px solid var(--blood, #ff2833);
+  box-shadow: none;
+  animation: heartbeat 0.7s infinite;
+}
+/* A paused reload is a state to act on, not a process to wait out — it holds still and
+   goes red instead of pulsing gold like work in progress. */
+#reload-hint.paused { animation: none; color: var(--blood, #ff2833); }
