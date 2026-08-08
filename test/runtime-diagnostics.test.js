@@ -22,6 +22,7 @@ test('game runtime resumes the existing one-time diagnostic session', async () =
     setItem: (key, value) => writes.push([key, JSON.parse(value)]),
   };
   const reporter = createRuntimeDiagnostics({
+    flushDelayMs: 0,
     storage,
     now: () => new Date('2026-08-07T02:00:00.000Z'),
     fetchImpl: async (url, options) => {
@@ -83,6 +84,7 @@ test('dev game tabs create a cross-platform diagnostic session and queue early e
   const requests = [];
   const reporter = createRuntimeDiagnostics({
     autoCreate: true,
+    flushDelayMs: 0,
     storage: {
       getItem: () => null,
       setItem: (key, value) => writes.push([key, JSON.parse(value)]),
@@ -117,4 +119,34 @@ test('dev game tabs create a cross-platform diagnostic session and queue early e
     payload: { platform: 'Win32' },
   });
   assert.equal(writes.at(-1)[1].label, 'BRIGHT-OTTER');
+});
+
+test('runtime diagnostics batch nearby stall records into one low-overhead upload', async () => {
+  const requests = [];
+  const reporter = createRuntimeDiagnostics({
+    flushDelayMs: 60_000,
+    storage: {
+      getItem: () => JSON.stringify({
+        code: '753160', label: 'STORMY-FOX', write_token: 'secret', sequence: 5,
+        expires_at: '2099-01-01T00:00:00.000Z',
+      }),
+      setItem: () => {},
+    },
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+
+  const hitch = reporter.emit('game_frame_hitch', { duration_ms: 180 });
+  const task = reporter.emit('game_long_task', { duration_ms: 176 });
+  assert.equal(requests.length, 0);
+  await reporter.flush();
+  await Promise.all([hitch, task]);
+
+  assert.equal(requests.length, 1);
+  const body = JSON.parse(requests[0][1].body);
+  assert.deepEqual(body.events.map(event => event.type), ['game_frame_hitch', 'game_long_task']);
+  assert.deepEqual(body.events.map(event => event.seq), [6, 7]);
+  assert.equal(requests[0][1].keepalive, true);
 });

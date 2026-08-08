@@ -9,6 +9,7 @@ export function createRuntimeDiagnostics({
   fetchImpl = globalThis.fetch?.bind(globalThis),
   now = () => new Date(),
   autoCreate = false,
+  flushDelayMs = 1_500,
 } = {}) {
   let session = null;
   try {
@@ -20,6 +21,8 @@ export function createRuntimeDiagnostics({
 
   let sequence = Number.isSafeInteger(session?.sequence) ? session.sequence : 0;
   let uploadTail = Promise.resolve();
+  let pendingEvents = [];
+  let flushTimer = null;
   const persist = () => {
     if (!session) return;
     try {
@@ -65,30 +68,61 @@ export function createRuntimeDiagnostics({
     return result;
   };
 
+  const scheduleFlush = () => {
+    if (flushTimer != null || !pendingEvents.length) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      flushBatch();
+    }, flushDelayMs);
+  };
+  const flushBatch = () => {
+    if (flushTimer != null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    if (!pendingEvents.length) return Promise.resolve(null);
+    const batch = pendingEvents.splice(0, 50);
+    const records = batch.map(entry => entry.record);
+    const upload = enqueue(() => withSession(() => {
+      persist();
+      return fetchImpl(`/api/diagnostics/${session.code}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.write_token}`,
+        },
+        cache: 'no-store',
+        keepalive: true,
+        body: JSON.stringify({ events: records }),
+      }).then(updateLifetime).catch(() => null);
+    }));
+    upload.then(
+      result => batch.forEach(entry => entry.resolve(result)),
+      () => batch.forEach(entry => entry.resolve(null)),
+    ).finally(scheduleFlush);
+    return upload;
+  };
+  const flush = () => flushBatch().then(result => (
+    pendingEvents.length ? flush().then(() => result) : result
+  ));
+
   return {
     get label() { return session?.label || null; },
     ready,
     heartbeat() {
-      return enqueue(() => withSession(() => fetchImpl(`/api/diagnostics/${session.code}/heartbeat`, {
+      return flush().then(() => enqueue(() => withSession(() => fetchImpl(`/api/diagnostics/${session.code}/heartbeat`, {
         method: 'POST',
         headers: { authorization: `Bearer ${session.write_token}` },
         cache: 'no-store',
-      }).then(updateLifetime).catch(() => null)));
+      }).then(updateLifetime).catch(() => null))));
     },
+    flush,
     emit(type, payload = {}) {
       const record = { seq: ++sequence, type, at: now().toISOString(), payload };
-      return enqueue(() => withSession(() => {
-        persist();
-        return fetchImpl(`/api/diagnostics/${session.code}`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${session.write_token}`,
-          },
-          cache: 'no-store',
-          body: JSON.stringify({ events: [record] }),
-        }).then(updateLifetime).catch(() => null);
-      }));
+      const result = new Promise(resolve => pendingEvents.push({ record, resolve }));
+      if (pendingEvents.length >= 50) flushBatch();
+      else scheduleFlush();
+      return result;
     },
   };
 }

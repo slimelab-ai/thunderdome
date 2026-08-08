@@ -3,7 +3,7 @@ import { buildArena, updateArenaAmbience, ARENA } from './arena.js';
 import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Combatant } from './combatant.js';
-import { Announcer } from './announcer.js';
+import { Announcer, AnnouncerVoiceBank } from './announcer.js';
 import { UI, nextCrewName } from './ui.js';
 import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } from './weapons.js';
 import { audio } from './audio.js';
@@ -269,7 +269,11 @@ function beginCombatAssetLoading() {
   if (combatAssetLoadingStarted) return;
   combatAssetLoadingStarted = true;
   showGraphicsPrep('LOADING ARENA', 'STREAMING FIGHTERS AND WEAPONS');
-  voiceReady = announcer.prepare();
+  prepareGrenadeMeshPool();
+  // Xbox Edge has only reported 2 GB of browser memory. Eagerly decoding one clip
+  // from all 26 categories added persistent PCM pressure immediately before the
+  // trace's regular 100-165 ms pauses. Its reliable HTML media path stays lazy.
+  voiceReady = xboxBrowser ? Promise.resolve() : announcer.prepare();
   resolveCombatAssetGate?.();
 }
 
@@ -407,6 +411,14 @@ function scheduleBackgroundGraphicsPrep() {
   };
   assetsReady.then(async () => {
     await voiceReady;
+    if (xboxBrowser) {
+      await prepTurn('arena-shaders', 'COMPILING ARENA MATERIALS · DRIVER PASS');
+      try {
+        await renderer.compileAsync(scene, camera);
+      } catch {
+        try { renderer.compile(scene, camera); } catch { /* first reflection face remains the backstop */ }
+      }
+    }
     await prepTurn('environment', 'BAKING REFLECTIONS · 0/6');
     await pipeline.bakeEnvironment({
       size: xboxBrowser ? 64 : 128,
@@ -441,6 +453,7 @@ const fx = new FX(scene, camera);   // the camera keeps particle sizes in world 
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
 const announcer = new Announcer({
+  voiceBank: new AnnouncerVoiceBank({ AudioContextCtor: xboxBrowser ? null : undefined }),
   onVoiceStart: details => runtimeDiagnostics?.emit('game_announcer_start', details),
 });
 
@@ -1220,15 +1233,48 @@ function startMatch({ prepared = false } = {}) {
     career.liquidation.enemyMoney -= match.enemyBet;
   } else if (career.bet > 0) career.money -= career.bet;
 
-  announcer.clear();
-  if (!sandbox.active) announcer.say('matchStart', {}, { force: true });
-  if (!sandbox.active && career.rank === 1) setTimeout(() => announcer.say('bossIntro', {}, { force: true }), 3000);
-  audio.setCrowdLevel(0.055 + (10 - career.rank) * 0.004);
-  audio.klaxon();
+  const revealMatch = () => {
+    announcer.clear();
+    if (!sandbox.active) announcer.say('matchStart', {}, { force: true });
+    if (!sandbox.active && career.rank === 1) setTimeout(() => announcer.say('bossIntro', {}, { force: true }), 3000);
+    audio.setCrowdLevel(0.055 + (10 - career.rank) * 0.004);
+    audio.klaxon();
+    phase = 'match';
+    graphicsPrepStage = 'complete';
+    ui.hideSpectator();
+    ui.showHUDOnly();
+  };
 
-  phase = 'match';
-  ui.hideSpectator();
-  ui.showHUDOnly();
+  // The Xbox trace showed the first playable frame compiling 16 additional shader
+  // programs and blocking for 21.4 seconds. Compile the *actual assembled bout*
+  // while its loading overlay is still up, then let one full composer frame draw so
+  // shadow/GTAO overrides are warm too. This changes scheduling, never features.
+  if (!startMatch.firstBoutWarmed) {
+    startMatch.firstBoutWarmed = true;
+    phase = 'loading';
+    graphicsPrepStage = 'match-shaders';
+    ui.showScreen('loading');
+    showGraphicsPrep('FINALIZING COMBAT SCENE', 'COMPILING MATCH SHADERS · DRIVER PASS', 0.97);
+    startMatch.warmPromise = Promise.resolve()
+      .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+      .then(async () => {
+        try {
+          await renderer.compileAsync(scene, camera);
+        } catch {
+          try { renderer.compile(scene, camera); } catch { /* the full pipeline pass below is the backstop */ }
+        }
+        showGraphicsPrep('FINALIZING COMBAT SCENE', 'WARMING POST EFFECTS · FINAL PASS', 0.99);
+      })
+      // Tick renders the complete composer between these two callbacks while the
+      // simulation remains stopped in phase=loading.
+      .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+      .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+      .then(revealMatch, revealMatch);
+    return startMatch.warmPromise;
+  }
+
+  revealMatch();
+  return Promise.resolve(match);
 }
 
 // ============================================================ kills / damage
@@ -1429,15 +1475,20 @@ import { hasLoS } from './combat.js';
 
 const NADE_GEO = new THREE.SphereGeometry(0.09, 8, 6);
 const NADE_MAT = new THREE.MeshStandardMaterial({ color: 0x2c3a2c, roughness: 0.55, metalness: 0.35 });
-const GRENADE_POOL_SIZE = 24;
-const grenadeMeshPool = Array.from({ length: GRENADE_POOL_SIZE }, () => {
-  const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
-  mesh.visible = false;
-  scene.add(mesh);
-  return mesh;
-});
+const GRENADE_POOL_SIZE = 16;
+const grenadeMeshPool = [];
 let grenadeMeshCursor = 0;
+function prepareGrenadeMeshPool() {
+  if (grenadeMeshPool.length) return;
+  for (let i = 0; i < GRENADE_POOL_SIZE; i++) {
+    const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
+    mesh.visible = false;
+    scene.add(mesh);
+    grenadeMeshPool.push(mesh);
+  }
+}
 function acquireGrenadeMesh() {
+  prepareGrenadeMeshPool();
   for (let offset = 0; offset < GRENADE_POOL_SIZE; offset++) {
     const index = (grenadeMeshCursor + offset) % GRENADE_POOL_SIZE;
     if (grenadeMeshPool[index].visible) continue;
@@ -1445,7 +1496,7 @@ function acquireGrenadeMesh() {
     grenadeMeshPool[index].visible = true;
     return grenadeMeshPool[index];
   }
-  // More than 24 simultaneous live grenades is outside any current roster, but
+  // More than 16 simultaneous live grenades is outside any current roster, but
   // reusing the oldest pooled visual is still safer than allocating in combat.
   const mesh = grenadeMeshPool[grenadeMeshCursor];
   grenadeMeshCursor = (grenadeMeshCursor + 1) % GRENADE_POOL_SIZE;
@@ -2822,6 +2873,7 @@ runtimeDiagnostics?.emit('game_runtime_started', {
   quality: pipeline.quality,
 });
 if (runtimeDiagnostics) setInterval(() => runtimeDiagnostics.heartbeat(), 60_000);
+window.addEventListener('pagehide', () => runtimeDiagnostics?.flush());
 
 // idle backdrop camera for menu
 camera.position.set(0, 8, 20);
@@ -3686,7 +3738,8 @@ window.__game = {
       career = newCareer(mode);
       career.rank = rank;
       market = createMarket(mode);
-      startMatch({ prepared: true });
+      return startMatch({ prepared: true });
+    }).then(() => {
       return match;
     });
   },

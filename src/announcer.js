@@ -528,8 +528,17 @@ export class Announcer {
     this._onVoiceStart = onVoiceStart;
   }
 
-  prepare(options) {
-    return this._voiceBank.prepare?.(LINES, options) || Promise.resolve();
+  prepare({
+    categories = [
+      'matchStart', 'firstBlood', 'playerKill', 'playerHeadshot', 'enemyKillsAlly',
+      'playerHurt', 'nade', 'win', 'lose',
+    ],
+    ...options
+  } = {}) {
+    const catalog = Object.fromEntries(categories
+      .filter(category => LINES[category])
+      .map(category => [category, LINES[category]]));
+    return this._voiceBank.prepare?.(catalog, options) || Promise.resolve();
   }
 
   unlock() {
