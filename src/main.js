@@ -3264,10 +3264,12 @@ const SHIELD_TEST = {
   // Every man on the wall carries a plate. Slipping a rifleman in among them made
   // the squad's damage impossible to attribute — most of what the "shieldwall" was
   // dealing came from the one man who was not holding a shield.
-  wall: [
-    { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
-    { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
-  ],
+  //
+  // One template, stamped out `wallCount` times, so the ladder can ask the question
+  // that actually matters: not "is a shieldwall good" but "how many of them does it
+  // take", which is a curve rather than a verdict.
+  shieldman: { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
+  wallCount: 2,
   balanced: [
     { w: 'rifle', hp: 115, sp: 1.25, re: 0.55, ar: 0.2, ammo: 400, medkit: 1, grenade: 1 },
     { w: 'rifle', hp: 115, sp: 1.3, re: 0.55, ar: 0.2, ammo: 400, medkit: 1 },
@@ -3330,7 +3332,7 @@ function overheadHeight() {
   return Math.max(forDepth, forWidth);
 }
 
-function spawnShieldTestSquads(swap = false) {
+function spawnShieldTestSquads(swap = false, wallCount = SHIELD_TEST.wallCount) {
   // A whole new match, the way the headless bot harness does it. Calling `fight()`
   // per seed worked until dev2 put a reflection bake behind the loading screen that
   // yields between painted frames — which a backgrounded or headless tab never
@@ -3349,13 +3351,20 @@ function spawnShieldTestSquads(swap = false) {
     fighter.healKits = r.medkit || 0;
     fighter.nades = r.grenade || 0;
     fighter.openingT = 0;
-    fighter.addTo(world, spawns[i % spawns.length]);
+    // Past the end of the spawn list, step sideways instead of standing inside a
+    // squadmate — eight men on six marks resolve their overlap by shoving each other
+    // across the map for the first second, which is not a fight anybody chose.
+    const mark = spawns[i % spawns.length];
+    const lap = Math.floor(i / spawns.length);
+    fighter.addTo(world, lap === 0 ? mark
+      : new THREE.Vector3(mark.x + (i % 2 ? 1.6 : -1.6) * lap, mark.y, mark.z));
     (team === 'player' ? match.crew : match.enemies).push(fighter);
   });
+  const wall = Array.from({ length: wallCount }, () => SHIELD_TEST.shieldman);
   // Sides swap so the map's own asymmetry cannot be mistaken for the archetype's.
-  build(swap ? SHIELD_TEST.balanced : SHIELD_TEST.wall, 'player', swap ? 'LINE' : 'WALL',
+  build(swap ? SHIELD_TEST.balanced : wall, 'player', swap ? 'LINE' : 'WALL',
     arena.spawns.playerCrew);
-  build(swap ? SHIELD_TEST.wall : SHIELD_TEST.balanced, 'enemy', swap ? 'WALL' : 'LINE',
+  build(swap ? wall : SHIELD_TEST.balanced, 'enemy', swap ? 'WALL' : 'LINE',
     arena.spawns.enemy);
   match.enemiesAlive = match.enemies.length;
   player.alive = false;
@@ -3412,6 +3421,10 @@ function makeShieldTest(squads, options = {}) {
         seconds: +this.elapsed.toFixed(1),
         wallAlive: this.squads.wall.filter(c => c.alive).length,
         lineAlive: this.squads.line.filter(c => c.alive).length,
+        // A timeout is nobody's win. Counting it as one flattered whichever side
+        // happened to be turtling when the clock ran out.
+        winner: this.squads.line.every(c => !c.alive) ? 'wall'
+          : this.squads.wall.every(c => !c.alive) ? 'line' : 'draw',
         stance: Object.fromEntries(Object.entries(this.stanceFrames)
           .map(([k, v]) => [k, +(v / f).toFixed(2)])),
         plateAte: Math.round(this.plateAte),
@@ -3465,7 +3478,7 @@ async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options 
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
     const restore = () => { Math.random = realRandom; };
-    const squads = spawnShieldTestSquads(i % 2 === 1);
+    const squads = spawnShieldTestSquads(i % 2 === 1, options.wallCount ?? SHIELD_TEST.wallCount);
     const test = makeShieldTest(squads, options);
     const uninstrument = instrumentShieldTest(test);
     // The plate's own accounting: applyDamage scales shield hits by 0.06, so what it
@@ -3479,6 +3492,12 @@ async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options 
     while (!test.done && guard++ < 60 * (options.seconds ?? SHIELD_TEST.seconds) + 600) {
       stepMatch(1 / 60);
       test.step(1 / 60);
+      // Breathe. Stepping a whole ladder inside one synchronous loop pins the main
+      // thread for minutes — the tab stops answering anything, including the console
+      // you were going to read the result in, which looks exactly like a hang and for
+      // every practical purpose is one. Yielding a few times a second costs nothing
+      // and keeps the page alive while it works.
+      if ((guard & 255) === 0) await new Promise(resolve => setTimeout(resolve));
     }
     Combatant.prototype.applyDamage = originalApply;
     uninstrument();
@@ -3488,13 +3507,42 @@ async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options 
   const mean = (k) => +(runs.reduce((a, r) => a + (r[k] ?? 0), 0) / runs.length).toFixed(2);
   return {
     runs,
-    wallSurvivors: `${runs.reduce((a, r) => a + r.wallAlive, 0)} / ${runs.length * SHIELD_TEST.wall.length}`,
+    wallSurvivors: `${runs.reduce((a, r) => a + r.wallAlive, 0)} / ${runs.length * (options.wallCount ?? SHIELD_TEST.wallCount)}`,
     lineSurvivors: `${runs.reduce((a, r) => a + r.lineAlive, 0)} / ${runs.length * SHIELD_TEST.balanced.length}`,
     plateAte: mean('plateAte'), wallDealt: mean('wallDealt'), lineDealt: mean('lineDealt'),
     flankShare: mean('flankShare'), baitShare: mean('baitShare'),
     stance: Object.fromEntries(['carry', 'aim', 'hunker', 'sprint', 'turtle']
       .map(k => [k, +(runs.reduce((a, r) => a + r.stance[k], 0) / runs.length).toFixed(2)])),
   };
+}
+
+/**
+ * How many shieldmen it takes to beat six good men, as a curve.
+ *
+ * A single matchup answers "is this balanced" with a number that is mostly noise.
+ * The curve answers something you can actually design against: where it crosses even,
+ * and whether it climbs gradually or snaps from useless to unbeatable. A wall that
+ * goes from 0% at five to 100% at six is a worse archetype than one that is 30/50/70
+ * across the same range, whatever the midpoint says.
+ */
+async function runShieldLadder({ sizes = [2, 3, 4, 5, 6, 7, 8], seeds = [1, 2, 3, 4], ...rest } = {}) {
+  const rows = [];
+  for (const wallCount of sizes) {
+    const r = await runShieldTest({ ...rest, seeds, wallCount });
+    const wins = r.runs.filter(x => x.winner === 'wall').length;
+    const draws = r.runs.filter(x => x.winner === 'draw').length;
+    rows.push({
+      wall: wallCount,
+      wallWins: `${wins}/${seeds.length}`,
+      winRate: +(wins / seeds.length).toFixed(2),
+      draws,
+      wallSurvivors: r.wallSurvivors,
+      lineSurvivors: r.lineSurvivors,
+      wallDealt: r.wallDealt,
+      lineDealt: r.lineDealt,
+    });
+  }
+  return { versus: SHIELD_TEST.balanced.length, rows };
 }
 
 /** The same fight, rendered, straight down over the pit so the shapes are readable. */
@@ -4178,6 +4226,8 @@ window.__game = {
   shieldExposure: (opts) => shieldExposureReport(opts),
   // One shieldman against N rushers in the open: should beat one, lose to two.
   shieldDuel: (opts) => runShieldDuel(opts),
+  // Wall size 2..8 against the same balanced six: the whole curve, not one point.
+  shieldLadder: (opts) => runShieldLadder(opts),
   shieldTestWatch: (opts) => watchShieldTest(opts),
   flushAnalytics() { return analytics.flush(); },
   get analyticsPending() { return analytics.queue.length; },
