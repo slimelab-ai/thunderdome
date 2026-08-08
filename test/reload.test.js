@@ -8,7 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  WEAPONS, planReload, cycleTime, CHAMBER_LEAD, rackTime, magDropAt, MAG_OUT_AT, MAG_IN_AT,
+  WEAPONS, planReload, cycleTime, CHAMBER_LEAD, rackTime, magDropFor, stageTime,
+  RELOAD_STAGES, MAG_OUT_AT,
 } from '../src/weapons.js';
 
 const rifle = WEAPONS.rifle;
@@ -139,27 +140,55 @@ test('the pump gun reloads shell by shell and has no rack', () => {
   assert.ok(WEAPONS.shotgun.pump > 0);
 });
 
-// ---- the magazine out of the well ----
+// ---- the stages of a magazine change ----
 
-test('the magazine is out of the weapon over the middle of a magazine change', () => {
-  assert.ok(MAG_OUT_AT > 0 && MAG_OUT_AT < MAG_IN_AT && MAG_IN_AT < 1);
-  // Long enough to be a window the player can be caught in, rather than a frame.
-  assert.ok(MAG_IN_AT - MAG_OUT_AT >= 0.25, 'the magazine-out window is too short to matter');
+test('a magazine change splits into two stages that add up to the reload', () => {
+  // The split is what makes an interruption cost a whole stage and no more, so the two
+  // have to partition the reload exactly — a gap or an overlap is time the player either
+  // never pays or pays twice.
+  for (const w of Object.values(WEAPONS)) {
+    if (w.melee || !w.mag || w.shellReload) continue;
+    const total = RELOAD_STAGES.reduce((n, s) => n + stageTime(w, s), 0);
+    assert.ok(Math.abs(total - w.reload) < 1e-9, `${w.id}: stages sum to ${total}, not ${w.reload}`);
+    for (const s of RELOAD_STAGES) {
+      assert.ok(stageTime(w, s) > 0.2, `${w.id}: the ${s} stage is too short to interrupt`);
+    }
+  }
 });
 
-test('the magazine is visibly clear of the well for the whole window it is out', () => {
-  // The drive and the rule share these thresholds so they cannot drift: a magazine on
-  // screen the gun will not feed from, or one gone that it will, is the same bug.
-  assert.equal(magDropAt(0), 0);
-  assert.equal(magDropAt(MAG_OUT_AT), 1, 'still in the well when the rules say it is out');
-  assert.equal(magDropAt((MAG_OUT_AT + MAG_IN_AT) / 2), 1);
-  assert.equal(magDropAt(MAG_IN_AT), 0, 'still out when the rules say it is seated');
-  assert.equal(magDropAt(1), 0);
+test('the stage lengths scale with the reload multiplier', () => {
+  assert.equal(stageTime(rifle, 'strip', 0.5), stageTime(rifle, 'strip') * 0.5);
+  assert.equal(stageTime(rifle, 'rack', 0.5), rackTime(rifle) * 0.5);
+});
+
+test('seating the fresh magazine is the longer half', () => {
+  // Getting the old one out is a flick; getting a new one out of a pouch, lined up and
+  // seated is the part you can be caught doing. It is also the stage an interruption
+  // leaves you standing in with an empty gun, so it should be the one that takes time.
+  assert.ok(stageTime(rifle, 'insert') > stageTime(rifle, 'strip'));
+});
+
+// The drop is a continuous ramp, so its endpoints land within floating-point noise of 0
+// and 1 rather than exactly on them. What matters is that it *reaches* them.
+const fully = (v, msg) => assert.ok(Math.abs(v - 1) < 1e-9, `${msg} (got ${v})`);
+
+test('the magazine is out of the well for the whole of the insert stage', () => {
+  // Driven off the stage rather than off a clock, so a reload interrupted mid-insert
+  // shows no magazine for as long as the player leaves it that way. A weapon that looks
+  // loaded and will not feed, or the reverse, is the same bug.
+  fully(magDropFor('insert', 0), 'interrupted at the top of the insert, and still loaded?');
+  fully(magDropFor('insert', 0.5), 'the magazine came back mid-insert');
+  assert.equal(magDropFor('insert', 1), 0, 'the magazine never went home');
+  // ...and still in it for the top of the strip, which is where an interruption there
+  // leaves the player: holding a full magazine, having lost only the grab.
+  assert.equal(magDropFor('strip', 0), 0);
+  fully(magDropFor('strip', 1), 'the old magazine never came clear of the well');
+  assert.equal(magDropFor(null, 0.5), 0, 'no reload, no magazine hanging out of the gun');
 });
 
 test('the magazine travels rather than teleporting out of the well', () => {
-  const before = magDropAt(MAG_OUT_AT - 0.06);
-  assert.ok(before > 0 && before < 1, `mid-travel should be partial, got ${before}`);
+  const mid = magDropFor('strip', 0.78);
+  assert.ok(mid > 0 && mid < 1, `mid-strip should be partial, got ${mid}`);
 });
 
 // ---- the chamber cycle ----

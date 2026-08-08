@@ -347,13 +347,18 @@ export class ViewModel {
   reload(seconds, at = 0) { this.play(this.reloadClip || 'reload', seconds, at); }
 
   /**
-   * Freeze the clip in hand where it is.
+   * Abandon the clip in hand and come back to the ready pose.
    *
-   * An interrupted reload has to *stop*, not run on silently to a completion the rules
-   * are no longer going to grant. Whatever plays next crossfades away from the frozen
-   * pose; `play` resets the action it starts, so nothing stays paused by accident.
+   * An interrupted reload does not freeze in a half-finished posture — the hands stop
+   * what they were doing and the weapon comes back up where it can be used. Fading the
+   * action out rather than cutting it lets idle take the weight back over the same two
+   * frames every other transition uses.
    */
-  pauseClip() { if (this.current) this.current.paused = true; }
+  releaseClip() {
+    if (!this.current) return;
+    this.current.fadeOut(PLAY_FADE);
+    this.current = null;
+  }
   melee(seconds) { this.play('melee', seconds); }
   /** One shell into the tube; called once per round on a shell-loaded weapon. */
   loadShell(seconds) { this.play('reload_shell', seconds); }

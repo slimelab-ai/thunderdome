@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   WEAPONS, buildViewmodel, animateWeaponParts, solveSightAlignment, adsRelief, planReload,
-  cycleTime, rackTime, magDropAt, MAG_OUT_AT, MAG_IN_AT,
+  cycleTime, rackTime, stageTime, magDropFor, MAG_OUT_AT,
 } from './weapons.js';
 import { Recoil, RecoilPattern } from './recoil.js';
 import { ViewModel } from './viewmodel.js';
@@ -91,13 +91,16 @@ export class Player {
     this._swapFrom = WEAPONS.pistol;   // what is being put away, for its `holster`
     this.raiseT = 0;
     this.reloadFromEmpty = false;      // did this reload begin with a dead chamber?
-    // A reload is a thing you can be *part way through*, not a timer that either runs
-    // or does not. Sprinting, healing, throwing and swapping all break one off where it
-    // stands and keep the progress: the magazine may be lying out of the well with only
-    // the chambered round in the gun, and that is a legitimate state to be caught in.
-    // Pressing reload again picks up from there rather than starting over.
+    // A reload is a short sequence of whole actions, not a timer. `reloadStage` is the
+    // one being performed — stripping the old magazine, seating the new one, or working
+    // the bolt — and sprinting, healing, throwing and swapping all abandon it. What is
+    // *done* is done and what was in progress is not: interrupted mid-insert the weapon
+    // is left with no magazine in it, and picking the reload back up seats a fresh one
+    // from the beginning. There is no half-fitted magazine to represent.
+    this.reloadStage = null;           // 'strip' | 'insert' | 'shell' | null
     this.reloadPaused = false;
-    this.reloadDur = 0;                // how long the magazine change in progress takes
+    this.reloadDur = 0;                // how long the stage in progress takes
+    this.magazineOut = false;          // is the well empty? real state, not a time window
     this.rackT = 0;                    // seconds left of the rack that follows a dry swap
     this.rackDur = 0;
     this.reloadBySlot = [];            // partial reloads survive a weapon swap, per slot
@@ -215,6 +218,7 @@ export class Player {
     this.swapT = 0; this.holsterT = 0; this._swapDur = 0; this.raiseT = 0;
     this.reloadFromEmpty = false;
     this.reloadPaused = false; this.rackT = 0; this.rackDur = 0; this.reloadBySlot = [];
+    this.reloadStage = null; this.reloadDur = 0; this.magazineOut = false;
     this.chambered = this.mag > 0; this.chamberT = 0; this.chamberDur = 0;
     this.fireCooldown = 0; this.bloom = 0;
     this.recoil.reset();
@@ -380,17 +384,23 @@ export class Player {
   _stashReload(slot) {
     this.interruptReload();
     this.reloadBySlot[slot] = this.reloading > 0 || this.rackT > 0
-      ? { t: this.reloading, dur: this.reloadDur, rackT: this.rackT, rackDur: this.rackDur }
+      ? { stage: this.reloadStage, magOut: this.magazineOut, rackT: this.rackT }
       : null;
   }
 
   _restoreReload(slot) {
     const held = slot >= 0 ? this.reloadBySlot[slot] : null;
     this.shellLoading = false;
-    this.reloading = held?.t ?? 0;
-    this.reloadDur = held?.dur ?? 0;
-    this.rackT = held?.rackT ?? 0;
-    this.rackDur = held?.rackDur ?? 0;
+    this.reloadStage = held?.stage ?? null;
+    this.magazineOut = held?.magOut ?? false;
+    // Durations are re-derived from the weapon rather than stored, so a stage picked back
+    // up runs at the length the weapon in hand says it should — which matters the moment
+    // a progression multiplier changes between putting a gun down and picking it up.
+    const mult = this.progressStats.reloadMult || 1;
+    this.rackDur = held?.rackT ? rackTime(this.weapon) * mult : 0;
+    this.rackT = this.rackDur;
+    this.reloadDur = this.reloading = held && !held.rackT
+      ? stageTime(this.weapon, held.stage, mult) : 0;
     this.reloadPaused = this.reloading > 0 || this.rackT > 0;
   }
 
@@ -438,11 +448,11 @@ export class Player {
    */
   _loadChamber() {
     if (this.chambered) return;
-    // Nothing to strip from: the magazine is out of the weapon, or on its way out. This
-    // is what makes firing the chambered round during a magazine change cost something —
-    // the action cycles onto an empty chamber and stays there until the fresh magazine is
-    // in and the bolt has been worked, which is a rack the reload did not originally owe.
-    if (this.reloading > 0 && !this.shellLoading) return;
+    // Nothing to strip from: there is no magazine in the weapon. This is what makes
+    // firing the chambered round during a magazine change cost something — the action
+    // cycles onto an empty chamber and stays there until a fresh magazine is in and the
+    // bolt has been worked, which is a rack the reload did not originally owe.
+    if (this.magazineOut) return;
     if (this.mag <= 0) return;
     // Always out of the magazine, including on the firing range. `infiniteAmmo` means
     // the *pack* never runs out, so reloading costs nothing — it does not mean the
@@ -463,18 +473,8 @@ export class Player {
    */
   get reloadActive() { return !this.reloadPaused && (this.reloading > 0 || this.rackT > 0); }
 
-  /**
-   * Is the magazine out of the well?
-   *
-   * True over the middle of a magazine change — between the old one being stripped and
-   * the new one seating — including while that change is paused. The gun holds only
-   * what is in the chamber, and the action has nothing to feed from.
-   */
-  get magazineOut() {
-    if (this.shellLoading || this.reloading <= 0 || this.reloadDur <= 0) return false;
-    const done = (this.reloadDur - this.reloading) / this.reloadDur;
-    return done >= MAG_OUT_AT && done < MAG_IN_AT;
-  }
+  /** How far into the current stage, 0..1. */
+  get stageK() { return this.reloadDur > 0 ? 1 - this.reloading / this.reloadDur : 0; }
 
   /** Rounds the player actually has in hand: the magazine plus whatever is chambered. */
   get roundsInWeapon() {
@@ -494,25 +494,54 @@ export class Player {
     if (this.shellLoading) { this.cancelShellReload(); return; }
     if (this.reloadPaused || (this.reloading <= 0 && this.rackT <= 0)) return;
     this.reloadPaused = true;
-    this.arms.pauseClip();
+    // Back to the top of the stage, not frozen part way into it. Half a magazine change
+    // is not a state a weapon can be in — either the old magazine is out or it is not,
+    // either the fresh one is seated or it is not — so an interruption costs the stage
+    // being performed and nothing that was already finished.
+    if (this.rackT > 0) this.rackT = this.rackDur;
+    else this.reloading = this.reloadDur;
+    // And the hands come back up. A weapon frozen mid-reload is not one you can fight
+    // with; the point of being left holding a magazine-less rifle is that it is *ready*,
+    // with whatever is in the chamber.
+    this.arms.releaseClip();
   }
 
-  /** Pick a paused reload back up from where it stopped. */
-  _resumeReload() {
+  /**
+   * Begin a stage of the reload.
+   *
+   * The body clip is authored as one continuous magazine change, so each stage plays the
+   * slice of it that belongs to that stage: `strip` from the top, `insert` from the frame
+   * the magazine leaves the well. Restarting a stage therefore rewinds the animation to
+   * the same place it rewinds the rules to.
+   */
+  _beginStage(stage) {
+    const mult = this.progressStats.reloadMult || 1;
+    this.reloadStage = stage;
     this.reloadPaused = false;
-    if (this.rackT > 0) return;   // the rack has no body clip; the hand IK carries it
-    const at = this.reloadDur > 0 ? 1 - this.reloading / this.reloadDur : 0;
-    this.arms.reload(this.reloadDur, at);
+    this.reloading = this.reloadDur = stageTime(this.weapon, stage, mult);
+    // Scaled so the *whole* clip would run in the whole magazine change; playing from
+    // `MAG_OUT_AT` then takes exactly as long as the insert stage does.
+    this.arms.reload((this.weapon.reload ?? 0) * mult, stage === 'insert' ? MAG_OUT_AT : 0);
     audio.reload(0);
+  }
+
+  /** Pick an abandoned reload back up, at the start of the stage it was abandoned in. */
+  _resumeReload() {
+    if (this.rackT > 0) {
+      this.reloadPaused = false;
+      this.rackT = this.rackDur;    // the rack has no body clip; the hand IK carries it
+      return;
+    }
+    this._beginStage(this.reloadStage || (this.magazineOut ? 'insert' : 'strip'));
   }
 
   startReload() {
     const w = this.weapon;
     if (w.melee || !this.alive) return;
     if (this.swapT > 0 || this.raiseT > 0) return;   // the weapon is not up yet
-    // A reload already part-done is resumed, not restarted. This is the other half of
-    // interrupting one: the progress is kept, so breaking off to shoot or to run costs
-    // the time you were interrupted for and not the whole magazine change again.
+    // A reload that was broken off is picked back up rather than started over: the stages
+    // already finished stay finished, and the one it was interrupted in is performed
+    // again from the top.
     if (this.reloadPaused) { this._resumeReload(); return; }
     // Full means a full magazine *and* a round up. Topping up a full magazine when the
     // chamber is dead is still a reload worth doing — it is the rack.
@@ -524,6 +553,7 @@ export class Player {
       // Shell by shell. Each round is its own timer and its own animation, and the
       // player can break off and fire whatever is already in the tube.
       this.shellLoading = true;
+      this.reloadStage = 'shell';
       this.reloadFromEmpty = !this.chambered;
       this.reloading = this.weapon.shellReload * mult;
       this.reloadDur = this.reloading;
@@ -531,22 +561,19 @@ export class Player {
       audio.reload(0);
       return;
     }
-    // The magazine change, and only that. Whether a rack follows is decided when the
-    // fresh magazine seats, not here — see the completion in `update`.
-    const plan = planReload(w, this.mag, this.reserve(), this.chambered, mult);
-    this.reloadFromEmpty = !plan.chambered;
-    this.reloading = plan.duration;
-    this.reloadDur = this.reloading;
+    this.reloadFromEmpty = !this.chambered;
     this.rackT = 0; this.rackDur = 0;
-    this.arms.reload(this.reloading);
-    audio.reload(0);
-    setTimeout(() => { if (this.reloadActive) audio.reload(1); }, this.reloading * 600);
+    // Straight to `insert` if the magazine is already out — a reload abandoned mid-insert
+    // and then finished on the *next* weapon, or one whose stage state came back with the
+    // weapon from the holster. There is nothing left to strip.
+    this._beginStage(this.magazineOut ? 'insert' : 'strip');
   }
 
   /** Abandon a shell-by-shell reload, keeping whatever has already been fed. */
   cancelShellReload() {
     if (!this.shellLoading) return;
     this.shellLoading = false;
+    this.reloadStage = null;
     this.reloading = 0;
   }
 
@@ -791,6 +818,13 @@ export class Player {
               this._loadChamber();          // the stroke is what chambers the first shell
             }
           }
+        } else if (this.reloadStage === 'strip') {
+          // The old magazine is clear of the well and on its way to the floor. This is
+          // the state an interruption here leaves the player in, and it is the whole
+          // point of the split: from now until a fresh magazine seats, the gun holds
+          // exactly what is in its chamber.
+          this.magazineOut = true;
+          this._beginStage('insert');
         } else {
           // `planReload` decided the capacity when the reload started, and it depends
           // on whether a round was chambered *then* — so it is asked again here with
@@ -803,6 +837,8 @@ export class Player {
             ? plan.taken
             : consumeAmmo(this.character, t, plan.taken);
           this.reloading = 0;
+          this.magazineOut = false;
+          this.reloadStage = null;
           // The magazine is in. Whether the bolt now has to be worked is decided *here*,
           // on the state of the chamber right now — not on the state it was in when the
           // reload started. A tactical reload interrupted by a shot arrives with a dead
@@ -1013,14 +1049,23 @@ export class Player {
     // so measuring the phase against the wrong one left the weapon parked most of the
     // way through its arc and snapping flat between shells — 24 degrees in a single
     // frame, which is a quarter of a metre at the muzzle.
-    const reloadDur = this.reloadDur || w.reload;
+    // A magazine change is two stages of one motion, so the arc runs against the whole
+    // change and not against whichever stage is in hand — otherwise the weapon nods
+    // twice, once per stage, for a single reload.
+    const changeDur = this.shellLoading ? this.reloadDur : (w.reload || this.reloadDur);
     // And the *depth* of the tip scales with it. You do not cant a shotgun forty-six
     // degrees to push in one shell — and geometrically you cannot, in 0.44 s, without
     // the muzzle covering 5 cm in a single frame. A full magazine change gets the full
     // arc; a shell feed gets a nod.
-    const arc = 0.8 * Math.min(1, Math.max(0.28, reloadDur / 1.4));
-    let rx = kickVm * 0.22
-      + (this.reloading > 0 ? Math.sin((reloadDur - this.reloading) / reloadDur * Math.PI) * arc : 0);
+    const arc = 0.8 * Math.min(1, Math.max(0.28, changeDur / 1.4));
+    // Zero while interrupted: the hands have come back to the ready pose, so the weapon
+    // must come up out of the reload cant with them.
+    const changeK = !this.reloadActive ? 0
+      : this.shellLoading ? this.stageK
+      : this.reloadStage === 'strip' ? this.stageK * MAG_OUT_AT
+      : this.reloadStage === 'insert' ? MAG_OUT_AT + this.stageK * (1 - MAG_OUT_AT)
+      : 0;
+    let rx = kickVm * 0.22 + (changeK > 0 ? Math.sin(changeK * Math.PI) * arc : 0);
     let ry = 0;
     let rz = kickVm * 0.05;
     // The knife's strike is the authored `melee` clip on the arms rig, and nothing
@@ -1035,9 +1080,6 @@ export class Player {
     // magazine drops and reseats through the middle of a reload. Seeing the action
     // work is what makes a shot feel mechanical instead of a sound with a flash.
     this.arms.update(dt);
-    const reloadK = this.reloading > 0 && !this.shellLoading && this.reloadDur > 0
-      ? (this.reloadDur - this.reloading) / this.reloadDur
-      : 0;
     // The pump traces a full back-and-forward over its stroke; the magazine only
     // drops on a magazine-fed reload.
     const pumpK = w.pump && this.pumpT > 0
@@ -1065,12 +1107,10 @@ export class Player {
     animateWeaponParts(
       this.currentVM,
       Math.max(cycleK, rack),
-      // The magazine is out of the well over exactly the window the rules use, so what
-      // the player sees and what the gun will do agree: no magazine visible, no rounds
-      // available but the chambered one, and the action unable to feed. It leaves the
-      // well a little before `MAG_OUT_AT` and is home a little after `MAG_IN_AT`, which
-      // is the hand travel either side of the state change.
-      magDropAt(reloadK),
+      // Driven off the stage, so what is on screen is what the gun will do: caught with
+      // the magazine out, it stays out — because it is out — and the weapon shows no
+      // magazine for as long as the player leaves it that way.
+      this.shellLoading ? 0 : magDropFor(this.reloadStage, this.stageK),
       pumpK,
     );
 

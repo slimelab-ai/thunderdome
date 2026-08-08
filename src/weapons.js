@@ -510,32 +510,44 @@ export function rackTime(w) {
 }
 
 /**
- * Where the magazine leaves the well and where the fresh one seats, as fractions of a
- * magazine change.
+ * Where the magazine change splits into its two stages, as a fraction of `reload`.
  *
- * These are read off the authored reload clip — `anim_reload` drops the magazine at
- * 0.30 and has the new one seated by 0.66 — so the rules and the animation agree by
- * construction. Between them the weapon has no magazine in it: the chambered round is
- * all there is, the action cannot feed, and a shot taken there is a shot taken on the
- * last round in the gun.
+ * Read off the authored reload clip, which drops the magazine at 0.30: before it the
+ * hands are stripping the old magazine out, after it they are fetching and seating a
+ * fresh one. Splitting there is what lets an interruption cost a whole stage and no more.
+ *
+ * The stages are the unit of everything. A magazine is either in the weapon or it is
+ * not — there is no half-fitted magazine — so being interrupted drops you back to the
+ * start of the stage you were in rather than freezing you inside it. Interrupted while
+ * stripping, you still have your magazine and have lost nothing but the grab. Interrupted
+ * while inserting, the old magazine is gone, the gun holds only what is chambered, and
+ * picking the reload back up means seating a fresh magazine from the beginning.
  */
 export const MAG_OUT_AT = 0.30;
-export const MAG_IN_AT = 0.66;
+
+/** The two stages of a magazine change, in order. */
+export const RELOAD_STAGES = ['strip', 'insert'];
+
+/** How long `stage` takes on this weapon, in seconds. */
+export function stageTime(w, stage, mult = 1) {
+  const full = (w.reload ?? 0) * mult;
+  if (stage === 'strip') return full * MAG_OUT_AT;
+  if (stage === 'insert') return full * (1 - MAG_OUT_AT);
+  if (stage === 'rack') return rackTime(w) * mult;
+  return 0;
+}
 
 /**
- * How far the magazine is out of the well, 0..1, at fraction `k` of a magazine change.
+ * How far the magazine hangs out of the well, 0..1, given the stage and how far into it.
  *
- * Clear of the well for the whole window the rules call "magazine out", with a short
- * travel either side for the hand that pulls it and the hand that seats it. Keeping this
- * next to the thresholds is the point: the drive and the rule cannot drift apart, so the
- * player never has a magazine on screen that the gun will not feed from, or the reverse.
+ * Driven off the stage rather than off a clock, so what is on screen and what the rules
+ * will do cannot drift apart: paused part way through `insert` the magazine is fully out
+ * and stays out, because that is exactly the state the weapon is in.
  */
-const MAG_TRAVEL = 0.12;
-export function magDropAt(k) {
-  if (k <= 0) return 0;
-  if (k < MAG_OUT_AT) return Math.max(0, (k - (MAG_OUT_AT - MAG_TRAVEL)) / MAG_TRAVEL);
-  if (k < MAG_IN_AT - MAG_TRAVEL) return 1;
-  if (k < MAG_IN_AT) return (MAG_IN_AT - k) / MAG_TRAVEL;
+export function magDropFor(stage, k) {
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  if (stage === 'strip') return clamp((k - 0.55) / 0.45);   // pulled clear at the end
+  if (stage === 'insert') return clamp(k < 0.85 ? 1 : (1 - k) / 0.15);   // home at the end
   return 0;
 }
 
