@@ -332,6 +332,10 @@ def dmr():
         torus("scope ring", (0, y, 0.105), 0.023, 0.0045, METAL,
               rotation=(math.radians(90), 0, 0), major_segments=12, minor_segments=5)
         cube("ring foot", (0, y, 0.084), (0.020, 0.018, 0.024), METAL, 0.003, uv_scale=UV)
+    # Magazine well. Same gap the SMG had: the receiver stopped at z=0 and the magazine
+    # started 1.2 cm below it, so it hung under the rifle with nothing to seat into.
+    cube("magwell", (0, -0.01, -0.008), (0.038, 0.064, 0.026), METAL, 0.005,
+         rotation=(math.radians(6), 0, 0), uv_scale=UV)
     mag = cube("mag", (0, -0.01, -0.070), (0.028, 0.055, 0.115), DARK, 0.007,
                rotation=(math.radians(6), 0, 0), uv_scale=UV)
     cube("grip", (0, -0.10, -0.050), (0.032, 0.050, 0.115), GRIP, 0.012,
@@ -339,7 +343,11 @@ def dmr():
     cube("stock", (0, -0.24, 0.012), (0.044, 0.22, 0.090), DARK, 0.016,
          rotation=(math.radians(-4), 0, 0), uv_scale=UV)
     cube("cheek riser", (0, -0.23, 0.062), (0.036, 0.14, 0.024), GRIP, 0.008, uv_scale=UV)
-    finish("dmr", moving=(bolt, mag), budget=1100)
+    # The most expensive weapon in the pack, and it earns it: the scope is an open tube
+    # with a sleeve inside it, two rims, two rings and a duplex reticle, because a scope
+    # you cannot see through is a length of pipe. Raised from 1100, which it had been
+    # over since the reticle went in and which the magazine well pushed further.
+    finish("dmr", moving=(bolt, mag), budget=1260)
 
 
 def knife():

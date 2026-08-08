@@ -35,16 +35,15 @@ const RACK_GRIP = 0.03;
 
 // How far along the support forearm the weapon is allowed to start.
 //
-// A right-side charging handle reached without rolling the weapon means putting the
-// support arm through the receiver, and it measures 0.80 here. Rolling the weapon over
-// to be worked takes it to 0.84. The budget sits between the two, so losing the roll
-// fails rather than quietly reverting the look.
+// A right-side charging handle reached with the weapon level and the elbow wherever the
+// solve left it means putting the support arm through the receiver, and that measures
+// 0.80. Rolling the weapon over and swinging the elbow round takes it to 0.86. The budget
+// sits between, so losing either fails rather than quietly reverting the look.
 //
-// It does not reach 1.0 and should not be expected to: the support-hand solve aims the
-// fist at a point and has no notion of routing around anything, so the last stretch of
-// forearm grazes the receiver on its way to a handle mounted on it. Clearing that
-// entirely wants an authored rack clip, not a threshold.
-const ARM_CLEAR = 0.82;
+// It does not reach 1.0 and should not be expected to: the handle is mounted *on* the
+// receiver, so the last couple of centimetres of forearm are at the metal by definition —
+// that stretch is a hand gripping a handle, which is the thing it is supposed to be doing.
+const ARM_CLEAR = 0.83;
 
 const browser = await puppeteer.launch({
   executablePath: CHROME, headless: 'new',
@@ -206,7 +205,7 @@ const report = await page.evaluate(async (RACK_GRIP, ARM_CLEAR) => {
   // ...and picking it back up works the handle properly, with a hand on it
   pl.startReload();
   await until(() => pl.reloadActive, 'the rack to resume');
-  let grip = Infinity, travel = 0, roll = 0, rightUp = -9, through = 1;
+  let grip = Infinity, travel = 0, roll = 0, rightUp = -9, through = 1, swivel = 0;
   const rest = handle?.userData.restZ ?? 0;
   const rc = new T.Raycaster();
   const rackStart = window.__frames || 0;
@@ -216,6 +215,7 @@ const report = await page.evaluate(async (RACK_GRIP, ARM_CLEAR) => {
       travel = Math.max(travel, Math.abs(handle.position.z - rest));
     }
     roll = Math.max(roll, Math.abs(pl.arms.workRoll || 0));
+    swivel = Math.max(swivel, Math.abs(pl.arms.supportSwivel || 0));
     // Which way it rolled, in the camera's frame: a right-side handle needs the weapon's
     // right side to come *up*, or the roll is taking the handle further out of reach.
     const right = new T.Vector3(1, 0, 0)
@@ -242,13 +242,14 @@ const report = await page.evaluate(async (RACK_GRIP, ARM_CLEAR) => {
   }
   check(grip < RACK_GRIP, `the hand got no closer than ${(grip * 100).toFixed(1)} cm to the handle`);
   check(travel > 0.02, `the charging handle only moved ${(travel * 100).toFixed(1)} cm`);
-  check(roll > 0.4, `the weapon only rolled ${roll.toFixed(2)} to be worked`);
-  check(rightUp > 0.35,
+  check(roll > 1.0, `the weapon only rolled ${(roll * 57.3).toFixed(0)}° to be worked`);
+  check(rightUp > 0.85,
     `the weapon rolled the wrong way: its right side went ${rightUp > 0 ? 'up' : 'down'} by ${rightUp.toFixed(2)}`);
   // A right-side charging handle reached without rolling the weapon means putting the
   // support forearm through the receiver. Measured as how far along the elbow-to-fist
   // line the arm first meets metal: 1.0 is clear, and a hit near the end is the hand
   // touching the gun, which is what a hand is for.
+  check(swivel > 0.5, `the support elbow only swivelled ${(swivel * 57.3).toFixed(0)}°`);
   check(through > ARM_CLEAR,
     `the support arm enters the weapon ${(through * 100).toFixed(0)}% of the way to the fist`);
   await step(2);
@@ -257,7 +258,7 @@ const report = await page.evaluate(async (RACK_GRIP, ARM_CLEAR) => {
     `${pl.roundsInWeapon} rounds after a dry reload; expected a full magazine`);
 
   return { fails, grip: +grip.toFixed(4), travel: +travel.toFixed(4), rounds: pl.roundsInWeapon,
-    roll: +roll.toFixed(3), through: +through.toFixed(3) };
+    roll: +roll.toFixed(3), through: +through.toFixed(3), swivel: +swivel.toFixed(3) };
 }, RACK_GRIP, ARM_CLEAR);
 
 await browser.close();
@@ -266,6 +267,7 @@ console.log('\nreload: interrupt, partial state and the rack\n');
 console.log(`  hand to the charging handle   ${(report.grip * 100).toFixed(1)} cm (budget ${RACK_GRIP * 100} cm)`);
 console.log(`  charging handle travel        ${(report.travel * 100).toFixed(1)} cm`);
 console.log(`  weapon roll while worked      ${(report.roll * 57.3).toFixed(0)}°`);
+console.log(`  support elbow swivel          ${(report.swivel * 57.3).toFixed(0)}°`);
 console.log(`  support arm clear until       ${(report.through * 100).toFixed(0)}% (budget ${ARM_CLEAR * 100}%)`);
 console.log(`  rounds after a dry reload     ${report.rounds}`);
 console.log('  ----------------------------------------------------');

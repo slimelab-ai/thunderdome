@@ -245,6 +245,7 @@ export class ViewModel {
     this.idleWeight = 1;
     this.rackK = 0;              // 0..1 stroke of the rack, driven by the player
     this.workRoll = 0;           // radians of firing-wrist roll, likewise
+    this.supportSwivel = 0;      // radians of support-elbow swivel, likewise
     this.pinWeight = 1;
     // Weights are driven every frame rather than crossfaded. Two normal-blend actions
     // touching the same bones at weight 1 blend 50/50, so an override clip has to
@@ -513,8 +514,34 @@ export class ViewModel {
       }
     }
 
+    // Snapshot *before* the swivel. The swivel is a post-pass, so warm-starting from a
+    // swivelled pose and swivelling it again compounds a little every frame until the
+    // arm is wrapped round the weapon.
     if (!this._ikWarm) this._ikWarm = chain.map((b) => b.quaternion.clone());
     else for (let i = 0; i < chain.length; i++) this._ikWarm[i].copy(chain[i].quaternion);
+
+    // Elbow swivel: where the elbow sits on the cone around the shoulder-to-fist line.
+    //
+    // CCD puts the fist on the target and leaves the elbow wherever it happened to land,
+    // which for a charging handle on the far side of the receiver is *through* the
+    // receiver. The fist lies on this axis, so rotating the whole arm about it moves the
+    // elbow and does not move the hand at all — the one control that can bring the
+    // forearm over the top of the weapon while the grip stays exactly where it is.
+    if (this.supportSwivel) {
+      // The shoulder-most bone: the chain is solved elbow-first, so it is the last one.
+      const root = chain[chain.length - 1];
+      root.getWorldPosition(_bonePos);
+      _fist.set(0, HAND_LENGTH, 0);
+      hand.localToWorld(_fist);
+      _v.copy(_fist).sub(_bonePos);
+      if (_v.lengthSq() > 1e-8) {
+        _q.setFromAxisAngle(_v.normalize(), this.supportSwivel);
+        root.getWorldQuaternion(_q2);
+        root.parent.getWorldQuaternion(_parentQ);
+        root.quaternion.copy(_parentQ.invert()).multiply(_q).multiply(_q2);
+        root.updateMatrixWorld(true);
+      }
+    }
   }
 
   update(dt) {

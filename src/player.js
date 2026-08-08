@@ -36,6 +36,12 @@ const RAD2DEG = 180 / Math.PI;
 // and a half degrees — which reads as the camera sliding sideways rather than as the
 // body going with it, and is most of why the fighters looked like they leaned further
 // when in fact they lean half as far.
+// How far the support elbow swings round the shoulder-to-fist axis while the action is
+// worked. One number rather than one per weapon: it is a property of the arm, not of the
+// gun. Measured against forearm-through-receiver, clearance rises monotonically from 0.81
+// at -1.2 rad to 0.88 by +0.8 and then flattens, so this sits just past the knee.
+const WORK_SWIVEL = 0.9;
+
 const LEAN_ROLL = 0.5;
 
 export class Player {
@@ -1105,6 +1111,12 @@ export class Player {
     }
     // Set before `arms.update`, which is where the pronation is applied.
     this.arms.workRoll = roll;
+    // And the support elbow comes up and over with it. The roll alone only turns the
+    // weapon; the arm still reached the handle by the shortest line, which for a handle
+    // on the far side of a receiver runs through the receiver. Swivelling the elbow round
+    // the shoulder-to-fist axis moves the forearm without moving the grip at all, which
+    // is what lets the hand come over the top instead of through the middle.
+    this.arms.supportSwivel = workK > 0 ? WORK_SWIVEL * workK : 0;
     // The knife's strike is the authored `melee` clip on the arms rig, and nothing
     // else. This used to add a procedural arc on top of it — 86 degrees of pitch on
     // the viewmodel root plus 18 cm of sideways travel — so two animations of the
