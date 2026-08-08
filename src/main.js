@@ -3097,16 +3097,19 @@ const SHIELD_TEST = {
   // runs pistols by construction. The counter-squad is deliberately well rounded
   // rather than hard-countered: no shotguns lined up to eat a wall, just a rifle, a
   // marksman who can punish an exposed head, a rusher to take the flank and a medic.
+  // Every man on the wall carries a plate. Slipping a rifleman in among them made
+  // the squad's damage impossible to attribute — most of what the "shieldwall" was
+  // dealing came from the one man who was not holding a shield.
   wall: [
     { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
     { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
-    { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
-    { w: 'rifle', hp: 115, sp: 1.3, re: 0.55, ar: 0.2, ammo: 400, medkit: 1, grenade: 1 },
   ],
   balanced: [
     { w: 'rifle', hp: 115, sp: 1.25, re: 0.55, ar: 0.2, ammo: 400, medkit: 1, grenade: 1 },
+    { w: 'rifle', hp: 115, sp: 1.3, re: 0.55, ar: 0.2, ammo: 400, medkit: 1 },
     { w: 'dmr', hp: 110, sp: 1.1, re: 0.52, ar: 0.2, arch: 'marksman', ammo: 400, medkit: 1 },
     { w: 'smg', hp: 120, sp: 1.35, re: 0.55, arch: 'rusher', ammo: 400, medkit: 1, grenade: 1 },
+    { w: 'shotgun', hp: 130, sp: 1.4, re: 0.55, arch: 'rusher', ammo: 400, medkit: 1 },
     { w: 'smg', hp: 110, sp: 1.3, re: 0.55, arch: 'medic', ammo: 400, medkit: 4 },
   ],
   // How far off vertical the overhead view sits. Straight down is unreadable — every
@@ -3164,9 +3167,13 @@ function overheadHeight() {
 }
 
 function spawnShieldTestSquads(swap = false) {
-  for (const c of world.combatants.slice()) c.removeFrom(world);
-  match.crew.length = 0;
-  match.enemies.length = 0;
+  // A whole new match, the way the headless bot harness does it. Calling `fight()`
+  // per seed worked until dev2 put a reflection bake behind the loading screen that
+  // yields between painted frames — which a backgrounded or headless tab never
+  // delivers, so `fight()` simply never resolves there and the scorer hangs. Nothing
+  // about scoring two squads needs a loading screen.
+  clearCombatants();
+  match = makeMatch();
   const build = (roster, team, label, spawns) => roster.forEach((r, i) => {
     const fighter = new Combatant({
       name: `${label} ${i + 1}`, team, weaponId: r.w,
@@ -3278,14 +3285,14 @@ function instrumentShieldTest(test) {
  * visible as one rather than averaged into a conclusion.
  */
 async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } = {}) {
+  // The arena is built at boot behind the asset gate; open it and that is all the
+  // world this needs. `spawnShieldTestSquads` starts a fresh match per seed, which
+  // matters because a finished match stops thinking — reusing one showed up as a
+  // ninety-second run with no contact in either direction, and I would otherwise
+  // have read that as the wall being unapproachable.
+  await window.__game.loadCombatAssets();
   const runs = [];
   for (const [i, seed] of seeds.entries()) {
-    // A fresh match per seed, not one match reused across all of them. Reusing it
-    // meant that the moment a run ended by wipe the match sat in its finished state,
-    // and every later seed stepped a simulation that had already stopped thinking —
-    // which showed up as a ninety-second run with no contact and no damage in either
-    // direction, and which I would otherwise have read as the wall being untouchable.
-    await window.__game.fight('circuits', rank);
     let sd = seed >>> 0;
     const realRandom = Math.random;
     Math.random = () => {

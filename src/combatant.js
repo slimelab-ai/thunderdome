@@ -305,12 +305,26 @@ const SHIELD_TARGET_PENALTY = 42;
 /**
  * How far a raised shield spoils the ground in front of it, and how wide.
  *
- * The dot is looser than the one used to decide whether the plate is between two
- * particular points, because this is about where a man should *walk*, and walking to
- * the edge of an arc a shieldman can simply turn is not the win it looks like.
+ * Sixty degrees either side, which is roughly what a slab held across the chest
+ * actually covers. This was set at 0.2 first — a hundred and fifty-six degree cone —
+ * on the reasoning that walking to the edge of an arc a man can simply turn is not
+ * the win it looks like. The reasoning is fine and the number was still wrong: a cone
+ * that wide makes nearly all ground count as frontage, so every approach prices the
+ * same and there is nothing left to route around. It is the circle-versus-arc trap in
+ * a new coat, and it measured as one — fighters square in front of a shield 84% of
+ * the time they could see one, which is a fact about the cone, not about them.
  */
+/**
+ * What standing square in front of a raised shield is worth against a route.
+ *
+ * On the same scale as `laneSeverity`, where a merely-hot lane is 1 — so a shield
+ * frontage prices like being shot at, which is the honest comparison: both are
+ * places your rounds and your body are wasted.
+ */
+const SHIELD_ARC_COST = 1.4;
+
 const SHIELD_ARC_RANGE = 18;
-const SHIELD_ARC_DOT = 0.2;
+const SHIELD_ARC_DOT = 0.5;
 
 /**
  * Shield placement on the left hand.
@@ -1383,7 +1397,7 @@ export class Combatant {
           const gx = goal.x - fronted.pos.x, gz = goal.z - fronted.pos.z;
           const gd = Math.hypot(gx, gz) || 1;
           const dot = (gx / gd) * Math.sin(fronted.yaw) + (gz / gd) * Math.cos(fronted.yaw);
-          return dot > 0.34 ? 0.55 : 0;
+          return dot > 0.5 ? 0.55 : 0;
         } : null;
         const priced = safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
           const { cost, side } = this._routeCostBothWays(world, goal, now);
@@ -2514,7 +2528,7 @@ export class Combatant {
     if (!other?.alive || other.archetype !== 'shield' || !other.shieldPresenting) return false;
     const dx = this.pos.x - other.pos.x, dz = this.pos.z - other.pos.z;
     const d = Math.hypot(dx, dz) || 1;
-    return (dx / d) * Math.sin(other.yaw) + (dz / d) * Math.cos(other.yaw) > 0.34;
+    return (dx / d) * Math.sin(other.yaw) + (dz / d) * Math.cos(other.yaw) > 0.5;
   }
 
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
@@ -2553,7 +2567,7 @@ export class Combatant {
       const md = Math.hypot(from.x - c.pos.x, from.z - c.pos.z) || 1;
       const facingDot = ((from.x - c.pos.x) / md) * Math.sin(c.yaw)
         + ((from.z - c.pos.z) / md) * Math.cos(c.yaw);
-      if (facingDot > 0.34) return true;
+      if (facingDot > 0.5) return true;
     }
     return false;
   }
@@ -2654,6 +2668,32 @@ export class Combatant {
    * running through his frontage. That is what makes the flank emergent rather than
    * scripted: nobody is told to flank, the front is just expensive.
    */
+  /**
+   * What it costs to route across the frontage of every enemy shield, 0 upward.
+   *
+   * Graded on both axes that matter: how square you are to him, and how close. The
+   * boolean version of this question is `_inEnemyShieldArc`, which is the right
+   * shape for "may I stand here" and the wrong shape for "which way in is best".
+   */
+  _shieldArcCost(world, point) {
+    let cost = 0;
+    for (const c of world.combatants) {
+      if (!c.alive || c.team === this.team || c.archetype !== 'shield') continue;
+      if (!c.shieldPresenting) continue;
+      const dx = point.x - c.pos.x, dz = point.z - c.pos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > SHIELD_ARC_RANGE * SHIELD_ARC_RANGE) continue;
+      const d = Math.sqrt(d2) || 1;
+      const dot = (dx / d) * Math.sin(c.yaw) + (dz / d) * Math.cos(c.yaw);
+      if (dot <= SHIELD_ARC_DOT) continue;
+      // Full price square on, tapering to nothing at the edge of the arc and with
+      // range, so going wide is always cheaper than going straight.
+      const squareness = (dot - SHIELD_ARC_DOT) / (1 - SHIELD_ARC_DOT);
+      cost += SHIELD_ARC_COST * squareness * (1 - d / SHIELD_ARC_RANGE);
+    }
+    return cost;
+  }
+
   _inEnemyShieldArc(world, point) {
     for (const c of world.combatants) {
       if (!c.alive || c.team === this.team || c.archetype !== 'shield') continue;
@@ -2700,6 +2740,23 @@ export class Combatant {
       // Priced by how hard the lane is being worked, not merely by whether it is
       // hot. Crossing stays cheap against a few opportunist rounds and becomes
       // prohibitive against a rifle that has been sawing down the corridor.
+      // A raised shield spoils the ground in front of it, and *this* is the place
+      // that has to know. Making the arc "dangerous" only reached the boolean
+      // checks — peeking, cover, waiting for a gap — while the route pricing that
+      // actually chooses a breach lane consults `covering` and `markWeightAt`
+      // directly and never saw a shield at all. So the only flanking that happened
+      // came from the goal penalty, which fires solely when the *target himself* is
+      // a fronted shieldman: true in a three-on-one, and almost never otherwise,
+      // because the target penalty has by then sent everyone after somebody else.
+      // Which is exactly the pattern from the spectator seat — flanks that work,
+      // and only when it is down to one man.
+      //
+      // Graded rather than boolean, because two shieldmen covering everything is the
+      // circle-versus-arc trap again: if every approach prices the same there is
+      // nothing to choose between, and a squad with nothing to choose walks up the
+      // middle. Square in front is dear, the edge of the arc is cheap, and the
+      // difference is what a flank is made of.
+      swept += weight * this._shieldArcCost(world, _routePoint);
       const lane = this.suppression.covering(_routePoint, sees, now);
       if (lane) {
         let bite = laneSeverity(lane, now);
