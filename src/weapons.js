@@ -80,6 +80,9 @@ export const WEAPONS = {
     dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6, reloadEmpty: 2.15, draw: 0.48, holster: 0.30, raise: 0.20,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
+    // Light enough to fire one-handed, so a shieldman can carry one and keep the
+    // plate up. Anything heavier goes to the shoulder and the shield goes on his back.
+    oneHanded: true,
     workRoll: 1.25,   // charging handle on the right
     // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
     // rather than climbing straight — this is a weapon you walk onto a target.

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { buildArena, updateArenaAmbience, ARENA } from './arena.js';
 import { FX } from './fx.js';
 import { Player } from './player.js';
-import { Combatant } from './combatant.js';
+import { Combatant, SHIELD_STANCES } from './combatant.js';
 import { Announcer, AnnouncerVoiceBank } from './announcer.js';
 import { UI, nextCrewName } from './ui.js';
 import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } from './weapons.js';
@@ -3077,6 +3077,165 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
 // number — so it reported nought deaths in thirty and I reported that as a pass. The
 // same question asked on a map built for it came back thirty for thirty. A test that
 // cannot fail is worse than no test, because it is quoted. See the lane test below.
+/**
+ * What each shield stance actually stops, measured the way combat measures it.
+ *
+ * Not a pose review — a hit test. For every stance it stands a shieldman at the
+ * origin facing +Z, walks an attacker round him at several ranges, and fires at the
+ * centre of his head and of his chest using the same part meshes `fireRay` resolves
+ * against. Whatever the raycast hits first is what a bullet would hit.
+ *
+ * This exists because the placements were verified by *describing* them — plate
+ * spans 0.01 to 0.95 m, crouched eye at 0.76, therefore covered — and describing a
+ * bounding box is not the same as asking whether a bullet aimed at his face arrives.
+ * It did not: he was crouching behind a plate that was covering his shins.
+ *
+ * Returns, per stance and per sector, the share of shots the shield eats.
+ */
+function shieldExposureReport({ distances = [4, 10, 18], step = 15 } = {}) {
+  clearCombatants();
+  match = makeMatch();
+  const subject = new Combatant({
+    name: 'SUBJECT', team: 'enemy', weaponId: 'pistol',
+    skill: { spreadMult: 1, reaction: 0.5, speedMult: 1 },
+    hp: 130, shirt: 0x5b2434, armor: 0, archetype: 'shield',
+  });
+  subject.addTo(world, new THREE.Vector3(0, 0, 0));
+  subject.yaw = 0;                       // facing +Z
+  const ray = new THREE.Raycaster();
+  const from = new THREE.Vector3();
+  const to = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  const centre = new THREE.Vector3();
+  const partCentre = (name) => {
+    for (const mesh of subject.parts) {
+      if (mesh.userData.part !== name) continue;
+      mesh.updateWorldMatrix(true, false);
+      return centre.setFromMatrixPosition(mesh.matrixWorld).clone();
+    }
+    return null;
+  };
+  const sector = (deg) => {
+    const a = Math.abs(((deg + 180) % 360) - 180);
+    return a <= 60 ? 'front' : a >= 120 ? 'back' : 'side';
+  };
+  const out = {};
+  for (const stance of Object.keys(SHIELD_STANCES)) {
+    subject.shieldStance = null;
+    subject._setShieldStance(stance);
+    const crouching = SHIELD_STANCES[stance].crouch !== undefined;
+    subject.crouchK = SHIELD_STANCES[stance].crouch ?? 1;
+    // Crouch the *rig*, not just the number. The first version of this set `crouchK`
+    // — which only moves the eye height the gameplay maths uses — and left the body
+    // standing, so it scored a standing silhouette against a shield placed for a
+    // crouching one and reported zero cover for a stance that was merely untested.
+    // Settle the eased placement too, so it reads the stance and not the swing.
+    for (let i = 0; i < 40; i++) {
+      subject.rig.setStance(0, crouching, 0, 0);
+      subject.rig.update?.(1 / 60);
+      subject.rig._applyPins();
+      subject.group.updateMatrixWorld(true);
+      subject._placeShield(1 / 60);
+    }
+    subject.group.updateMatrixWorld(true);
+    const tally = {};
+    for (const target of ['head', 'torso']) {
+      const aim = partCentre(target);
+      if (!aim) continue;
+      for (const dist of distances) {
+        for (let deg = 0; deg < 360; deg += step) {
+          const rad = (deg * Math.PI) / 180;
+          from.set(Math.sin(rad) * dist, 1.55, Math.cos(rad) * dist);
+          to.copy(aim);
+          dir.copy(to).sub(from).normalize();
+          ray.set(from, dir);
+          ray.far = dist + 3;
+          const hits = ray.intersectObjects(subject.parts, false);
+          const first = hits[0]?.object?.userData?.part ?? 'miss';
+          const key = `${sector(deg)}.${target}`;
+          const t = tally[key] || (tally[key] = { shots: 0, blocked: 0 });
+          t.shots++;
+          if (first === 'shield') t.blocked++;
+        }
+      }
+    }
+    out[stance] = Object.fromEntries(Object.entries(tally)
+      .map(([k, v]) => [k, +(v.blocked / Math.max(1, v.shots)).toFixed(2)]));
+  }
+  subject.removeFrom(world);
+  return out;
+}
+
+/**
+ * One shieldman against N rushers, in the open, repeatedly.
+ *
+ * The archetype's contract in one test: a shield should beat a single rusher who
+ * commits to him head-on, and should lose to two, because two can take angles one
+ * cannot. Anything else means the plate is either decoration or a win button.
+ *
+ * Deliberately in the open with no cover to hide behind — this is about the shield
+ * doing the work, not about map geometry doing it for him.
+ */
+async function runShieldDuel({ rushers = 1, seeds = [1, 2, 3, 4, 5, 6], weapon = 'shotgun' } = {}) {
+  await window.__game.loadCombatAssets();
+  let shieldWins = 0;
+  const durations = [];
+  for (const seed of seeds) {
+    let sd = seed >>> 0;
+    const realRandom = Math.random;
+    Math.random = () => {
+      sd += 0x6d2b79f5; let t = sd;
+      t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+    clearCombatants();
+    match = makeMatch();
+    const shield = new Combatant({
+      name: 'SHIELD', team: 'enemy', weaponId: 'pistol',
+      skill: { spreadMult: 1.3, reaction: 0.55, speedMult: 1 },
+      hp: 130, shirt: 0x5b2434, armor: 0.25, archetype: 'shield',
+    });
+    shield.ammoPools[ITEM_TYPES.pistol.ammo] = 400;
+    shield.openingT = 0;
+    shield.addTo(world, new THREE.Vector3(0, 0, -6));
+    match.enemies.push(shield);
+    const pack = [];
+    for (let i = 0; i < rushers; i++) {
+      const r = new Combatant({
+        name: `RUSH ${i + 1}`, team: 'player', weaponId: weapon,
+        skill: { spreadMult: 1.35, reaction: 0.55, speedMult: 1 },
+        hp: 120, shirt: 0x2e5d33, armor: 0, archetype: 'rusher',
+      });
+      r.ammoPools[ITEM_TYPES[weapon].ammo] = 400;
+      r.openingT = 0;
+      r.addTo(world, new THREE.Vector3(-3 + i * 6, 0, 8));
+      match.crew.push(r);
+      pack.push(r);
+    }
+    match.enemiesAlive = match.enemies.length;
+    player.alive = false;
+    player.vmRoot.visible = false;
+    world.playerProxy.alive = false;
+    world.enemyDmgScale = 1;
+    world.globalDmgMult = 1;
+    assignRoles();
+    let t = 0;
+    while (t < 60 && shield.alive && pack.some(r => r.alive)) {
+      stepMatch(1 / 60);
+      t += 1 / 60;
+    }
+    Math.random = realRandom;
+    if (shield.alive) shieldWins++;
+    durations.push(+t.toFixed(1));
+  }
+  return {
+    rushers,
+    shieldWins: `${shieldWins} / ${seeds.length}`,
+    winRate: +(shieldWins / seeds.length).toFixed(2),
+    durations,
+  };
+}
+
 // ============================================================ the shield test
 //
 // Shieldwall against a competent squad, on the real map, from above.
@@ -3208,7 +3367,7 @@ function makeShieldTest(squads, options = {}) {
   const cfg = { ...SHIELD_TEST, ...options };
   const test = {
     elapsed: 0, done: false, squads,
-    stanceFrames: { carry: 0, aim: 0, turtle: 0, sprint: 0, stowed: 0 },
+    stanceFrames: { carry: 0, aim: 0, hunker: 0, sprint: 0, turtle: 0 },
     frames: 0,
     plateAte: 0, wallDealt: 0, lineDealt: 0,
     lineFrontalFrames: 0, lineFlankFrames: 0, lineSeeingFrames: 0,
@@ -3328,7 +3487,7 @@ async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options 
     lineSurvivors: `${runs.reduce((a, r) => a + r.lineAlive, 0)} / ${runs.length * SHIELD_TEST.balanced.length}`,
     plateAte: mean('plateAte'), wallDealt: mean('wallDealt'), lineDealt: mean('lineDealt'),
     flankShare: mean('flankShare'), baitShare: mean('baitShare'),
-    stance: Object.fromEntries(['carry', 'aim', 'turtle', 'sprint', 'stowed']
+    stance: Object.fromEntries(['carry', 'aim', 'hunker', 'sprint', 'turtle']
       .map(k => [k, +(runs.reduce((a, r) => a + r.stance[k], 0) / runs.length).toFixed(2)])),
   };
 }
@@ -4010,6 +4169,10 @@ window.__game = {
   // Shieldwall against a competent squad on the real map. `shieldTest()` scores it
   // across seeds; `shieldTestWatch()` runs one from directly overhead.
   shieldTest: (opts) => runShieldTest(opts),
+  // What each stance actually stops, by hit test rather than by description.
+  shieldExposure: (opts) => shieldExposureReport(opts),
+  // One shieldman against N rushers in the open: should beat one, lose to two.
+  shieldDuel: (opts) => runShieldDuel(opts),
   shieldTestWatch: (opts) => watchShieldTest(opts),
   flushAnalytics() { return analytics.flush(); },
   get analyticsPending() { return analytics.queue.length; },
