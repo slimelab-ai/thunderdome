@@ -286,14 +286,18 @@ export class ContactMemory {
    * for whoever we were already engaging so fighters don't oscillate between two
    * equally plausible ghosts.
    */
-  best(now, { from, current = null, playerBias = 0.7, stickiness = 8 } = {}) {
+  best(now, { from, current = null, playerBias = 0.7, stickiness = 8, penalty = null } = {}) {
     let best = null, bestScore = -Infinity;
     for (const contact of this.contacts.values()) {
       const dist = Math.hypot(contact.x - from.x, contact.z - from.z);
       const score = (contact.visible ? 100 : 0)
         + contactConfidence(contact, now) * 20
         - dist * (contact.entity.isPlayer ? playerBias : 1) * 0.5
-        + (contact.entity === current ? stickiness : 0);
+        + (contact.entity === current ? stickiness : 0)
+        // Some contacts are visible, close, and still the wrong man to pick a fight
+        // with — a shield fronting you is the case this exists for. The caller
+        // supplies the judgement; perception only knows where people are.
+        - (penalty ? penalty(contact.entity) : 0);
       if (score > bestScore) { bestScore = score; best = contact; }
     }
     return best;

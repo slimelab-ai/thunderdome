@@ -34,6 +34,14 @@ const _laneFrom = new THREE.Vector3();
 const _laneTo = new THREE.Vector3();
 const _routePoint = new THREE.Vector3();
 const _suppressAt = new THREE.Vector3();
+const _shieldInRoot = new THREE.Matrix4();
+const _shieldWant = new THREE.Matrix4();
+const _shieldLocal = new THREE.Matrix4();
+const _shieldPos = new THREE.Vector3();
+const _shieldQuat = new THREE.Quaternion();
+const _shieldEuler = new THREE.Euler();
+const _shieldScl = new THREE.Vector3();
+const _shieldOne = new THREE.Vector3(1, 1, 1);
 const _nadeVel = new THREE.Vector3();
 const _nadeLand = new THREE.Vector3();
 
@@ -167,6 +175,113 @@ const SHIELD_CARRY = {
   upperarm_r: [-0.30, 0.10, 0.80], // abducted wide: the weapon clears the shield edge
   forearm_r: [-1.10, 0, 0],
 };
+
+/** Aiming: the shield squares up and drops, the gun arm comes over the top of it. */
+const SHIELD_AIM = {
+  upperarm_l: [-0.72, 0, -0.50],
+  forearm_l: [-1.45, 0, 0],
+  hand_l: [0, 0, 0],
+  shoulder_r: [0, 0, -0.05],
+  upperarm_r: [-0.52, 0.05, 0.34],  // brought in: he is behind the sights, not waving
+  forearm_r: [-1.25, 0, 0],
+};
+
+/** Turtled: elbow tucked under, everything folded down behind the plate. */
+const SHIELD_TURTLE = {
+  upperarm_l: [-0.16, 0, -0.30],
+  forearm_l: [-1.72, 0, 0],
+  hand_l: [0, 0, 0],
+  shoulder_r: [0, 0, -0.30],
+  upperarm_r: [0.22, 0.10, 0.42],   // gun pulled in against the chest, behind cover
+  forearm_r: [-1.55, 0, 0],
+};
+
+/** Running: dropped to his side and carried like the heavy slab it is. */
+const SHIELD_RUN = {
+  upperarm_l: [0.30, 0, -0.10],     // hanging, swinging low with the stride
+  forearm_l: [-0.34, 0, 0],
+  hand_l: [0, 0, 0],
+};
+
+/** Every bone any shield stance touches, so a stance change can release the last. */
+const SHIELD_BONES = [
+  'upperarm_l', 'forearm_l', 'hand_l', 'shoulder_r', 'upperarm_r', 'forearm_r',
+];
+
+/**
+ * How the shieldman holds the thing, and what each way of holding it costs him.
+ *
+ * The shield is a real mesh in the hit model, not a damage modifier — so *where it
+ * is* decides what it stops, and these stances are the whole balance lever. A plate
+ * fronting the torso genuinely eats the rounds that hit it; the same plate hanging
+ * off a sprinting man's arm genuinely does not, because it is not between anything.
+ * Nothing below needs a rule saying "no protection while running": the geometry
+ * already says it.
+ *
+ * `place` is where the shield sits in the fighter's own frame — metres, +Z forward,
+ * +X his left, Y up from his feet — and is *solved* onto whatever bone carries it,
+ * never hand-tuned. That is the only reason five stances are maintainable: the arm
+ * poses are readable, the placements are readable, and the ugly composition of
+ * Eulers against a triple-rotated bone is arithmetic done at build time.
+ *
+ * `spread` is the accuracy tax, relative to firing without one. Shooting around a
+ * slab you are also holding up is genuinely awful, and shouldering the weapon is
+ * what claws it back — which is what gives the counterplay something to work with:
+ * a hip-firing shieldman is close to harmless, and an aiming one has his head out.
+ */
+const SHIELD_STANCES = {
+  // Standing: angled to his left so the gun arm reaches around the right edge.
+  carry: {
+    parent: 'hand_l', pose: SHIELD_CARRY,
+    place: { x: 0.11, y: 1.00, z: 0.33, yaw: 0.38 },
+    speed: 0.66, spread: 3.2, presenting: true,
+  },
+  // Aiming: squared up and lowered, head and gun arm exposed over the top edge.
+  aim: {
+    parent: 'hand_l', pose: SHIELD_AIM,
+    place: { x: 0.05, y: 0.86, z: 0.35, yaw: 0.16 },
+    speed: 0.60, spread: 1.5, presenting: true,
+  },
+  // Turtled: flush with the ground, and he ducks below the top edge to match.
+  turtle: {
+    parent: 'hand_l', pose: SHIELD_TURTLE,
+    place: { x: 0.00, y: 0.49, z: 0.30, yaw: 0 },
+    speed: 0.80, spread: 4.5, presenting: true, crouch: 0.5,
+  },
+  // Running: down at his side, edge-on to the front. Stops nothing, and is meant to.
+  sprint: {
+    parent: 'hand_l', pose: SHIELD_RUN,
+    place: { x: 0.42, y: 0.62, z: 0.00, yaw: 1.45, roll: 0.22 },
+    speed: 0.86, spread: 3.2, presenting: false,
+  },
+  // Two-handed weapon: slung across his back, where it protects him from nothing he
+  // is looking at.
+  stowed: {
+    parent: 'chest', pose: null,
+    place: { x: 0, y: 1.04, z: -0.25, yaw: Math.PI },
+    speed: 0.92, spread: 1.0, presenting: false,
+  },
+};
+
+/**
+ * What a shield fronting you does to your opinion of a target.
+ *
+ * Sized against the terms in `ContactMemory.best`, where being visible is worth 100:
+ * large enough that any other visible enemy is a better idea, small enough that a
+ * shieldman in the open still beats a rumour of somebody else. Shooting the plate is
+ * donating ammunition, and the squad should act like it knows that.
+ */
+const SHIELD_TARGET_PENALTY = 42;
+
+/**
+ * How far a raised shield spoils the ground in front of it, and how wide.
+ *
+ * The dot is looser than the one used to decide whether the plate is between two
+ * particular points, because this is about where a man should *walk*, and walking to
+ * the edge of an arc a shieldman can simply turn is not the win it looks like.
+ */
+const SHIELD_ARC_RANGE = 18;
+const SHIELD_ARC_DOT = 0.2;
 
 /**
  * Shield placement on the left hand.
@@ -338,6 +453,14 @@ export class Combatant {
     this.breachGoalSafe = true;
     /** Frontal fire on the plate: get low and keep coming. */
     this.shieldWall = false;
+    /** Which way the plate is being held, and what that costs. */
+    this.shieldStance = null;
+    this.shieldPresenting = false;
+    this.shieldSpeedMult = 1;
+    this.shieldSpreadMult = 1;
+    this.shieldCrouch = null;
+    /** Elected to hold a shieldman's attention while the squad goes round him. */
+    this.baiting = false;
     /** What squadmates have told him they are doing. Never read off them. */
     this.knownLanes = new Map();
     /** Holding the angle for the squad, or moving behind somebody who is. */
@@ -459,7 +582,12 @@ export class Combatant {
       shield.userData = { combatant: this, part: 'shield' };
       bone('hand_l')?.add(shield);
       this.shieldMesh = shield;
-      for (const [name, euler] of Object.entries(SHIELD_CARRY)) this.rig.pinBone(name, euler);
+      // Solved once, here, against the bind pose — five stances' worth of local
+      // transforms, each derived by asking where the carrying bone ends up when the
+      // arm is posed that way and inverting it. Hand-tuning one of these produced a
+      // shield floating diagonally above a fighter's head; hand-tuning five was
+      // never going to happen.
+      this._setShieldStance(this._shieldStanceName(false));
     } else if (this.archetype === 'medic') {
       const cross = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.16, 0.02),
@@ -537,6 +665,9 @@ export class Combatant {
    *
    * Falls back to the eye before the weapon has loaded.
    */
+  /** A two-handed weapon puts the shield on his back; there is no third arm. */
+  get twoHanded() { return !WEAPONS[this.weaponId]?.oneHanded; }
+
   muzzleWorld(out = new THREE.Vector3()) {
     const m = this.gun && this.gun.userData.muzzle;
     if (!m) return this.eyePos(out);
@@ -898,7 +1029,13 @@ export class Combatant {
     if (this.thinkTimer <= 0 || (this.target && !this._targetAlive())) {
       this.thinkTimer = 0.35 + Math.random() * 0.25;
       const previousTarget = this.target;
-      this.contact = this.perception.best(now, { from: this.pos, current: this.target });
+      this.contact = this.perception.best(now, {
+        from: this.pos, current: this.target,
+        // Shooting a shield is donating ammunition. Anyone else visible is a better
+        // idea — unless he is the man elected to hold its attention, who is supposed
+        // to be looking straight at it.
+        penalty: (e) => (!this.baiting && this._shieldFacingMe(e) ? SHIELD_TARGET_PENALTY : 0),
+      });
       this.target = this.contact?.entity || null;
       if (this.target !== previousTarget) {
         world.onCombatEvent?.('target_change', this, {
@@ -911,6 +1048,29 @@ export class Combatant {
       // Keep the record pointer live: `tick` may have replaced or dropped it.
       this.contact = this.perception.get(this.target);
       if (!this.contact) this.target = null;
+    }
+
+    // ---- one man on the front of the shield, everyone else around it ----
+    //
+    // A shieldman fronting the squad is a problem nobody solves by shooting him, and
+    // a squad that all correctly decides to go round him leaves nobody keeping him
+    // looking the wrong way. So exactly one is elected to stand in the arc and keep
+    // his attention: the furthest back, because the shieldman's return fire is
+    // dreadful at range and the bait is meant to survive being bait.
+    //
+    // Elected, not assigned, on the same cadence as everything else — it survives the
+    // bait dying, and the job passes to whoever is still looking at him.
+    this.baiting = false;
+    if (this.target && this._shieldFacingMe(this.target)) {
+      let bait = null, bestScore = -Infinity;
+      for (const c of world.combatants) {
+        if (!c.alive || c.team !== this.team || typeof c._shieldFacingMe !== 'function') continue;
+        if (!c._shieldFacingMe(this.target)) continue;
+        if (c !== this && c.target !== this.target) continue;
+        const score = c.pos.distanceTo(this.target.pos) + (c.coverGoal ? 3 : 0);
+        if (score > bestScore) { bestScore = score; bait = c; }
+      }
+      this.baiting = bait === this;
     }
 
     // ---- bounding ----
@@ -1173,11 +1333,23 @@ export class Combatant {
         // lethal and the cheapest one still wins. Near-side pressure needs somebody
         // whose *job* is to draw the angle, not a fighter who was going to route
         // round anyway and got a discount.
+        // Ground in front of a raised shield is worth nothing to stand on, however
+        // cheap it is to reach — so it is priced as though it were half-covered, and
+        // the lanes that come round his edge win on merit. This is what turns "don't
+        // shoot the plate" into "go somewhere the plate isn't".
+        const fronted = this.target && !this.baiting && this._shieldFacingMe(this.target)
+          ? this.target : null;
+        const goalPenalty = fronted ? (goal) => {
+          const gx = goal.x - fronted.pos.x, gz = goal.z - fronted.pos.z;
+          const gd = Math.hypot(gx, gz) || 1;
+          const dot = (gx / gd) * Math.sin(fronted.yaw) + (gz / gd) * Math.cos(fronted.yaw);
+          return dot > 0.34 ? 0.55 : 0;
+        } : null;
         const priced = safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
           const { cost, side } = this._routeCostBothWays(world, goal, now);
           sideByLane.set(lane, side);
           return cost;
-        }, { taken });
+        }, { taken, goalPenalty });
         // The rusher gets the same survey and a different conclusion. He is never
         // pinned down and never routes the long way — but he was previously handed
         // the squad assignment untested, which on the centre lane is a charge
@@ -1498,7 +1670,14 @@ export class Combatant {
       // into the open with his sights up" was the exact report — a man outside any
       // recorded beaten zone still ADS-strolled into view. Moving is moving: the gun
       // comes up when the feet stop.
-      const walkingExposed = this._traveling;
+      // A man carrying his own cover is not walking in the open. The rule that keeps
+      // fighters from ADS-strolling into a lane exists because aiming costs a third
+      // of your speed and buys nothing while exposed — but the shieldman is behind a
+      // plate the entire time, which is the one case where the premise fails. Without
+      // the exemption he reached the aimed stance for fifteen percent of a fight and
+      // spent the rest firing at three times the spread, which is not a tank with a
+      // trade-off, just a slow man who cannot shoot.
+      const walkingExposed = this._traveling && !this.shieldPresenting;
       this.wantsAds = los && !this.sprintNow && !w.melee && fireDist > 2.2 && !walkingExposed &&
         !this.shieldWall;
       // Up in about a third of a second, down slower — a fighter who has just been
@@ -1526,8 +1705,10 @@ export class Combatant {
         // A shouldered weapon groups roughly twice as tight as a hip-fired one. This
         // is the mechanical half of the ADS state: without it, taking the time to aim
         // would be pure cost and the AI would be strictly worse for doing it.
+        // ...and firing around a slab he is also holding up is as bad as it sounds.
         const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
-          * distFactor * (this.crouchK < 0.9 ? 0.8 : 1) * (1.35 - 0.72 * this.adsK);
+          * distFactor * (this.crouchK < 0.9 ? 0.8 : 1) * (1.35 - 0.72 * this.adsK)
+          * this.shieldSpreadMult;
         this._sendRounds(world, w, fireEye, dir, spreadDeg);
         world.onCombatEvent?.('shot', this, {
           target: this.target?.name || null, weapon: this.weaponId, range: fireDist,
@@ -1564,7 +1745,7 @@ export class Combatant {
         if (hasLoS(world, muzzle, _suppressAt)) {
           const fireEye = muzzle.clone();
           const dir = _suppressAt.clone().sub(fireEye).normalize();
-          const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
+          const spreadDeg = this.shieldSpreadMult * w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4)
             * (0.7 + dist / 30) + SUPPRESSING.spread;
           this._sendRounds(world, w, fireEye, dir, spreadDeg);
           world.onCombatEvent?.('shot', this, {
@@ -1698,8 +1879,11 @@ export class Combatant {
       }
       // Shouldered weapon costs pace. It is what makes an aiming fighter read as
       // committed to the shot instead of jogging past with a gun up.
+      // The slab weighs what a slab weighs. Held up in front it is worst, slung on
+      // his back it is nearly free, and dropping it to his side is the whole reason
+      // a shieldman would ever break into a run.
       const spd = this.baseSpeed * speedMult * (this.crouchK < 0.9 ? 0.55 : 1)
-        * (this.sprintNow ? 1.45 : 1) * (1 - 0.32 * this.adsK);
+        * (this.sprintNow ? 1.45 : 1) * (1 - 0.32 * this.adsK) * this.shieldSpeedMult;
       const px = this.pos.x, pz = this.pos.z;
       this.pos.addScaledVector(chosen, spd * dt);
       resolveCircle(this.pos, this.radius, world.colliders, this.pos.y);
@@ -1731,7 +1915,13 @@ export class Combatant {
     // roughly the same head height.
     const wantCrouch = this.healingT > 0 || this.mendT > 0 || this.shieldWall ||
       (this._strafing && this.stanceCrouch) || (this.cautionT > 0 && !this._traveling);
-    this.crouchK += ((wantCrouch ? 0.72 : 1) - this.crouchK) * Math.min(1, dt * 8);
+    // Stance is chosen from what he is doing, and then decides how deep he ducks: a
+    // turtling shieldman goes lower than an ordinary crouch, because the point is to
+    // get his head behind a plate whose top edge is under a metre.
+    this._setShieldStance(this._shieldStanceName(wantCrouch));
+    this._placeShield();
+    const crouchTo = wantCrouch ? (this.shieldCrouch ?? 0.72) : 1;
+    this.crouchK += (crouchTo - this.crouchK) * Math.min(1, dt * 8);
     // peeking leans harder than plain strafing. Sign: positive is to his right, which
     // is exactly where the peek eye offsets for side=+1.
     // The strafe-lean belongs to actual strafing. Keyed on intent alone it flapped
@@ -2199,6 +2389,85 @@ export class Combatant {
     this.lastShotAt = world.simTime ?? 0;
   }
 
+  /**
+   * Derive each stance's shield transform from where it wants the shield to *be*.
+   *
+   * For every stance: pose the arm, look at where the carrying bone has ended up in
+   * the fighter's own frame, and invert it against the desired placement. What comes
+   * out is the local position and rotation that puts the plate exactly there. Done
+   * at build time against the bind pose, so it is deterministic and costs nothing
+   * per frame — the same reference frame the original single hand-solved offset used.
+   */
+  _placeShield() {
+    const st = SHIELD_STANCES[this.shieldStance];
+    if (!st || !this.shieldMesh || !this.alive) return;
+    const carrier = this.rig.bones.get(st.parent);
+    const root = this.rig.root;
+    if (!carrier) return;
+    // Solved against the bones as they are *this frame*, not against the bind pose.
+    //
+    // Caching one transform per stance was the obvious thing and was wrong by up to
+    // twenty centimetres: the plate hangs off the hand, the hand hangs off a spine
+    // that is breathing and walking, so a placement solved once drifts with the
+    // animation. Twenty centimetres is the difference between a shield flush with
+    // the floor and one buried in it — and because the plate is a real hitbox, it is
+    // also the difference between a head being covered and not. The balance is the
+    // geometry, so the geometry gets solved properly.
+    //
+    // Deliberately only while he is alive: a corpse stops re-solving and the plate
+    // keeps its last local transform, so it falls with the arm the way a carried
+    // object should.
+    _shieldInRoot.copy(root.matrixWorld).invert().multiply(carrier.matrixWorld);
+    _shieldWant.compose(
+      _shieldPos.set(st.place.x, st.place.y, st.place.z),
+      _shieldQuat.setFromEuler(
+        _shieldEuler.set(st.place.pitch || 0, st.place.yaw || 0, st.place.roll || 0),
+      ),
+      _shieldOne,
+    );
+    _shieldLocal.multiplyMatrices(_shieldInRoot.invert(), _shieldWant);
+    _shieldLocal.decompose(this.shieldMesh.position, this.shieldMesh.quaternion, _shieldScl);
+    this.shieldMesh.scale.set(1, 1, 1);
+  }
+
+  /** Which way he is holding it this frame. */
+  _shieldStanceName(wantCrouch) {
+    if (this.twoHanded) return 'stowed';
+    if (this.sprintNow) return 'sprint';
+    if (wantCrouch) return 'turtle';
+    if (this.adsK > 0.45) return 'aim';
+    return 'carry';
+  }
+
+  /** Move the plate, repose the arm, and re-price him. Only on a change. */
+  _setShieldStance(name) {
+    if (!this.shieldMesh || this.shieldStance === name) return;
+    const st = SHIELD_STANCES[name];
+    if (!st) return;
+    this.shieldStance = name;
+    for (const b of SHIELD_BONES) this.rig.pinBone(b, null);
+    if (st.pose) for (const [b, euler] of Object.entries(st.pose)) this.rig.pinBone(b, euler);
+    const carrier = this.rig.bones.get(st.parent);
+    if (carrier && this.shieldMesh.parent !== carrier) carrier.add(this.shieldMesh);
+    this.shieldPresenting = !!st.presenting;
+    this.shieldSpeedMult = st.speed;
+    this.shieldSpreadMult = st.spread;
+    this.shieldCrouch = st.crouch ?? null;
+  }
+
+  /**
+   * Is `other` a shieldman with his plate between us?
+   *
+   * The question every other fighter on the map should be asking before committing
+   * to a shot, because the answer decides whether shooting is worth anything at all.
+   */
+  _shieldFacingMe(other) {
+    if (!other?.alive || other.archetype !== 'shield' || !other.shieldPresenting) return false;
+    const dx = this.pos.x - other.pos.x, dz = this.pos.z - other.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    return (dx / d) * Math.sin(other.yaw) + (dz / d) * Math.cos(other.yaw) > 0.34;
+  }
+
   /** Line of sight between two loose `{x, y, z}` points, without allocating. */
   _laneSees(world, from, to) {
     return hasLoS(
@@ -2222,6 +2491,10 @@ export class Combatant {
     if (len < 1e-4) return false;
     for (const c of world.combatants) {
       if (!c.alive || c.team !== team || c.archetype !== 'shield') continue;
+      // Only while he is actually holding it up. A man sprinting with it at his hip
+      // is cover for nobody, and the squad stacking behind him as though he were was
+      // the worst version of this feature.
+      if (!c.shieldPresenting) continue;
       const t = ((c.pos.x - from.x) * dx + (c.pos.z - from.z) * dz) / (len * len);
       if (t < 0.05 || t > 0.95) continue;
       const px = from.x + dx * t, pz = from.z + dz * t;
@@ -2262,7 +2535,7 @@ export class Combatant {
 
   /** Is this lane coming at my shield? Only a shieldman ever asks. */
   _shieldFronts(lane) {
-    if (this.archetype !== 'shield') return false;
+    if (this.archetype !== 'shield' || !this.shieldPresenting) return false;
     const dx = lane.x - this.pos.x, dz = lane.z - this.pos.z;
     const d = Math.hypot(dx, dz) || 1;
     return (dx / d) * Math.sin(this.yaw) + (dz / d) * Math.cos(this.yaw) > 0.5;
@@ -2312,7 +2585,37 @@ export class Combatant {
    */
   _groundIsDangerous(world, point, now) {
     if (this.suppression.markedAt(point, now)) return true;
+    if (this._inEnemyShieldArc(world, point)) return true;
     return !!this.suppression.covering(point, (from, to) => this._dangerSees(world, from, to), now);
+  }
+
+  /**
+   * Is this ground in front of an enemy who is holding a shield up?
+   *
+   * Refusing to *shoot* a fronted shieldman turned out to be half an idea, and
+   * measured worse than none: the squad correctly stopped targeting the plates,
+   * picked the rifleman standing behind them instead, and then walked into the
+   * shield arcs anyway on the way to him — ninety-nine percent of their
+   * shield-facing time spent square in front of one, shooting past it at somebody
+   * else. Not aiming at a shield is not the same as not standing in front of one.
+   *
+   * So the arc is *ground*, priced by the same machinery as a beaten zone. Routes,
+   * breach lanes and cover choices all consult this already, so "go round him"
+   * needs no separate plan and no coordination — the cheap way in simply stops
+   * running through his frontage. That is what makes the flank emergent rather than
+   * scripted: nobody is told to flank, the front is just expensive.
+   */
+  _inEnemyShieldArc(world, point) {
+    for (const c of world.combatants) {
+      if (!c.alive || c.team === this.team || c.archetype !== 'shield') continue;
+      if (!c.shieldPresenting) continue;
+      const dx = point.x - c.pos.x, dz = point.z - c.pos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > SHIELD_ARC_RANGE * SHIELD_ARC_RANGE) continue;
+      const d = Math.sqrt(d2) || 1;
+      if ((dx / d) * Math.sin(c.yaw) + (dz / d) * Math.cos(c.yaw) > SHIELD_ARC_DOT) return true;
+    }
+    return false;
   }
 
   /**

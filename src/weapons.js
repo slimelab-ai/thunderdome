@@ -29,6 +29,9 @@ export const WEAPONS = {
     dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
+    // A hand stays free, which is the only reason a shieldman can fight with one.
+    // Anything two-handed goes to the shoulder and the shield goes on his back.
+    oneHanded: true,
     // When the slide is worked during the reload, as a fraction of the reload's
     // duration. Matches the frames in `anim_reload_pistol` where the support hand is
     // over the top of the weapon — without this the hand mimes a rack the slide never
@@ -116,7 +119,7 @@ WEAPONS.knife = {
   dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0,
   spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
   recoilPattern: [], recoilVelocity: 0.0,
-  aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4,
+  aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4, oneHanded: true,
   desc: 'Always with you. Two good slashes end anyone.',
 };
 

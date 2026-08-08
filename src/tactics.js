@@ -112,7 +112,8 @@ export function safeBreachLane(target, attacker, assigned, routeCost, opts = {})
   const consider = (reach) => {
     for (const lane of order) {
       const goal = offsetBreachGoal(target, attacker, lane, { ...opts, reach });
-      const cost = routeCost(goal, lane) + (taken && taken.has(lane) ? share : 0);
+      const cost = routeCost(goal, lane) + (taken && taken.has(lane) ? share : 0)
+        + (opts.goalPenalty ? opts.goalPenalty(goal) : 0);
       if (cost <= 0) return { lane, goal, cost: 0, covered: false, staging: reach < 1 };
       if (!best || cost < best.cost - 1e-6) best = { lane, goal, cost, staging: reach < 1 };
     }

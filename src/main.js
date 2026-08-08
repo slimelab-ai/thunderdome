@@ -2540,6 +2540,222 @@ function stepHeadlessBotMatch(dt = 1 / 60, maxSteps = 18000) {
 // number — so it reported nought deaths in thirty and I reported that as a pass. The
 // same question asked on a map built for it came back thirty for thirty. A test that
 // cannot fail is worse than no test, because it is quoted. See the lane test below.
+// ============================================================ the shield test
+//
+// Shieldwall against a competent squad, on the real map, from above.
+//
+// The lane test asks one narrow question about one corner. This asks the balance
+// question: a team built around riot shields versus a team built around not being
+// hit by them, on the arena everybody actually fights in, with nothing scripted on
+// either side. Both squads are ordinary bots — no unkillable holder, no scenario
+// driving anyone — so whatever happens is the AI's own opinion of the matchup.
+//
+// It reports the things the archetype is supposed to trade between: how much of the
+// fight the shields spend actually presenting the plate, how much damage the plate
+// ate, how much they landed while paying the accuracy tax for it, and whether the
+// other squad went round them or stood in front donating ammunition.
+
+const SHIELD_TEST = {
+  // A shieldman with a two-handed weapon is a man carrying furniture, so the wall
+  // runs pistols by construction. The counter-squad is deliberately well rounded
+  // rather than hard-countered: no shotguns lined up to eat a wall, just a rifle, a
+  // marksman who can punish an exposed head, a rusher to take the flank and a medic.
+  wall: [
+    { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
+    { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
+    { w: 'pistol', hp: 130, sp: 1.3, re: 0.55, ar: 0.25, arch: 'shield', ammo: 400, medkit: 1 },
+    { w: 'rifle', hp: 115, sp: 1.3, re: 0.55, ar: 0.2, ammo: 400, medkit: 1, grenade: 1 },
+  ],
+  balanced: [
+    { w: 'rifle', hp: 115, sp: 1.25, re: 0.55, ar: 0.2, ammo: 400, medkit: 1, grenade: 1 },
+    { w: 'dmr', hp: 110, sp: 1.1, re: 0.52, ar: 0.2, arch: 'marksman', ammo: 400, medkit: 1 },
+    { w: 'smg', hp: 120, sp: 1.35, re: 0.55, arch: 'rusher', ammo: 400, medkit: 1, grenade: 1 },
+    { w: 'smg', hp: 110, sp: 1.3, re: 0.55, arch: 'medic', ammo: 400, medkit: 4 },
+  ],
+  camera: { height: 52, tilt: -7 },
+  seconds: 90,
+};
+
+function spawnShieldTestSquads(swap = false) {
+  for (const c of world.combatants.slice()) c.removeFrom(world);
+  match.crew.length = 0;
+  match.enemies.length = 0;
+  const build = (roster, team, label, spawns) => roster.forEach((r, i) => {
+    const fighter = new Combatant({
+      name: `${label} ${i + 1}`, team, weaponId: r.w,
+      skill: { spreadMult: r.sp || 1.3, reaction: r.re || 0.58, speedMult: r.speed || 1 },
+      hp: r.hp || 100, shirt: team === 'player' ? 0x2e5d33 : 0x5b2434,
+      armor: r.ar || 0, archetype: r.arch || null,
+    });
+    fighter.ammoPools[ITEM_TYPES[r.w].ammo] = r.ammo || 200;
+    fighter.healKits = r.medkit || 0;
+    fighter.nades = r.grenade || 0;
+    fighter.openingT = 0;
+    fighter.addTo(world, spawns[i % spawns.length]);
+    (team === 'player' ? match.crew : match.enemies).push(fighter);
+  });
+  // Sides swap so the map's own asymmetry cannot be mistaken for the archetype's.
+  build(swap ? SHIELD_TEST.balanced : SHIELD_TEST.wall, 'player', swap ? 'LINE' : 'WALL',
+    arena.spawns.playerCrew);
+  build(swap ? SHIELD_TEST.wall : SHIELD_TEST.balanced, 'enemy', swap ? 'WALL' : 'LINE',
+    arena.spawns.enemy);
+  match.enemiesAlive = match.enemies.length;
+  player.alive = false;
+  player.vmRoot.visible = false;
+  world.playerProxy.alive = false;
+  world.enemyDmgScale = 1;
+  world.globalDmgMult = 1;
+  assignRoles();
+  return { wall: [...match.crew, ...match.enemies].filter(c => c.name.startsWith('WALL')),
+    line: [...match.crew, ...match.enemies].filter(c => c.name.startsWith('LINE')) };
+}
+
+function makeShieldTest(squads, options = {}) {
+  const cfg = { ...SHIELD_TEST, ...options };
+  const test = {
+    elapsed: 0, done: false, squads,
+    stanceFrames: { carry: 0, aim: 0, turtle: 0, sprint: 0, stowed: 0 },
+    frames: 0,
+    plateAte: 0, wallDealt: 0, lineDealt: 0,
+    lineFrontalFrames: 0, lineFlankFrames: 0, lineSeeingFrames: 0,
+    baitFrames: 0,
+    wallDeaths: 0, lineDeaths: 0,
+    step(dt) {
+      this.elapsed += dt;
+      for (const c of squads.wall) {
+        if (!c.alive || !c.shieldMesh) continue;
+        this.frames++;
+        if (this.stanceFrames[c.shieldStance] !== undefined) this.stanceFrames[c.shieldStance]++;
+      }
+      // Where the other squad is standing relative to the plates they can see: in
+      // the arc (donating ammunition) or round the edge of it (the point).
+      for (const c of squads.line) {
+        if (!c.alive) continue;
+        let sees = false, fronted = false;
+        for (const sh of squads.wall) {
+          if (!sh.alive || !sh.shieldPresenting) continue;
+          if (c.pos.distanceTo(sh.pos) > 30) continue;
+          sees = true;
+          if (c._shieldFacingMe(sh)) fronted = true;
+        }
+        if (!sees) continue;
+        this.lineSeeingFrames++;
+        if (fronted) this.lineFrontalFrames++; else this.lineFlankFrames++;
+        if (c.baiting) this.baitFrames++;
+      }
+      const wallAlive = squads.wall.filter(c => c.alive).length;
+      const lineAlive = squads.line.filter(c => c.alive).length;
+      if (!wallAlive || !lineAlive || this.elapsed > cfg.seconds) this.done = true;
+    },
+    report() {
+      const f = Math.max(1, this.frames);
+      const seen = Math.max(1, this.lineSeeingFrames);
+      return {
+        seconds: +this.elapsed.toFixed(1),
+        wallAlive: this.squads.wall.filter(c => c.alive).length,
+        lineAlive: this.squads.line.filter(c => c.alive).length,
+        stance: Object.fromEntries(Object.entries(this.stanceFrames)
+          .map(([k, v]) => [k, +(v / f).toFixed(2)])),
+        plateAte: Math.round(this.plateAte),
+        wallDealt: Math.round(this.wallDealt),
+        lineDealt: Math.round(this.lineDealt),
+        // The counterplay, in one number: of the time the other squad could see a
+        // raised shield, how much of it did they spend somewhere it was not pointing?
+        flankShare: +(this.lineFlankFrames / seen).toFixed(2),
+        baitShare: +(this.baitFrames / seen).toFixed(2),
+      };
+    },
+  };
+  return test;
+}
+
+function instrumentShieldTest(test) {
+  const original = { onKill: world.onKill, onDamage: world.onDamage };
+  const isWall = (c) => !!c && test.squads.wall.includes(c);
+  world.onDamage = (attacker, victim, amount) => {
+    if (isWall(attacker)) test.wallDealt += amount;
+    else if (attacker) test.lineDealt += amount;
+    original.onDamage?.(attacker, victim, amount);
+  };
+  world.onKill = (killer, victim, part) => {
+    if (isWall(victim)) test.wallDeaths++; else if (victim) test.lineDeaths++;
+    original.onKill?.(killer, victim, part);
+  };
+  return () => { world.onKill = original.onKill; world.onDamage = original.onDamage; };
+}
+
+/**
+ * Score the matchup across seeds, headless.
+ *
+ * Sides swap on alternate seeds, so a result that only appears from one spawn is
+ * visible as one rather than averaged into a conclusion.
+ */
+async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } = {}) {
+  const runs = [];
+  for (const [i, seed] of seeds.entries()) {
+    // A fresh match per seed, not one match reused across all of them. Reusing it
+    // meant that the moment a run ended by wipe the match sat in its finished state,
+    // and every later seed stepped a simulation that had already stopped thinking —
+    // which showed up as a ninety-second run with no contact and no damage in either
+    // direction, and which I would otherwise have read as the wall being untouchable.
+    await window.__game.fight('circuits', rank);
+    let sd = seed >>> 0;
+    const realRandom = Math.random;
+    Math.random = () => {
+      sd += 0x6d2b79f5; let t = sd;
+      t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+    const restore = () => { Math.random = realRandom; };
+    const squads = spawnShieldTestSquads(i % 2 === 1);
+    const test = makeShieldTest(squads, options);
+    const uninstrument = instrumentShieldTest(test);
+    // The plate's own accounting: applyDamage scales shield hits by 0.06, so what it
+    // ate is what would have landed without it.
+    const originalApply = Combatant.prototype.applyDamage;
+    Combatant.prototype.applyDamage = function (w, part, dmg, shooter, point, dir) {
+      if (part === 'shield' && squads.wall.includes(this)) test.plateAte += dmg;
+      return originalApply.call(this, w, part, dmg, shooter, point, dir);
+    };
+    let guard = 0;
+    while (!test.done && guard++ < 60 * (options.seconds ?? SHIELD_TEST.seconds) + 600) {
+      stepMatch(1 / 60);
+      test.step(1 / 60);
+    }
+    Combatant.prototype.applyDamage = originalApply;
+    uninstrument();
+    restore();
+    runs.push({ seed, swapped: i % 2 === 1, ...test.report() });
+  }
+  const mean = (k) => +(runs.reduce((a, r) => a + (r[k] ?? 0), 0) / runs.length).toFixed(2);
+  return {
+    runs,
+    wallSurvivors: `${runs.reduce((a, r) => a + r.wallAlive, 0)} / ${runs.length * SHIELD_TEST.wall.length}`,
+    lineSurvivors: `${runs.reduce((a, r) => a + r.lineAlive, 0)} / ${runs.length * SHIELD_TEST.balanced.length}`,
+    plateAte: mean('plateAte'), wallDealt: mean('wallDealt'), lineDealt: mean('lineDealt'),
+    flankShare: mean('flankShare'), baitShare: mean('baitShare'),
+    stance: Object.fromEntries(['carry', 'aim', 'turtle', 'sprint', 'stowed']
+      .map(k => [k, +(runs.reduce((a, r) => a + r.stance[k], 0) / runs.length).toFixed(2)])),
+  };
+}
+
+/** The same fight, rendered, straight down over the pit so the shapes are readable. */
+async function watchShieldTest(options = {}) {
+  await window.__game.fight('circuits', options.rank ?? 5);
+  const squads = spawnShieldTestSquads(options.swap === true);
+  const test = makeShieldTest(squads, options);
+  const uninstrument = instrumentShieldTest(test);
+  const finish = () => { world.scenario = null; uninstrument(); player.vmRoot.visible = true; };
+  world.scenario = (dt) => {
+    test.step(dt);
+    camera.position.set(0, SHIELD_TEST.camera.height, -SHIELD_TEST.camera.tilt);
+    camera.lookAt(0, 0, 0);
+    if (test.done) finish();
+  };
+  test.stop = finish;
+  return test;
+}
+
 // ============================================================ the lane test
 //
 // The held-corner question asked on a map built for asking it. See src/lane-test.js
@@ -3181,6 +3397,10 @@ window.__game = {
   // one. `laneTest()` scores it; `laneTestWatch()` plays it in front of you.
   laneTest: (opts) => runLaneTest(opts),
   laneTestWatch: (opts) => watchLaneTest(opts),
+  // Shieldwall against a competent squad on the real map. `shieldTest()` scores it
+  // across seeds; `shieldTestWatch()` runs one from directly overhead.
+  shieldTest: (opts) => runShieldTest(opts),
+  shieldTestWatch: (opts) => watchShieldTest(opts),
   flushAnalytics() { return analytics.flush(); },
   get analyticsPending() { return analytics.queue.length; },
   setLocked(v) { locked = v; },
