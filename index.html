@@ -78,6 +78,7 @@
     <div id="hud-bottomright">
       <div id="consumables"></div>
       <div id="weapon-name">P9 SIDEARM</div>
+      <div id="ammo-rounds"><div id="ammo-mag-rounds"></div><div id="ammo-chamber-round"></div></div>
       <div id="ammo-block"><span id="ammo-mag">12</span><span id="ammo-sep">/</span><span id="ammo-reserve">∞</span></div>
       <div id="reload-hint" class="hidden">RELOADING…</div>
       <div id="weapon-slots"></div>
@@ -85,19 +86,40 @@
 
     <div id="objective-line"></div>
     <div id="interact-hint" class="hidden"></div>
+    <div id="range-panel" class="hidden">
+      <b>FIRING RANGE</b>
+      <span id="range-stats">0 HITS · 0 HEADSHOTS</span>
+      <small><span class="controller-only">Y SWAP · X RELOAD · START PAUSE</span><span class="keyboard-only">MOUSE WHEEL SWAP · R RELOAD · ESC PAUSE</span></small>
+    </div>
   </div>
 
   <!-- ===================== SCREENS ===================== -->
+  <div id="screen-loading" class="screen loading-screen hidden" role="status" aria-live="polite">
+    <div class="loading-card">
+      <div class="loading-kicker">THE HOUSE IS SETTING THE STAGE</div>
+      <h2 id="loading-title">OPENING THE GATES</h2>
+      <div class="loading-meter"><i id="loading-meter-fill"></i></div>
+      <b id="loading-stage">STREAMING ARENA</b>
+      <span id="loading-detail">FIGHTERS · WEAPONS · LIGHTING</span>
+      <small>The picture may pause briefly while Edge unpacks the arena. Your controller is still connected.</small>
+    </div>
+  </div>
   <div id="screen-menu" class="screen">
     <div class="menu-inner">
       <div class="menu-pretitle">THE UNDERGROUND KILL LEAGUE PRESENTS</div>
       <h1 class="game-title">THUNDER<span>DOME</span></h1>
-      <div class="menu-tagline">Ten ranks. One champion. Everybody else leaves in a bag.</div>
+      <div class="menu-tagline">Fifteen ranks. One champion. Everybody else leaves in a bag.</div>
       <div class="menu-buttons">
         <button id="btn-continue" class="btn btn-big hidden">CONTINUE CAREER</button>
         <button id="btn-new" class="btn btn-big">NEW CIRCUITS CAREER</button>
         <button id="btn-new-liquidation" class="btn btn-big btn-blood">NEW LIQUIDATION WAR</button>
+        <button id="btn-firing-range" class="btn btn-big">FIRING RANGE</button>
         <button id="btn-menu-settings" class="btn btn-big btn-ghost">SETTINGS</button>
+      </div>
+      <div class="xbox-controller-help">
+        <b>XBOX EDGE CONTROLLER SETUP</b>
+        Open the controller icon beside the address bar and turn <strong>CONTROLLER MODE</strong> on.
+        Edge does not expose the gamepad to this page before that switch is enabled.
       </div>
       <div class="menu-controller-guide controller-only">LEFT STICK CURSOR · <span class="pad-key pad-a">A</span> SELECT</div>
       <div class="menu-controls">
@@ -293,9 +315,9 @@
               <small>Higher values soften small stick movements</small>
             </label>
             <label for="controller-aim-assist">
-              <span>AIM MAGNETISM <output id="controller-aim-assist-value">35%</output></span>
+              <span>AIM ASSIST <output id="controller-aim-assist-value">35%</output></span>
               <input id="controller-aim-assist" type="range" min="0" max="1" step="0.05" value="0.35" />
-              <small>Narrow slowdown and micro-correction only</small>
+              <small>Target-volume slowdown and movement tracking; no center pull</small>
             </label>
           </div>
           <div class="controller-curve-wrap">
@@ -316,6 +338,8 @@
     </div>
   </div>
 
-  <script type="module" src="/src/main.js"></script>
+  <div id="diagnostic-session-label" class="diagnostic-session-label hidden" aria-hidden="true"></div>
+
+  <script type="module" src="/src/bootstrap.js"></script>
 </body>
 </html>

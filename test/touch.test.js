@@ -13,6 +13,10 @@ test('touch mode remains off on ordinary desktop signals', () => {
   assert.equal(touchModeFromSignals(), false);
 });
 
+test('a coarse console pointer does not enable the touch HUD', () => {
+  assert.equal(touchModeFromSignals({ coarsePointer: true, excluded: true }), false);
+});
+
 test('touch query override wins over detected capabilities', () => {
   assert.equal(touchModeFromSignals({ override: '1' }), true);
   assert.equal(touchModeFromSignals({ override: '0', maxTouchPoints: 5, mobileUserAgent: true }), false);

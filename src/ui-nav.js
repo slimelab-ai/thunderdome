@@ -144,6 +144,7 @@ export class MenuNavigator {
   }
 
   activate() {
+    if (this.doc.body.classList.contains('controller-mode')) return;
     this.doc.body.classList.add('controller-mode');
     this._updateHint();
   }
@@ -403,6 +404,32 @@ export class MenuNavigator {
     });
   }
 
+  /**
+   * The cursor items and their rects, refreshed at most every 120 ms.
+   *
+   * `_magneticTarget` runs on every stick sample — once per frame while the stick is
+   * held — and used to querySelectorAll the screen, visibility-check every control
+   * and measure every rect each time: a forced layout per frame for controls that
+   * almost never move. Menus are static between interactions; the moments they are
+   * not are covered by the key (screen, dialog, carry mode change), the edge-scroll
+   * invalidation, and the 120 ms ceiling. A control replaced mid-window self-heals:
+   * every consumer already tolerates a detached element for a frame.
+   */
+  _cursorItemRects(root) {
+    const dialog = this.doc ? this._dialog(root) : null;
+    const carrying = !!this.doc?.body?.classList?.contains('controller-carrying');
+    const key = `${root?.id || ''}|${dialog ? 'dlg' : ''}|${carrying}`;
+    const now = performance.now();
+    const cached = this._rectCache;
+    if (cached && cached.key === key && now - cached.at < 120) return cached;
+    const items = this._cursorItems(root);
+    this._rectCache = {
+      key, at: now, items,
+      rects: items.map(item => item.getBoundingClientRect()),
+    };
+    return this._rectCache;
+  }
+
   _magneticTarget(root) {
     if (this.cursorMagnetLockoutPoint) {
       const cleared = Math.hypot(
@@ -412,15 +439,19 @@ export class MenuNavigator {
       if (!cleared) return null;
       this.cursorMagnetLockoutPoint = null;
     }
-    const items = this._cursorItems(root);
-    const candidates = this.cursorSnapCooldown > 0 && this.cursorSnapIgnore
-      ? items.filter(item => item !== this.cursorSnapIgnore)
-      : items;
-    const index = cursorMagnetCandidate(
-      candidates.map(item => item.getBoundingClientRect()),
-      this.cursorX,
-      this.cursorY
-    );
+    const { items, rects } = this._cursorItemRects(root);
+    let candidates = items;
+    let candidateRects = rects;
+    if (this.cursorSnapCooldown > 0 && this.cursorSnapIgnore) {
+      candidates = [];
+      candidateRects = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i] === this.cursorSnapIgnore) continue;
+        candidates.push(items[i]);
+        candidateRects.push(rects[i]);
+      }
+    }
+    const index = cursorMagnetCandidate(candidateRects, this.cursorX, this.cursorY);
     return index >= 0 ? candidates[index] : null;
   }
 
@@ -506,6 +537,8 @@ export class MenuNavigator {
       top: edgeY * 720 * dt,
       behavior: 'auto',
     });
+    // Everything on screen just moved relative to the cursor.
+    this._rectCache = null;
   }
 
   _scrollCursorPanel({ x = 0, y = 0, magnitude = 0, dt = 0 }, root) {

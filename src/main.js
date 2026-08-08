@@ -3,7 +3,7 @@ import { buildArena, updateArenaAmbience, ARENA } from './arena.js';
 import { FX } from './fx.js';
 import { Player } from './player.js';
 import { Combatant } from './combatant.js';
-import { Announcer } from './announcer.js';
+import { Announcer, AnnouncerVoiceBank } from './announcer.js';
 import { UI, nextCrewName } from './ui.js';
 import { WEAPONS, WEAPON_ORDER, preloadWeapons, buildHeldGun, SUPPORT_GRIP } from './weapons.js';
 import { audio } from './audio.js';
@@ -14,13 +14,15 @@ import {
   LANE_TEST, laneTestColliders, buildLaneTestMeshes, buildLaneTestMarkers, spotAt,
 } from './lane-test.js';
 import { RenderPipeline, QUALITY_TIERS } from './render.js';
+import { NO_OCCLUDE_LAYER } from './layers.js';
 import { SpectatorCamera } from './spectator-camera.js';
 import { preloadFighter, fighterReady, FighterRig } from './fighter-rig.js';
 import { preloadViewmodel } from './viewmodel.js';
 import {
   ITEM_TYPES, AMMO_TYPES, makeItem, autoPlace, removeFromGrid, canPlace,
   makeCharacter, characterWeight, weightSpeedMult, armorMits, countInPack, useFromPack,
-  ammoInPack, consumeAmmo, bestUsableGun, buildAmmoPools, STASH_COLS,
+  ammoInGrid, ammoInPack, addAmmoToPack, extractAmmoFromPack, takeAmmoFromGrid, consumeAmmo,
+  bestUsableGun, buildAmmoPools, STASH_COLS,
 } from './items.js';
 import { createMarket } from './market.js';
 import { InputHub, STICK, TOUCH, AIM_ASSIST } from './input.js';
@@ -30,6 +32,9 @@ import { MenuNavigator } from './ui-nav.js';
 import { ControllerSettingsPanel } from './controller-settings.js';
 import { analytics } from './analytics.js';
 import { MatchLifecycle, markKnownOutcome } from './match-lifecycle.js';
+import { isXboxBrowser, requestBrowserFullscreen } from './platform.js';
+import { showGraphicsStartupFailure } from './graphics-startup.js';
+import { createRuntimeDiagnostics, runtimeDiagnosticsEnabled } from './runtime-diagnostics.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, enemyRoster,
   liquidationOdds, liquidationBetOptions, canPlaceLiquidationBet, recordLiquidationOutcome,
@@ -45,7 +50,7 @@ import {
   normalizeCrewDeployment, shouldBenchNewHire,
 } from './roster.js';
 import {
-  orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
+  AUTO_AMMO_STACKS, orderedSquad, planSquadAmmo, planSquadHealing, planSquadTraining,
 } from './squad-auto.js';
 
 // ============================================================ sandbox
@@ -63,14 +68,124 @@ import {
  * and the thing you were watching is gone. This spawns no opposition, keeps the match
  * from ending on an empty arena, and (by default) makes the player invulnerable.
  */
-const sandbox = { active: false, god: true };
+const sandbox = {
+  active: false, god: true, publicRange: false, weapons: [],
+  savedCareer: null, savedMarket: null, hits: 0, headshots: 0, damage: 0,
+};
 
-function enterSandbox(weapons = null, { god = true } = {}) {
+function updateRangePanel() {
+  const panel = document.getElementById('range-panel');
+  panel?.classList.toggle('hidden', !sandbox.active);
+  const stats = document.getElementById('range-stats');
+  if (stats) stats.textContent = `${sandbox.hits} HITS · ${sandbox.headshots} HEADSHOTS · ${Math.round(sandbox.damage)} DAMAGE`;
+}
+
+function spawnRangeTarget(pos, label) {
+  const group = new THREE.Group();
+  const plate = new THREE.MeshBasicMaterial({ color: 0xd8d3c3 });
+  const bull = new THREE.MeshBasicMaterial({ color: 0xe3242b });
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.82, 0.10), plate);
+  torso.position.y = 0.86;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 10), bull);
+  head.position.y = 1.48;
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.72, 0.08), new THREE.MeshBasicMaterial({ color: 0x4d4a45 }));
+  post.position.y = 0.36;
+  group.add(post, torso, head);
+  group.position.copy(pos);
+
+  const target = {
+    name: label, team: 'enemy', alive: true, scale: 1, pos: pos.clone(), group,
+    parts: [torso, head],
+    aimPoint(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + 1.12, this.pos.z); },
+    applyDamage(targetWorld, part, damage, shooter, point) {
+      sandbox.hits++;
+      sandbox.damage += damage;
+      if (part === 'head') sandbox.headshots++;
+      updateRangePanel();
+      targetWorld.onHitmarker?.(false, part === 'head');
+      targetWorld.fx.sparks(point, null, null, false);
+      const material = part === 'head' ? bull : plate;
+      const old = material.color.getHex();
+      material.color.setHex(0xffb92e);
+      setTimeout(() => material.color.setHex(old), 70);
+    },
+    update() {},
+    removeFrom(targetWorld) {
+      targetWorld.scene.remove(group);
+      targetWorld.combatants = targetWorld.combatants.filter(c => c !== this);
+      targetWorld.hitMeshes = targetWorld.hitMeshes.filter(mesh => mesh.userData.combatant !== this);
+      torso.geometry.dispose(); head.geometry.dispose(); post.geometry.dispose();
+      plate.dispose(); bull.dispose(); post.material.dispose();
+    },
+  };
+  torso.userData = { combatant: target, part: 'torso' };
+  head.userData = { combatant: target, part: 'head' };
+  scene.add(group);
+  world.combatants.push(target);
+  world.hitMeshes.push(torso, head);
+  group.updateMatrixWorld(true);
+  return target;
+}
+
+function setupFiringRange() {
+  // Start beyond the protective gate, looking straight down the target lane. A live
+  // bout opens angled toward the gate's right-hand gap; that is useful under fire and
+  // confusing in a range, where the first frame should already explain the mode.
+  player.pos.set(0, 0, 8.5);
+  player.vel.set(0, 0, 0);
+  player.yaw = 0;
+  player.pitch = 0;
+  player.slots = [...sandbox.weapons];
+  player.slotIdx = 0;
+  player.knifeOut = false;
+  player.infiniteAmmo = true;
+  player.hideKnifeSlot = true;
+  player.magBySlot = player.slots.map(id => WEAPONS[id].mag);
+  player.mag = WEAPONS[player.slots[0]].mag;
+  // A weapon handed over loaded has a round up as well as a full magazine. Setting the
+  // magazine without the chamber leaves the gun unable to fire until it is racked.
+  player.chamberBySlot = player.slots.map(() => true);
+  player.chambered = true;
+  player._mountViewmodel();
+  sandbox.hits = 0; sandbox.headshots = 0; sandbox.damage = 0;
+  [
+    [-4.8, 0, 1.5, 'CLOSE PLATE'],
+    [0, 0.45, 1.5, 'CENTER PLATE'],
+    [4.8, 0, 1.5, 'RIGHT PLATE'],
+  ].forEach(([x, y, z, label]) => spawnRangeTarget(new THREE.Vector3(x, y, z), label));
+  updateRangePanel();
+  ui.eventBanner('FIRING RANGE', 'Y / MOUSE WHEEL cycles every gun · ammunition is unlimited', 'var(--gold)');
+}
+
+function leaveFiringRange() {
+  clearCombatants();
+  player.infiniteAmmo = false;
+  player.hideKnifeSlot = false;
+  sandbox.active = false;
+  updateRangePanel();
+  career = sandbox.savedCareer || newCareer('circuits');
+  market = sandbox.savedMarket || createMarket(career.mode, career.liquidation?.market);
+  sandbox.savedCareer = null;
+  sandbox.savedMarket = null;
+  const hasSave = !!load();
+  document.getElementById('btn-continue').classList.toggle('hidden', !hasSave);
+  document.getElementById('btn-new').textContent = hasSave ? 'NEW CAREER (WIPES SAVE)' : 'NEW CIRCUITS CAREER';
+  ui.showScreen('menu');
+  phase = 'menu';
+}
+
+function enterSandbox(weapons = null, { god = true, publicRange = false } = {}) {
   const list = (Array.isArray(weapons) ? weapons : String(weapons || '').split(','))
     .map((w) => w.trim())
     .filter((w) => WEAPON_ORDER.includes(w));
   sandbox.active = true;
   sandbox.god = god;
+  sandbox.publicRange = publicRange;
+  sandbox.weapons = list.length ? list : [...WEAPON_ORDER];
+  if (publicRange) {
+    sandbox.savedCareer = career;
+    sandbox.savedMarket = market;
+  }
 
   career = newCareer('circuits');
   career.rank = 15;
@@ -81,21 +196,28 @@ function enterSandbox(weapons = null, { god = true } = {}) {
   for (const ammo of ['ammo_9mm', 'ammo_buck', 'ammo_762', 'ammo_308']) {
     for (let i = 0; i < 3; i++) autoPlace(pack, makeItem(ammo));
   }
-  const chosen = list.length ? list : WEAPON_ORDER;
+  const chosen = sandbox.weapons;
   for (const id of chosen.slice(0, 2)) autoPlace(pack, makeItem(id));
 
   startMatch();
-  player.slots = chosen.slice(0, 2);
-  player.slotIdx = 0;
-  player.knifeOut = false;
-  player.loadMagsFromPack();
-  player._mountViewmodel();
-  ui.eventBanner('SANDBOX', `${chosen.join(' · ')}${god ? ' · invulnerable' : ''}`, 'var(--gold)');
   return chosen;
 }
 
 // ============================================================ graphics quality
 const QUALITY_KEY = 'thunderdome-quality';
+const xboxBrowser = isXboxBrowser();
+if (xboxBrowser) document.body.classList.add('xbox-browser');
+const runtimeDiagnostics = createRuntimeDiagnostics({
+  // Detailed timing is normal operational telemetry now, not a debug mode that a
+  // player has to discover and activate. Keep one emergency URL opt-out.
+  autoCreate: runtimeDiagnosticsEnabled(location.search),
+});
+runtimeDiagnostics?.ready.then(session => {
+  if (!session?.label) return;
+  const label = document.getElementById('diagnostic-session-label');
+  label.textContent = `DIAG · ${session.label}`;
+  label.classList.remove('hidden');
+});
 
 // Function declaration, not const: this runs during module setup, above its own
 // definition in source order.
@@ -122,25 +244,48 @@ scene.background = new THREE.Color(0x07080b);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 scene.add(camera);
 
-const pipeline = new RenderPipeline(scene, camera, {
-  quality: loadGraphicsQuality(),
-  container: document.getElementById('app'),
-});
+let pipeline;
+try {
+  pipeline = new RenderPipeline(scene, camera, {
+    quality: loadGraphicsQuality(),
+    container: document.getElementById('app'),
+  });
+} catch (error) {
+  console.error('[graphics] WebGL startup failed', error);
+  showGraphicsStartupFailure(error, { xbox: xboxBrowser });
+  throw error;
+}
 const renderer = pipeline.renderer;
 
-const arena = buildArena(scene);
+// Keep every menu completely free of GLTF parsing, GPU uploads, audio decoding and
+// shader compilation. The NIMBLE-WOMBAT trace caught a 2.1 s shader-prep long task
+// over the live PC menu; this gate now opens only after FIGHT or FIRING RANGE on
+// every platform, behind an unmistakable loading screen.
+let resolveCombatAssetGate;
+let combatAssetLoadingStarted = false;
+let voiceReady = Promise.resolve();
+const combatAssetGate = new Promise(resolve => { resolveCombatAssetGate = resolve; });
+function beginCombatAssetLoading() {
+  if (combatAssetLoadingStarted) return;
+  combatAssetLoadingStarted = true;
+  showGraphicsPrep('LOADING ARENA', 'STREAMING FIGHTERS AND WEAPONS');
+  prepareGrenadeMeshPool();
+  // Xbox Edge has only reported 2 GB of browser memory. Eagerly decoding one clip
+  // from all 26 categories added persistent PCM pressure immediately before the
+  // trace's regular 100-165 ms pauses. Its reliable HTML media path stays lazy.
+  voiceReady = xboxBrowser ? Promise.resolve() : announcer.prepare();
+  resolveCombatAssetGate?.();
+}
+
+const arena = buildArena(scene, { loadGate: combatAssetGate });
 pipeline.onShadowMapSize = (size) => arena.setShadowMapSize(size);
 pipeline.onShadowMapSize(pipeline.tier.shadowMap);
 
-// The reflection probe has to run after the arena exists, and again once the
-// streamed prop GLBs have landed — the first bake sees a pit with no props in it.
-requestAnimationFrame(() => pipeline.bakeEnvironment());
-arena.propsReady.then(() => pipeline.bakeEnvironment());
-
-// Fighters and weapons stream in behind the menu, so the first bout never waits.
-const assetsReady = Promise.all([
+// Combat assets start only from the explicit transition above. This keeps both
+// mouse and controller menus responsive while the player is choosing what to do.
+const assetsReady = combatAssetGate.then(() => Promise.all([
   arena.propsReady, preloadFighter(), preloadWeapons(), preloadViewmodel(),
-]);
+]));
 // A core asset failing to load used to be swallowed by the loaders, and the game
 // carried on with invisible weapons or bare hands — the failure only surfaced as a
 // gameplay bug report. The loaders now rethrow, and this is the one place the
@@ -154,10 +299,161 @@ assetsReady.catch((err) => {
   el.textContent = `ASSET LOAD FAILED: ${err?.message || err} — see the console.`;
   document.body.appendChild(el);
 });
+/**
+ * Compile every program the first match will need, behind the menu.
+ *
+ * Nothing else ever calls renderer.compile(), so before this the first frame of the
+ * first match compiled every fighter, gun and effect program at once — a stall of
+ * hundreds of ms that also drove the adaptive scaler through a staircase of
+ * resolution steps (each of which used to paint a black frame; see render.js).
+ * Small representative groups are parked far below the pit one at a time —
+ * compile() ignores the frustum and the menu camera never sees them — and compiled
+ * in the driver's own threads where KHR_parallel_shader_compile allows.
+ *
+ * The muzzle-flash sprites are built invisible and compile() skips invisible
+ * objects, so they are flipped visible for their own small compile job.
+ *
+ * Nothing staged here is disposed afterwards: disposing a material drops the
+ * cached program's refcount and can delete the very program this exists to keep.
+ * The stage is simply removed and the JS objects go to the collector, which leaves
+ * the program cache alone.
+ *
+ * Out of reach: shadow-depth and GTAO-override variants only compile when their
+ * pass first draws a fighter, so the first match frame still pays for two or three
+ * skinned variants — small, and the deferred resize keeps it invisible — against
+ * the dozens removed here.
+ */
+async function warmShaderCache({ between = async () => {} } = {}) {
+  const eventProps = () => {
+    const bounty = makeBountyMarker();
+    bounty.visible = true;
+    return [
+      new THREE.Mesh(ZONE_GEO, ZONE_MATS.fire),
+      new THREE.Mesh(ZONE_GEO, ZONE_MATS.gas),
+      bounty,
+      new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({ color: 0x8a6d2f, roughness: 0.8, metalness: 0.1 })),
+      new THREE.Mesh(NADE_GEO, NADE_MAT),
+    ];
+  };
+  const jobs = [
+    { label: 'fighter', objects: () => [new FighterRig({ uniformColor: 0x3a4a5f }).group] },
+    ...WEAPON_ORDER.map(id => ({ label: `weapon-${id}`, objects: () => [buildHeldGun(id)] })),
+    { label: 'events', objects: eventProps },
+    { label: 'effects', objects: () => [] },
+  ];
+
+  for (let index = 0; index < jobs.length; index++) {
+    const job = jobs[index];
+    const stage = new THREE.Group();
+    stage.position.set(0, -80, 0);
+    stage.add(...job.objects());
+    scene.add(stage);
+    const restore = [];
+    if (job.label === 'effects') {
+      const show = (o) => { restore.push([o, o.visible]); o.visible = true; };
+      for (const f of fx.flashes) show(f.sprite);
+    }
+
+    try {
+      await renderer.compileAsync(scene, camera);
+    } catch {
+      try { renderer.compile(scene, camera); } catch { /* lazy compile remains the backstop */ }
+    } finally {
+      for (const [o, v] of restore) o.visible = v;
+      scene.remove(stage);
+    }
+    await between(job.label, index + 1, jobs.length);
+  }
+}
+
+// Preparation is armed at boot but blocked by combatAssetGate until the player
+// explicitly starts a bout. It advertises real progress, yields between small jobs,
+// and pauses during a bout.
+let graphicsPrepScheduled = false;
+let graphicsPrepStage = 'not-scheduled';
+let lastControllerActivityAt = -Infinity;
+const loadingTitleEl = document.getElementById('loading-title');
+const loadingStageEl = document.getElementById('loading-stage');
+const loadingDetailEl = document.getElementById('loading-detail');
+const loadingMeterEl = document.getElementById('loading-meter-fill');
+let resolveGraphicsReady;
+const graphicsReady = new Promise(resolve => { resolveGraphicsReady = resolve; });
+function showGraphicsPrep(stage, detail, progress = null) {
+  if (loadingStageEl) loadingStageEl.textContent = stage;
+  if (loadingDetailEl) loadingDetailEl.textContent = detail;
+  if (loadingMeterEl && progress != null) loadingMeterEl.style.width = `${Math.round(progress * 100)}%`;
+}
+function finishGraphicsPrepStatus(detail = 'REFLECTIONS AND SHADERS READY') {
+  showGraphicsPrep('ARENA READY', detail, 1);
+}
+function scheduleBackgroundGraphicsPrep() {
+  if (graphicsPrepScheduled) return;
+  graphicsPrepScheduled = true;
+  graphicsPrepStage = 'waiting-for-assets';
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const idle = () => new Promise(resolve => {
+    if (window.requestIdleCallback) window.requestIdleCallback(resolve, { timeout: 800 });
+    else setTimeout(resolve, 0);
+  });
+  const prepTurn = async (stage, detail) => {
+    graphicsPrepStage = stage;
+    const face = stage.match(/reflection-face-(\d)/)?.[1];
+    const progress = face ? 0.68 + Number(face) * 0.04 : stage === 'environment' ? 0.68 : 0.94;
+    showGraphicsPrep('PREPARING ARENA', detail, progress);
+    while (phase === 'match' || phase === 'paused'
+      || (xboxBrowser && performance.now() - lastControllerActivityAt < 1200)) {
+      await delay(250);
+    }
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await idle();
+    if (phase === 'match' || phase === 'paused') return prepTurn(stage, detail);
+  };
+  assetsReady.then(async () => {
+    await voiceReady;
+    // Xbox Edge produced a white composer target after an explicit whole-scene
+    // compile. Let the first reflection render compile the same arena programs via
+    // the normal render path that is known to leave its WebGL state valid. Name the
+    // work before it begins so the long driver pass is not mislabeled as face 0/6.
+    await prepTurn('environment', xboxBrowser
+      ? 'COMPILING ARENA MATERIALS · FIRST DRIVER PASS'
+      : 'BAKING REFLECTIONS · 0/6');
+    await pipeline.bakeEnvironment({
+      size: xboxBrowser ? 64 : 128,
+      // Six identical-quality faces, yielded between frames. Desktop used to bake
+      // all six in one synchronous call; splitting the work changes scheduling,
+      // not the resulting reflection map.
+      incremental: true,
+      shadows: !xboxBrowser,
+      yieldTurn: async label => {
+        const face = label.match(/reflection-face-(\d)/)?.[1];
+        await prepTurn(label, face ? `BAKING REFLECTIONS · ${face}/6` : 'FILTERING REFLECTIONS');
+      },
+    });
+    if (!xboxBrowser) {
+      await prepTurn('shaders', 'COMPILING FIGHTERS AND EFFECTS');
+      await warmShaderCache({
+        between: async (label, done, total) => prepTurn(
+          `shaders-${label}`,
+          `COMPILING SHADERS · ${done}/${total}`,
+        ),
+      });
+    }
+    graphicsPrepStage = 'complete';
+    finishGraphicsPrepStatus(xboxBrowser
+      ? 'REFLECTIONS READY · SHADERS STREAM ON DEMAND'
+      : 'REFLECTIONS AND SHADERS READY');
+    resolveGraphicsReady?.();
+  }).catch(() => { /* assetsReady already reported */ });
+}
+
 const fx = new FX(scene, camera);   // the camera keeps particle sizes in world units
 const ui = new UI();
 const menuNavigator = new MenuNavigator();
-const announcer = new Announcer();
+const announcer = new Announcer({
+  voiceBank: new AnnouncerVoiceBank({ AudioContextCtor: xboxBrowser ? null : undefined }),
+  onVoiceStart: details => runtimeDiagnostics?.emit('game_announcer_start', details),
+});
 
 // ============================================================ world
 const world = {
@@ -263,7 +559,7 @@ const spectatorCamera = new SpectatorCamera(camera, arena, {
 });
 
 // controller + touch input (mouse/keyboard bypass this and get no aim assist)
-const touchMode = isTouchDevice();
+const touchMode = isTouchDevice({ excluded: xboxBrowser });
 if (touchMode) document.body.classList.add('touch-mode');
 const onCycleSpectator = (dir) => { if (phase === 'match' && match?.spectating) cycleSpectator(dir); };
 const touch = touchMode ? new TouchControls(player, { onPause: () => pauseMatch(), onCycleSpectator }) : null;
@@ -273,7 +569,10 @@ const input = new InputHub(player, world, camera, {
   onResume: () => resumeFromPause(),
   onCycleSpectator,
   onMenuInput: (action) => menuNavigator.handle(action),
-  onControllerActive: () => menuNavigator.activate(),
+  onControllerActive: () => {
+    lastControllerActivityAt = performance.now();
+    menuNavigator.activate();
+  },
 });
 new TouchSettingsPanel(touch, input);
 const controllerSettingsPanel = new ControllerSettingsPanel(input);
@@ -436,9 +735,40 @@ const DEATH_LINES = [
 
 // ============================================================ match state
 let phase = 'menu'; // menu | settings | intro | match | shop | dead | champion
+renderer.domElement.addEventListener('webglcontextlost', event => {
+  runtimeDiagnostics?.emit('game_webgl_context_lost', {
+    status_message: event.statusMessage || null,
+    phase,
+    graphics_prep: graphicsPrepStage,
+  });
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  runtimeDiagnostics?.emit('game_webgl_context_restored', {
+    phase,
+    graphics_prep: graphicsPrepStage,
+  });
+});
+scheduleBackgroundGraphicsPrep();
 let settingsReturnPhase = 'menu';
 let locked = false;
 let match = null;
+
+if (runtimeDiagnostics && globalThis.PerformanceObserver?.supportedEntryTypes?.includes('longtask')) {
+  let lastLongTaskReportAt = -Infinity;
+  const longTaskObserver = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) {
+      if (entry.startTime - lastLongTaskReportAt < 1000) continue;
+      lastLongTaskReportAt = entry.startTime;
+      runtimeDiagnostics.emit('game_long_task', {
+        duration_ms: +entry.duration.toFixed(2),
+        start_ms: +entry.startTime.toFixed(2),
+        phase,
+        match_time: match ? +match.time.toFixed(3) : null,
+      });
+    }
+  });
+  longTaskObserver.observe({ entryTypes: ['longtask'] });
+}
 
 function itemSnapshot(it) {
   return it ? { type: it.type, ...(it.rounds == null ? {} : { rounds: it.rounds }) } : null;
@@ -702,25 +1032,51 @@ function clearCombatants() {
   world.zones.length = 0;
   clearAirdrop();
   if (world.grenades) {
-    for (const g of world.grenades) scene.remove(g.mesh);
+    for (const g of world.grenades) releaseGrenadeMesh(g.mesh);
     world.grenades.length = 0;
   }
 }
 
-function startMatch() {
-  // Fighters are skinned GLB instances now, so a bout cannot begin until the model
-  // is in memory. In practice it loads during the menu; this only ever fires if a
-  // player clicks FIGHT within the first second on a cold cache.
-  if (!fighterReady()) {
-    // If the load failed, do not start a match with no fighters in it — the banner
-    // from the `assetsReady` catch is already up and says why.
-    preloadFighter().then(() => startMatch(), () => {});
-    return;
-  }
+function startMatch({ prepared = false } = {}) {
   if (career.mode === 'liquidation' && career.liquidation.draft.pendingEnemyShop) {
     openShop();
     return;
   }
+  // Fighters are skinned GLB instances now, so a bout cannot begin until the model
+  // is in memory. On Xbox, every part of that work happens on this dedicated screen.
+  if (!prepared && (!fighterReady() || graphicsPrepStage !== 'complete')) {
+    // This is intentionally called before the first await so a real FIGHT/START click
+    // still owns browser activation and can enter fullscreen.
+    enterCombatMode();
+    phase = 'loading';
+    ui.showScreen('loading');
+    if (loadingTitleEl) loadingTitleEl.textContent = sandbox.active ? 'OPENING THE RANGE' : 'OPENING THE GATES';
+    showGraphicsPrep('STREAMING COMBAT ASSETS', 'FIGHTERS · WEAPONS · ARENA PROPS', 0.08);
+    // If the load failed, do not start a match with no fighters in it — the banner
+    // from the `assetsReady` catch is already up and says why.
+    beginCombatAssetLoading();
+    if (!startMatch.assetWait) {
+      startMatch.assetWait = true;
+      // Give the loading screen two paints before any parser work can monopolize the
+      // main thread. A static, explicit transition remains comprehensible even while
+      // Edge is busy enough that its animation pauses.
+      Promise.resolve()
+        .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+        .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+        .then(() => assetsReady)
+        .then(() => {
+          showGraphicsPrep('FINALIZING THE ARENA', 'LIGHTING · REFLECTIONS · FIRST-FRAME SHADERS', 0.68);
+          return graphicsReady;
+        }).then(() => {
+        startMatch.assetWait = false;
+        startMatch({ prepared: true });
+      }, () => { startMatch.assetWait = false; });
+    }
+    return;
+  }
+  // Request fullscreen while the trusted FIGHT click still owns browser activation;
+  // the rest of match setup is intentionally substantial.
+  enterCombatMode();
   clearCombatants();
   installWorldHooks();
   match = makeMatch();
@@ -858,6 +1214,9 @@ function startMatch() {
   player.vmRoot.visible = true;
   player._mountViewmodel();
   player.loadMagsFromPack();
+  player.infiniteAmmo = false;
+  player.hideKnifeSlot = false;
+  if (sandbox.active) setupFiringRange();
   // player wounds carry over too
   if (career.playerHp != null) player.hp = Math.min(player.maxHp, career.playerHp);
   player.armDmg = career.playerLimbs.arm || 0;
@@ -885,16 +1244,48 @@ function startMatch() {
     career.liquidation.enemyMoney -= match.enemyBet;
   } else if (career.bet > 0) career.money -= career.bet;
 
-  announcer.clear();
-  announcer.say('matchStart', {}, { force: true });
-  if (career.rank === 1) setTimeout(() => announcer.say('bossIntro', {}, { force: true }), 3000);
-  audio.setCrowdLevel(0.055 + (10 - career.rank) * 0.004);
-  audio.klaxon();
+  const revealMatch = () => {
+    announcer.clear();
+    if (!sandbox.active) announcer.say('matchStart', {}, { force: true });
+    if (!sandbox.active && career.rank === 1) setTimeout(() => announcer.say('bossIntro', {}, { force: true }), 3000);
+    audio.setCrowdLevel(0.055 + (10 - career.rank) * 0.004);
+    audio.klaxon();
+    phase = 'match';
+    graphicsPrepStage = 'complete';
+    ui.hideSpectator();
+    ui.showHUDOnly();
+  };
 
-  phase = 'match';
-  ui.hideSpectator();
-  ui.showHUDOnly();
-  enterCombatMode();
+  // Desktop drivers tolerate an explicit assembled-bout compile and hidden composer
+  // warmup. Xbox Edge does not: the August 8 trace reached this path and emerged
+  // from loading with a permanently white camera target. On Xbox, reveal the match
+  // and let its normal first render compile lazily, preserving valid WebGL state.
+  if (!xboxBrowser && !startMatch.firstBoutWarmed) {
+    startMatch.firstBoutWarmed = true;
+    phase = 'loading';
+    graphicsPrepStage = 'match-shaders';
+    ui.showScreen('loading');
+    showGraphicsPrep('FINALIZING COMBAT SCENE', 'COMPILING MATCH SHADERS · DRIVER PASS', 0.97);
+    startMatch.warmPromise = Promise.resolve()
+      .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+      .then(async () => {
+        try {
+          await renderer.compileAsync(scene, camera);
+        } catch {
+          try { renderer.compile(scene, camera); } catch { /* the full pipeline pass below is the backstop */ }
+        }
+        showGraphicsPrep('FINALIZING COMBAT SCENE', 'WARMING POST EFFECTS · FINAL PASS', 0.99);
+      })
+      // Tick renders the complete composer between these two callbacks while the
+      // simulation remains stopped in phase=loading.
+      .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+      .then(() => new Promise(resolve => requestAnimationFrame(resolve)))
+      .then(revealMatch, revealMatch);
+    return startMatch.warmPromise;
+  }
+
+  revealMatch();
+  return Promise.resolve(match);
 }
 
 // ============================================================ kills / damage
@@ -1008,6 +1399,14 @@ function handleKill(killer, victim, part) {
     killer: fighterSnapshot(killer),
     victim: fighterSnapshot(victim),
   });
+  runtimeDiagnostics?.emit('game_kill', {
+    match_time: +match.time.toFixed(3),
+    headshot,
+    killer: killerName,
+    killer_is_player: !!killer.isPlayer,
+    victim: victim.name,
+    weapon: killer.weaponId || null,
+  });
 
   if (!match.firstBlood) {
     match.firstBlood = true;
@@ -1087,21 +1486,60 @@ import { hasLoS } from './combat.js';
 
 const NADE_GEO = new THREE.SphereGeometry(0.09, 8, 6);
 const NADE_MAT = new THREE.MeshStandardMaterial({ color: 0x2c3a2c, roughness: 0.55, metalness: 0.35 });
+const GRENADE_POOL_SIZE = 16;
+const grenadeMeshPool = [];
+let grenadeMeshCursor = 0;
+function prepareGrenadeMeshPool() {
+  if (grenadeMeshPool.length) return;
+  for (let i = 0; i < GRENADE_POOL_SIZE; i++) {
+    const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
+    mesh.visible = false;
+    scene.add(mesh);
+    grenadeMeshPool.push(mesh);
+  }
+}
+function acquireGrenadeMesh() {
+  prepareGrenadeMeshPool();
+  for (let offset = 0; offset < GRENADE_POOL_SIZE; offset++) {
+    const index = (grenadeMeshCursor + offset) % GRENADE_POOL_SIZE;
+    if (grenadeMeshPool[index].visible) continue;
+    grenadeMeshCursor = (index + 1) % GRENADE_POOL_SIZE;
+    grenadeMeshPool[index].visible = true;
+    return grenadeMeshPool[index];
+  }
+  // More than 16 simultaneous live grenades is outside any current roster, but
+  // reusing the oldest pooled visual is still safer than allocating in combat.
+  const mesh = grenadeMeshPool[grenadeMeshCursor];
+  grenadeMeshCursor = (grenadeMeshCursor + 1) % GRENADE_POOL_SIZE;
+  mesh.visible = true;
+  return mesh;
+}
+function releaseGrenadeMesh(mesh) {
+  if (mesh) mesh.visible = false;
+}
 
 world.grenades = [];
 world.throwGrenade = (origin, vel, thrower) => {
-  const mesh = new THREE.Mesh(NADE_GEO, NADE_MAT);
+  const mesh = acquireGrenadeMesh();
   mesh.position.copy(origin);
-  scene.add(mesh);
   world.grenades.push({ pos: origin.clone(), vel: vel.clone(), fuse: 2.8, mesh, thrower });
   // The spoon, the grunt, the arc: throwing gives away roughly where you threw from.
   if (thrower) world.emitNoise?.(thrower, origin, 'grenade');
   audio.reload(0);
   announcer.say('nade', {}, { minGap: 14 });
+  runtimeDiagnostics?.emit('game_grenade_throw', {
+    match_time: match ? +match.time.toFixed(3) : null,
+    player: !!thrower?.isPlayer,
+    origin: [origin.x, origin.y, origin.z].map(value => +value.toFixed(2)),
+    velocity: [vel.x, vel.y, vel.z].map(value => +value.toFixed(2)),
+  });
 };
 
 function explode(pos, thrower) {
+  const explodeStarted = performance.now();
   const R = 7, MAX = 165, MIN = 25;
+  let losChecks = 0;
+  let affected = 0;
   // A blast tells you where a *grenade* went off, and nothing about who threw it —
   // so it lands as an unowned disturbance: somewhere to go and look when a fighter
   // has no live contact, not a fix on the thrower.
@@ -1119,9 +1557,13 @@ function explode(pos, thrower) {
     const chest = new THREE.Vector3(player.pos.x, player.pos.y + 1.1, player.pos.z);
     const d = chest.distanceTo(blast);
     if (d < R) {
+      losChecks++;
       const occ = !hasLoS(world, blast, chest);
       const pdmg = dmgAt(d, occ);
-      if (pdmg > 0) handlePlayerDamaged(pdmg / 0.8, 'torso', pos); // undo grit for env-scale
+      if (pdmg > 0) {
+        affected++;
+        handlePlayerDamaged(pdmg / 0.8, 'torso', pos); // undo grit for env-scale
+      }
       // shrapnel chews limbs
       if (!occ && d < R * 0.6) {
         player.armDmg = Math.min(1, player.armDmg + 0.3 * (1 - player.armor.limbAccum));
@@ -1138,14 +1580,23 @@ function explode(pos, thrower) {
     const chest = c.aimPoint();
     const d = chest.distanceTo(blast);
     if (d < R) {
+      losChecks++;
       const occ = !hasLoS(world, blast, chest);
       const dmg = dmgAt(d, occ);
       if (dmg > 1) {
+        affected++;
         if (!occ && d < R * 0.6) { c.armDmg = Math.min(1, c.armDmg + 0.35); c.legDmg = Math.min(1, c.legDmg + 0.35); }
         c.applyDamage(world, 'torso', dmg, thrower, chest);
       }
     }
   }
+  runtimeDiagnostics?.emit('game_grenade_explode', {
+    match_time: match ? +match.time.toFixed(3) : null,
+    player: !!thrower?.isPlayer,
+    duration_ms: +(performance.now() - explodeStarted).toFixed(2),
+    los_checks: losChecks,
+    affected,
+  });
 }
 
 function updateGrenades(dt) {
@@ -1189,7 +1640,7 @@ function updateGrenades(dt) {
 
     g.mesh.position.copy(g.pos);
     if (g.fuse <= 0) {
-      scene.remove(g.mesh);
+      releaseGrenadeMesh(g.mesh);
       world.grenades.splice(i, 1);
       explode(g.pos, g.thrower);
     }
@@ -1247,8 +1698,25 @@ function acquireZoneLight(zone, color, intensity) {
   zone.lightSlot = slot;
 }
 
+// One unit cylinder for every zone haze, scaled per zone; the materials are cloned
+// off these templates so each zone keeps its own opacity fade while every clone
+// shares the template's compiled program. The templates also give the shader
+// warm-up (see warmShaderCache) something to compile before the first event fires —
+// this material combination appears nowhere else in the scene, so without it the
+// first molotov of a session paid a mid-match compile.
+const ZONE_GEO = new THREE.CylinderGeometry(1, 1, 1, 20, 1, true);
+const ZONE_MATS = {
+  fire: new THREE.MeshBasicMaterial({ color: 0xff6a1a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+  gas: new THREE.MeshBasicMaterial({ color: 0x39b32a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+};
+
 function removeZoneVisual(z) {
-  if (z.mesh) scene.remove(z.mesh);
+  if (z.mesh) {
+    scene.remove(z.mesh);
+    // The geometry is shared and stays; the material is this zone's clone.
+    z.mesh.material.dispose();
+    z.mesh = null;
+  }
   // The light goes back to the pool rather than out of the scene: removing it would
   // change the light count and recompile every shader, exactly as adding it does.
   if (z.lightSlot) {
@@ -1261,10 +1729,11 @@ function removeZoneVisual(z) {
 function spawnZone(type, x, z, r, ttl, dps) {
   const isGas = type === 'gas';
   const color = isGas ? 0x39b32a : 0xff6a1a;
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(r, r, isGas ? 2.6 : 0.5, 20, 1, true),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false })
-  );
+  const mesh = new THREE.Mesh(ZONE_GEO, ZONE_MATS[isGas ? 'gas' : 'fire'].clone());
+  mesh.scale.set(r, isGas ? 2.6 : 0.5, r);
+  // A translucent haze has no business in GTAO's prepass: the override material
+  // renders it as solid geometry and the cylinder occludes its own interior.
+  mesh.layers.set(NO_OCCLUDE_LAYER);
   mesh.position.set(x, isGas ? 1.3 : 0.25, z);
   scene.add(mesh);
   const zone = { type, x, z, r, ttl, dps, mesh, lightSlot: null };
@@ -1305,6 +1774,10 @@ function fireEvent() {
   const pool = match.mode === 'liquidation' ? LIQUIDATION_EVENTS : EVENTS;
   let ev = pool[(Math.random() * pool.length) | 0];
   if (ev === 'bounty' && !match.enemies.some(c => c.alive && !c.boss)) ev = 'frenzy';
+  runtimeDiagnostics?.emit('game_arena_event', {
+    event: ev,
+    match_time: +match.time.toFixed(3),
+  });
   audio.klaxon();
   if (ev === 'bounty') {
     const marks = match.enemies.filter(c => c.alive && !c.boss);
@@ -1464,6 +1937,7 @@ function updateEvents(dt) {
         player.hp = player.maxHp;
         player.healLimbs();
         player.mag = player.weapon.mag;
+        player.chambered = true;
         const amt = payout(250);
         if (amt > 0) { ui.moneyPop(amt); audio.cashRegister(); }
         ui.eventBanner('PACKAGE CLAIMED', 'Full patch-up. Back to work.', '#86ff3c');
@@ -1717,7 +2191,7 @@ function autoShopPlans() {
       type: fighter.who === 'player' ? PLAYER_TYPE : fighter.member.type,
       progress: fighter.who === 'player' ? career.playerProgress : fighter.member.progress,
     }))),
-    ammo: planSquadAmmo(fighters, career.money, autoQuote),
+    ammo: planSquadAmmo(fighters, career.money, autoQuote, AUTO_AMMO_STACKS, career.stash),
   };
 }
 
@@ -1796,20 +2270,43 @@ function executeAutoAmmo(earnings) {
   if (draftShopState().locked) return;
   const plan = autoShopPlans().ammo;
   let changed = false;
-  for (const purchase of plan.purchases) {
-    const cost = market.quoteBuy(purchase.type, 1, priceMult());
-    if (!Number.isFinite(cost) || cost > career.money) break;
-    const fighter = shopSquad().find(entry => String(entry.who) === String(purchase.who));
+  let spent = false;
+  for (const step of plan.steps) {
+    const fighter = shopSquad().find(entry => String(entry.who) === String(step.who));
     if (!fighter) continue;
-    const item = makeItem(purchase.type);
-    if (!autoPlace(fighter.ch.pack, item)) break;
-    market.buy(purchase.type);
+
+    if (step.source === 'pack') {
+      const returned = extractAmmoFromPack(fighter.ch, step.uid, step.rounds);
+      if (!returned) continue;
+      autoPlace(career.stash, returned);
+      changed = true;
+      continue;
+    }
+
+    const ammoType = ITEM_TYPES[step.type].ammoType;
+    if (step.source === 'stash') {
+      const available = ammoInGrid(career.stash, ammoType);
+      const added = addAmmoToPack(fighter.ch, ammoType, Math.min(step.rounds, available));
+      if (added <= 0) continue;
+      takeAmmoFromGrid(career.stash, ammoType, added);
+      changed = true;
+      continue;
+    }
+
+    const cost = market.quoteBuy(step.type, 1, priceMult());
+    if (!Number.isFinite(cost) || cost > career.money) break;
+    const item = makeItem(step.type);
+    const added = addAmmoToPack(fighter.ch, ammoType, Math.min(step.rounds, item.rounds));
+    item.rounds -= added;
+    if (item.rounds > 0) autoPlace(career.stash, item);
+    market.buy(step.type);
     career.money -= cost;
-    if (career.mode === 'liquidation') recordPlayerMarket('buy', purchase.type, cost);
+    if (career.mode === 'liquidation') recordPlayerMarket('buy', step.type, cost);
     changed = true;
+    spent = true;
   }
   if (!changed) return;
-  audio.cashRegister();
+  if (spent) audio.cashRegister();
   save();
   renderShop(earnings);
 }
@@ -2184,8 +2681,15 @@ function showIntro() {
 }
 
 // ============================================================ input
+// One mousemove can arrive carrying a whole stall's worth of motion: when a frame
+// hangs (a shader compile, speech synthesis blocking), the browser sums every
+// pointer-lock delta it queued into a single event on resume. At base sensitivity
+// ~750 px is a 90° snap and ~1500 px is 180° — the "view teleported" bug. No human
+// flick delivers 200 px in one 8 ms event, so past that it is clipped, not believed.
+const MAX_MOUSE_STEP = 200;
+const clampMouseStep = (v) => Math.max(-MAX_MOUSE_STEP, Math.min(MAX_MOUSE_STEP, v || 0));
 document.addEventListener('mousemove', (e) => {
-  if (locked && phase === 'match') player.onMouseMove(e.movementX, e.movementY);
+  if (locked && phase === 'match') player.onMouseMove(clampMouseStep(e.movementX), clampMouseStep(e.movementY));
 });
 document.addEventListener('mousedown', (e) => {
   if (locked && phase === 'match') player.onMouseDown(e.button);
@@ -2237,15 +2741,22 @@ window.addEventListener('pagehide', () => {
 });
 
 // if focus ever leaves (browser dialog, alt-tab, lock loss), drop all held keys so we never get stuck walking
-window.addEventListener('blur', () => player.clearInput());
-document.addEventListener('visibilitychange', () => { if (document.hidden) player.clearInput(); });
+window.addEventListener('blur', () => { player.clearInput(); input.resetGamepadState(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { player.clearInput(); input.resetGamepadState(); }
+});
 
 // fullscreen + keyboard lock: inside fullscreen, Keyboard Lock captures even Ctrl+W / Esc-adjacent combos
 async function enterCombatMode() {
-  try {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-  } catch { /* user denied or unsupported — playable regardless */ }
-  if (touchMode) return; // no pointer to lock; the touch layer drives input
+  // Fullscreen benefits every input mode. Controller players only skip the
+  // keyboard and pointer capture calls that can reopen Edge's controller popup.
+  const fullscreen = await requestBrowserFullscreen();
+  runtimeDiagnostics?.emit('game_fullscreen_result', {
+    entered: fullscreen,
+    already_fullscreen: !!document.fullscreenElement,
+    controller_connected: input.gamepadConnected,
+  });
+  if (touchMode || input.gamepadConnected) return;
   try {
     if (navigator.keyboard?.lock) await navigator.keyboard.lock([...GAME_KEYS]);
   } catch { /* unsupported — fine */ }
@@ -2259,7 +2770,7 @@ document.addEventListener('pointerlockchange', () => {
   player.clearInput();
   if (!locked && phase === 'match' && (player.alive || match.spectating) && !match.ended) {
     // pointer-lock loss only pauses mouse players; a controller plays unlocked
-    if (input.gamepadActive) return;
+    if (input.gamepadConnected) return;
     ui.showScreen('pause');
     phase = 'paused';
   }
@@ -2293,10 +2804,17 @@ function closeSettings() {
 }
 
 // ============================================================ buttons
-const on = (id, fn) => document.getElementById(id).addEventListener('click', () => { audio.init(); audio.resume(); audio.uiClick(); fn(); });
+const on = (id, fn) => document.getElementById(id).addEventListener('click', () => {
+  audio.init();
+  audio.resume();
+  announcer.unlock();
+  audio.uiClick();
+  fn();
+});
 
 on('btn-new', () => { career = newCareer('circuits'); market = createMarket('circuits'); save(); showIntro(); });
 on('btn-new-liquidation', () => { career = newCareer('liquidation'); market = createMarket('liquidation'); save(); openShop(); });
+on('btn-firing-range', () => enterSandbox(WEAPON_ORDER, { god: true, publicRange: true }));
 on('btn-continue', () => { showIntro(); });
 on('btn-menu-settings', () => openSettings());
 on('btn-fight', () => startMatch());
@@ -2329,6 +2847,10 @@ document.getElementById('settings-overlay').addEventListener('click', (event) =>
   if (event.target === event.currentTarget) closeSettings();
 });
 on('btn-abandon', () => {
+  if (sandbox.active) {
+    leaveFiringRange();
+    return;
+  }
   journalTerminal('player_abandon');
   if (career.bet > 0) {
     career.money += career.bet;
@@ -2352,6 +2874,21 @@ if (saved) {
 market = createMarket(career.mode, career.liquidation?.market);
 matchLifecycle.recoverIncomplete();
 ui.showScreen('menu');
+runtimeDiagnostics?.emit('game_runtime_started', {
+  build: import.meta.env?.VITE_BUILD_SHA || 'dev',
+  installation_id: analytics.installationId,
+  analytics_session_id: analytics.sessionId,
+  xbox_browser: xboxBrowser,
+  touch_mode: touchMode,
+  user_agent: navigator.userAgent,
+  platform: navigator.platform || '',
+  hardware_concurrency: navigator.hardwareConcurrency || null,
+  device_memory: navigator.deviceMemory || null,
+  viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+  quality: pipeline.quality,
+});
+if (runtimeDiagnostics) setInterval(() => runtimeDiagnostics.heartbeat(), 60_000);
+window.addEventListener('pagehide', () => runtimeDiagnostics?.flush());
 
 // idle backdrop camera for menu
 camera.position.set(0, 8, 20);
@@ -3318,7 +3855,7 @@ function updateSpectatorCamera(dt) {
 function stepMatch(dt) {
   match.time += dt;
   world.simTime += dt;
-  player.update(dt, locked || touchMode || input.gamepadActive, !!match.spectating);
+  player.update(dt, locked || touchMode || input.gamepadConnected, !!match.spectating);
 
   // crew reads this to stay out of the player's line of fire
   camera.getWorldDirection(_aimTmp);
@@ -3326,7 +3863,7 @@ function stepMatch(dt) {
   if (_aimTmp.lengthSq() > 1e-6) world.playerAim.copy(_aimTmp).normalize();
 
   // anti-camp: the crowd paid for movement. Root in one spot and VULTURE ships fire.
-  if (player.alive && !match.ended) {
+  if (!sandbox.active && player.alive && !match.ended) {
     const cdx = player.pos.x - match.campAnchor.x, cdz = player.pos.z - match.campAnchor.z;
     if (cdx * cdx + cdz * cdz > 5 * 5) {
       match.campAnchor.x = player.pos.x;
@@ -3353,9 +3890,9 @@ function stepMatch(dt) {
   // A scenario, if one is running. Only ever set by the debug harnesses.
   world.scenario?.(dt);
   if (match.spectating) updateSpectatorCamera(dt);
-  updateEvents(dt);
+  if (!sandbox.active) updateEvents(dt);
   updateGrenades(dt);
-  announcer.update(dt);
+  if (!sandbox.active) announcer.update(dt);
   ui.updateHUD(player, career, match);
 
   if (match.ended) {
@@ -3375,6 +3912,14 @@ window.__game = {
   get pipeline() { return pipeline; },
   THREE,                                  // capture/diagnostic poses need constructors
   FighterRig,                             // tools/fightercheck.mjs drives a rig alone
+  /**
+   * Open the combat asset gate and resolve once the streamed assets are in.
+   *
+   * `assetsReady` alone is a trap for tooling: it sits behind the gate, so awaiting it
+   * before starting anything waits forever. A bench that measures a model rather than a
+   * match has no reason to run a bout just to open the door, so here is the door.
+   */
+  loadCombatAssets() { beginCombatAssetLoading(); return assetsReady; },
   buildHeldGun, SUPPORT_GRIP,             // ...and puts a real weapon in its fist
   items: { makeItem, autoPlace },         // capture poses stock a pack to test reloads
   assetsReady,                            // tools/shot.mjs waits on this before posing
@@ -3423,11 +3968,13 @@ window.__game = {
    * off nothing at all.
    */
   fight(mode = 'circuits', rank = 15) {
-    return assetsReady.then(() => {
+    beginCombatAssetLoading();
+    return Promise.all([assetsReady, graphicsReady]).then(() => {
       career = newCareer(mode);
       career.rank = rank;
       market = createMarket(mode);
-      startMatch();
+      return startMatch({ prepared: true });
+    }).then(() => {
       return match;
     });
   },
@@ -3437,6 +3984,7 @@ window.__game = {
 {
   const params = new URLSearchParams(location.search);
   if (params.has('sandbox')) {
+    beginCombatAssetLoading();
     assetsReady.then(() => enterSandbox(params.get('sandbox'), { god: params.get('god') !== '0' }));
   }
 }
@@ -3444,8 +3992,37 @@ window.__game = {
 function tick() {
   requestAnimationFrame(tick);
   window.__frames = (window.__frames || 0) + 1;
-  const dt = Math.min(0.05, clock.getDelta());
+  const rawDt = clock.getDelta();
+  const dt = Math.min(0.05, rawDt);
   const t = clock.elapsedTime;
+
+  if (rawDt >= 0.12 && t - (tick.lastHitchAt || -99) >= 1.5) {
+    tick.lastHitchAt = t;
+    const now = performance.now();
+    runtimeDiagnostics?.emit('game_frame_hitch', {
+      duration_ms: Math.round(rawDt * 1000),
+      phase,
+      match_time: match ? +match.time.toFixed(2) : null,
+      controller_connected: input.gamepadConnected,
+      graphics_prep: graphicsPrepStage,
+      announcer: {
+        speaking: announcer._speaking,
+        backend: 'prerendered-opus',
+        last_start_ms: Math.round(announcer._lastVoiceStartMs || 0),
+        last_start_age_ms: announcer._lastVoiceStartAt
+          ? Math.round(now - announcer._lastVoiceStartAt)
+          : null,
+      },
+      analytics: {
+        queued_events: analytics.queue.length,
+        queued_bytes: analytics.outboxBytes(),
+        delivery_failures: analytics.deliveryFailures,
+        storage_failures: analytics.storageFailures,
+        last_successful_flush_at: analytics.lastSuccessfulFlushAt,
+      },
+      render: pipeline.stats(),
+    });
+  }
 
   updateArenaAmbience(arena, t);
   fx.update(dt);

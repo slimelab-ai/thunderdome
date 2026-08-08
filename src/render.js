@@ -55,7 +55,7 @@ const FRAME_BUDGET_MS = 1000 / 60;
  * a cheap camera bolted to the cage" — the fiction is that you are watching a
  * broadcast of an illegal fight.
  */
-const GradeShader = {
+export const GradeShader = {
   uniforms: {
     tDiffuse:      { value: null },
     uTime:         { value: 0 },
@@ -131,7 +131,9 @@ const GradeShader = {
 };
 
 export class RenderPipeline {
-  constructor(scene, camera, { quality = 'high', container = document.body } = {}) {
+  constructor(scene, camera, {
+    quality = 'high', container = document.body, gpuTiming = true,
+  } = {}) {
     this.scene = scene;
     this.camera = camera;
 
@@ -147,6 +149,21 @@ export class RenderPipeline {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
+    // GPU frame timing, where the hardware admits to it.
+    //
+    // The adaptive scaler's CPU measurement only sees command *submission*; a
+    // GPU-bound machine submits quickly and then misses vsync, which read as
+    // headroom and pushed the resolution the wrong way. Timer queries measure the
+    // GPU's actual elapsed time for the frame's commands, asynchronously — results
+    // arrive a few frames late, which an EMA does not mind. The rAF delta is NOT
+    // used for this on purpose: at a steady 60 fps it equals the frame budget
+    // exactly, so the "scale back up" condition could never fire on a 60 Hz display.
+    // Chrome exposes the extension; elsewhere the CPU measure stands alone.
+    const gl = this.renderer.getContext();
+    this._timerExt = gpuTiming ? gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;
+    this._gpuQueries = [];
+    this._gpuMs = 0;
+
     // Anisotropic filtering, at whatever the hardware actually offers.
     //
     // The material library defaulted to 8 and nothing ever called the setter, so this
@@ -155,6 +172,9 @@ export class RenderPipeline {
     // looks worst: a floor seen at a grazing angle, where an under-filtered sample
     // smears the aggregate into mush a few metres out.
     setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
+
+    camera.layers.enable(NO_OCCLUDE_LAYER);
+    this.renderScale = 1;
 
     // Half-float targets: bloom needs values above 1.0 to have anything to pick out,
     // which an 8-bit target clips away before the pass ever sees them.
@@ -179,25 +199,26 @@ export class RenderPipeline {
     // it for the beauty pass, and it is dropped for the duration of GTAO's own
     // renders. Wrapping `render` rather than editing the addon keeps this working
     // across three.js upgrades.
-    camera.layers.enable(NO_OCCLUDE_LAYER);
-    const aoRender = this.aoPass.render.bind(this.aoPass);
-    this.aoPass.render = (...args) => {
-      camera.layers.disable(NO_OCCLUDE_LAYER);
-      try {
-        aoRender(...args);
-      } finally {
-        camera.layers.enable(NO_OCCLUDE_LAYER);
-      }
-    };
-    this.aoPass.blendIntensity = 0.85;
-    this.aoPass.updateGtaoMaterial({
-      radius: 0.6,                  // metres — contact shadows, not a global dimmer
-      distanceExponent: 1.4,
-      thickness: 1.0,
-      scale: 1.0,
-      samples: 12,
-      screenSpaceRadius: false,
-    });
+    if (this.aoPass) {
+      const aoRender = this.aoPass.render.bind(this.aoPass);
+      this.aoPass.render = (...args) => {
+        camera.layers.disable(NO_OCCLUDE_LAYER);
+        try {
+          aoRender(...args);
+        } finally {
+          camera.layers.enable(NO_OCCLUDE_LAYER);
+        }
+      };
+      this.aoPass.blendIntensity = 0.85;
+      this.aoPass.updateGtaoMaterial({
+        radius: 0.6,                  // metres — contact shadows, not a global dimmer
+        distanceExponent: 1.4,
+        thickness: 1.0,
+        scale: 1.0,
+        samples: 12,
+        screenSpaceRadius: false,
+      });
+    }
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
@@ -206,15 +227,12 @@ export class RenderPipeline {
       0.82,   // threshold — only genuine emissives and specular hits bloom
     );
 
-    // Trimmed by _adapt when frames run long; 1 means "the tier's full pixel ratio".
-    this.renderScale = 1;
-
     this.outputPass = new OutputPass();      // tone map + sRGB transfer
     this.smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
     this.gradePass = new ShaderPass(GradeShader);
 
     this.setQuality(quality);
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', () => { this._pendingResize = true; });
   }
 
   get tier() { return TIERS[this.quality]; }
@@ -231,18 +249,20 @@ export class RenderPipeline {
     this.renderScale = 1;
     this._frameAvg = undefined;
 
-    // Rebuild the chain rather than toggling `enabled`: a disabled pass still costs
-    // its render target, and GTAO's is the expensive one.
-    this.composer.passes.length = 0;
-    this.composer.addPass(this.renderPass);
-    if (tier.ao) this.composer.addPass(this.aoPass);
-    if (tier.bloom) this.composer.addPass(this.bloomPass);
-    this.composer.addPass(this.outputPass);
-    if (tier.smaa) this.composer.addPass(this.smaaPass);
-    if (tier.grade) this.composer.addPass(this.gradePass);
+    if (this.composer) {
+      // Rebuild the chain rather than toggling `enabled`: a disabled pass still costs
+      // its render target, and GTAO's is the expensive one.
+      this.composer.passes.length = 0;
+      this.composer.addPass(this.renderPass);
+      if (tier.ao && this.aoPass) this.composer.addPass(this.aoPass);
+      if (tier.bloom && this.bloomPass) this.composer.addPass(this.bloomPass);
+      this.composer.addPass(this.outputPass);
+      if (tier.smaa && this.smaaPass) this.composer.addPass(this.smaaPass);
+      if (tier.grade) this.composer.addPass(this.gradePass);
+    }
 
     this.onShadowMapSize?.(tier.shadowMap);
-    this.resize();
+    this._pendingResize = true;
   }
 
   /**
@@ -256,8 +276,14 @@ export class RenderPipeline {
    * Called again once streamed props have arrived, since the first bake happens
    * before they exist.
    */
-  bakeEnvironment(at = new THREE.Vector3(0, 2.6, 0)) {
-    const cubeTarget = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
+  async bakeEnvironment({
+    at = new THREE.Vector3(0, 2.6, 0),
+    size = 128,
+    incremental = false,
+    shadows = true,
+    yieldTurn = async () => {},
+  } = {}) {
+    const cubeTarget = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType });
     const cubeCam = new THREE.CubeCamera(0.3, 60, cubeTarget);
     cubeCam.position.copy(at);
     this.scene.add(cubeCam);
@@ -266,11 +292,56 @@ export class RenderPipeline {
     const vmVisible = [];
     this.camera.traverse((o) => { if (o !== this.camera) { vmVisible.push([o, o.visible]); o.visible = false; } });
     const prevEnv = this.scene.environment;
-    this.scene.environment = null;
-    cubeCam.update(this.renderer, this.scene);
-    this.scene.environment = prevEnv;
-    for (const [o, v] of vmVisible) o.visible = v;
-    this.scene.remove(cubeCam);
+    const renderFace = (face) => {
+      const renderer = this.renderer;
+      const previousTarget = renderer.getRenderTarget();
+      const previousFace = renderer.getActiveCubeFace();
+      const previousMip = renderer.getActiveMipmapLevel();
+      const previousXr = renderer.xr.enabled;
+      const previousShadows = renderer.shadowMap.enabled;
+      const mipmaps = cubeTarget.texture.generateMipmaps;
+      try {
+        this.scene.environment = null;
+        renderer.xr.enabled = false;
+        renderer.shadowMap.enabled = shadows && previousShadows;
+        cubeTarget.texture.generateMipmaps = face === 5 ? mipmaps : false;
+        renderer.setRenderTarget(cubeTarget, face, 0);
+        renderer.render(this.scene, cubeCam.children[face]);
+      } finally {
+        cubeTarget.texture.generateMipmaps = mipmaps;
+        renderer.setRenderTarget(previousTarget, previousFace, previousMip);
+        renderer.xr.enabled = previousXr;
+        renderer.shadowMap.enabled = previousShadows;
+        this.scene.environment = prevEnv;
+      }
+    };
+
+    try {
+      if (incremental) {
+        cubeCam.updateMatrixWorld();
+        cubeCam.coordinateSystem = this.renderer.coordinateSystem;
+        cubeCam.updateCoordinateSystem();
+        for (let face = 0; face < 6; face++) {
+          renderFace(face);
+          await yieldTurn(`reflection-face-${face + 1}`);
+        }
+        cubeTarget.texture.needsPMREMUpdate = true;
+      } else {
+        const previousShadows = this.renderer.shadowMap.enabled;
+        try {
+          this.scene.environment = null;
+          this.renderer.shadowMap.enabled = shadows && previousShadows;
+          cubeCam.update(this.renderer, this.scene);
+        } finally {
+          this.renderer.shadowMap.enabled = previousShadows;
+          this.scene.environment = prevEnv;
+        }
+      }
+      await yieldTurn('reflection-filter');
+    } finally {
+      for (const [o, v] of vmVisible) o.visible = v;
+      this.scene.remove(cubeCam);
+    }
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     pmrem.compileCubemapShader();
@@ -287,6 +358,7 @@ export class RenderPipeline {
 
   /** Whole-frame tint, used by damage and event feedback. */
   setFlash(amount, color) {
+    if (!this.gradePass) return;
     this.gradePass.uniforms.uFlash.value = amount;
     if (color) this.gradePass.uniforms.uFlashColor.value.set(color);
   }
@@ -301,9 +373,16 @@ export class RenderPipeline {
    * a resolution change that oscillates is worse than a low one that holds.
    */
   _adapt(frameMs) {
-    this._frameAvg = this._frameAvg === undefined
-      ? frameMs
-      : this._frameAvg + (frameMs - this._frameAvg) * 0.05;
+    // A hitch is not a resolution problem. A shader compile or a GC pause lands as
+    // one frame of hundreds of ms; fed into the average, it walks the scale down and
+    // back up over the following seconds — a staircase of resizes fixing a cost that
+    // was already gone. The first match start compiles every fighter and weapon
+    // program at once and used to do exactly that. Only steady-state frames vote.
+    if (frameMs < 100) {
+      this._frameAvg = this._frameAvg === undefined
+        ? frameMs
+        : this._frameAvg + (frameMs - this._frameAvg) * 0.05;
+    }
     this._adaptCooldown = (this._adaptCooldown ?? 0) - 1;
     if (this._adaptCooldown > 0) return;
 
@@ -317,7 +396,7 @@ export class RenderPipeline {
     // Half a second of frames before reconsidering, so a change gets time to show up
     // in the average it is being judged by.
     this._adaptCooldown = 30;
-    this.resize();
+    this._pendingResize = true;
   }
 
   resize() {
@@ -341,22 +420,58 @@ export class RenderPipeline {
 
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h);
-    this.composer.setPixelRatio(dpr);
-    this.composer.setSize(w, h);
-    this.aoPass.setSize(w * dpr, h * dpr);
-    this.bloomPass.setSize(w * dpr, h * dpr);
-    this.smaaPass.setSize(w * dpr, h * dpr);
+    // The composer forwards device-pixel sizes to every pass itself, so this pair is
+    // the whole story: adding explicit per-pass setSize calls on top (as this used
+    // to) reallocates GTAO's four targets, bloom's five mip pairs and SMAA's two a
+    // third time each per resize.
+    this.composer?.setPixelRatio(dpr);
+    this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
   render(elapsed) {
+    // Resize before drawing, never after. Setting the canvas size discards the
+    // drawing buffer and the replacement comes back opaque black (no alpha on this
+    // context); a resize after composer.render() in the same rAF hands that black
+    // buffer to the compositor — one black frame per adaptive-scale step, which is
+    // exactly the flicker the first match used to open with.
+    if (this._pendingResize) {
+      this._pendingResize = false;
+      this.resize();
+    }
     const t0 = performance.now();
     this.gradePass.uniforms.uTime.value = elapsed;
+    const gl = this.renderer.getContext();
+    const ext = this._timerExt;
+    let query = null;
+    if (ext && this._gpuQueries.length < 8 && !gl.isContextLost()) {
+      query = gl.createQuery();
+      gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+    }
     this.composer.render();
+    if (query) {
+      gl.endQuery(ext.TIME_ELAPSED_EXT);
+      this._gpuQueries.push(query);
+    }
+    // Harvest whatever queries have resolved; a disjoint event (GPU reset, power
+    // transition) invalidates every timing in flight.
+    while (this._gpuQueries.length) {
+      if (gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+        for (const q of this._gpuQueries) gl.deleteQuery(q);
+        this._gpuQueries.length = 0;
+        break;
+      }
+      const oldest = this._gpuQueries[0];
+      if (!gl.getQueryParameter(oldest, gl.QUERY_RESULT_AVAILABLE)) break;
+      this._gpuMs = gl.getQueryParameter(oldest, gl.QUERY_RESULT) / 1e6;
+      gl.deleteQuery(oldest);
+      this._gpuQueries.shift();
+    }
     // Measured around the composer only, so the number reflects rendering rather
-    // than whatever the game simulation did this frame.
-    this._adapt(performance.now() - t0);
+    // than whatever the game simulation did this frame. The frame's cost is
+    // whichever side is the bottleneck.
+    this._adapt(Math.max(performance.now() - t0, this._gpuMs));
   }
 
   /** Live numbers for the debug handle: what the pipeline is actually doing. */
@@ -367,6 +482,7 @@ export class RenderPipeline {
       renderScale: +this.renderScale.toFixed(2),
       pixelRatio: +this.renderer.getPixelRatio().toFixed(2),
       renderMs: +(this._frameAvg ?? 0).toFixed(2),
+      gpuMs: this._timerExt ? +this._gpuMs.toFixed(2) : null,
       calls: info.calls,
       triangles: info.triangles,
       programs: this.renderer.info.programs?.length ?? 0,

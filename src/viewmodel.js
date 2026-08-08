@@ -59,9 +59,13 @@ const SUPPORT_TARGET = {
     mag: [0.012, -0.130, 0.060],     // magazine well, below the grip
     rack: [0, 0.055, 0.040],         // over the top of the slide, at its rear
   },
-  smg: { mag: [0, -0.070, -0.055] },
-  rifle: { mag: [0, -0.078, -0.02] },
-  dmr: { mag: [0, -0.075, -0.01] },
+  // `rack` is the charging handle itself, taken from where `tools/blender/weapons.py`
+  // puts the `bolt` mesh on each weapon rather than guessed at: the hand goes to the
+  // handle, and then travels with it. Without these three entries the magazine guns
+  // racked with no hand anywhere near the handle — the bolt flew back on its own.
+  smg: { mag: [0, -0.070, -0.055], rack: [0.030, 0.100, 0.052] },
+  rifle: { mag: [0, -0.078, -0.02], rack: [0.028, 0.100, 0.058] },
+  dmr: { mag: [0, -0.075, -0.01], rack: [0.029, 0.100, 0.058] },
   shotgun: { port: [0, -0.012, -0.02] },   // loading port, under the receiver
 };
 for (const [id, grip] of Object.entries(SUPPORT_GRIP)) {
@@ -70,11 +74,13 @@ for (const [id, grip] of Object.entries(SUPPORT_GRIP)) {
 
 /** Phase windows within a reload clip, as fractions of its duration. */
 const RELOAD_PHASES = {
+  // No rack phase in here any more. The slide being worked is its own stage now, played
+  // only when the chamber is actually dead, so a pistol reloaded with a round still up
+  // no longer sends the hand over the top to mime one.
   reload_pistol: [
     { until: 0.30, target: 'mag' },   // hand to the magazine well
     { until: 0.42, target: 'away' },  // out of frame for a fresh magazine
-    { until: 0.60, target: 'mag' },   // seat it
-    { until: 0.90, target: 'rack' },  // over the top, work the slide
+    { until: 0.66, target: 'mag' },   // seat it
   ],
   reload_shell: [
     { until: 0.32, target: 'away' },  // down to the belt for a shell
@@ -237,6 +243,9 @@ export class ViewModel {
     this.idle.play();
     this.current = null;         // the full-body clip currently overriding idle
     this.idleWeight = 1;
+    this.rackK = 0;              // 0..1 stroke of the rack, driven by the player
+    this.workRoll = 0;           // radians of firing-wrist roll, likewise
+    this.supportSwivel = 0;      // radians of support-elbow swivel, likewise
     this.pinWeight = 1;
     // Weights are driven every frame rather than crossfaded. Two normal-blend actions
     // touching the same bones at weight 1 blend 50/50, so an override clip has to
@@ -295,13 +304,17 @@ export class ViewModel {
    * Reload times vary per weapon (1.25 s to 2.4 s); the clip is authored once and
    * time-scaled to fit, so the mag seats when the weapon says it does.
    */
-  play(name, seconds = null) {
+  play(name, seconds = null, at = 0) {
     if (!this.ready) return;
     const action = this.actions.get(name);
     if (!action) return;
     const prev = this.current;
     action.reset();
     action.timeScale = seconds ? action.getClip().duration / seconds : 1;
+    // Start part way in. A reload broken off half done and picked back up has to carry
+    // on from where the hands were, not replay the magazine coming out of a well it is
+    // already out of.
+    if (at > 0) action.time = action.getClip().duration * Math.min(1, at);
     action.setEffectiveWeight(1);
     action.play();
     // Blend, do not cut. Stopping the old clip and starting the new one on the same
@@ -333,7 +346,21 @@ export class ViewModel {
   }
 
   /** Reload, using whichever clip this weapon's action calls for. */
-  reload(seconds) { this.play(this.reloadClip || 'reload', seconds); }
+  reload(seconds, at = 0) { this.play(this.reloadClip || 'reload', seconds, at); }
+
+  /**
+   * Abandon the clip in hand and come back to the ready pose.
+   *
+   * An interrupted reload does not freeze in a half-finished posture — the hands stop
+   * what they were doing and the weapon comes back up where it can be used. Fading the
+   * action out rather than cutting it lets idle take the weight back over the same two
+   * frames every other transition uses.
+   */
+  releaseClip() {
+    if (!this.current) return;
+    this.current.fadeOut(PLAY_FADE);
+    this.current = null;
+  }
   melee(seconds) { this.play('melee', seconds); }
   /** One shell into the tube; called once per round on a shell-loaded weapon. */
   loadShell(seconds) { this.play('reload_shell', seconds); }
@@ -364,7 +391,12 @@ export class ViewModel {
     let key = 'carry';
     const clipName = this.current?.getClip().name;
     const phases = clipName && RELOAD_PHASES[clipName];
-    if (phases) {
+    // The rack is a stage the player drives, not a window inside a clip, so it wins over
+    // whatever the body animation happens to be doing — which by then is the tail of the
+    // reload, held on its last frame.
+    if (this.rackK > 0) {
+      key = 'rack';
+    } else if (phases) {
       const clip = this.current.getClip();
       const t = clip.duration > 0 ? this.current.time / clip.duration : 0;
       for (const phase of phases) {
@@ -386,8 +418,12 @@ export class ViewModel {
       // Targets on a moving part track that part, so the hand travels *with* the
       // mechanism rather than watching it slide out from under itself.
       _ikTarget.z = this.parts.pump.position.z + PUMP_GRIP_Z;
-    } else if (key === 'rack' && this.parts?.slide) {
-      _ikTarget.z = local[2] + (this.parts.slide.position.z - this.parts.slide.userData.restZ);
+    } else if (key === 'rack') {
+      // Travel with the part being worked, whichever this weapon has: a pistol's slide
+      // or a magazine gun's charging handle. A hand that stays put while the handle goes
+      // back is a hand that is not racking anything.
+      const part = this.parts?.slide || this.parts?.bolt;
+      if (part) _ikTarget.z = local[2] + (part.position.z - part.userData.restZ);
     }
 
     // Smoothing happens in the *weapon's* space, not the world's.
@@ -478,8 +514,34 @@ export class ViewModel {
       }
     }
 
+    // Snapshot *before* the swivel. The swivel is a post-pass, so warm-starting from a
+    // swivelled pose and swivelling it again compounds a little every frame until the
+    // arm is wrapped round the weapon.
     if (!this._ikWarm) this._ikWarm = chain.map((b) => b.quaternion.clone());
     else for (let i = 0; i < chain.length; i++) this._ikWarm[i].copy(chain[i].quaternion);
+
+    // Elbow swivel: where the elbow sits on the cone around the shoulder-to-fist line.
+    //
+    // CCD puts the fist on the target and leaves the elbow wherever it happened to land,
+    // which for a charging handle on the far side of the receiver is *through* the
+    // receiver. The fist lies on this axis, so rotating the whole arm about it moves the
+    // elbow and does not move the hand at all — the one control that can bring the
+    // forearm over the top of the weapon while the grip stays exactly where it is.
+    if (this.supportSwivel) {
+      // The shoulder-most bone: the chain is solved elbow-first, so it is the last one.
+      const root = chain[chain.length - 1];
+      root.getWorldPosition(_bonePos);
+      _fist.set(0, HAND_LENGTH, 0);
+      hand.localToWorld(_fist);
+      _v.copy(_fist).sub(_bonePos);
+      if (_v.lengthSq() > 1e-8) {
+        _q.setFromAxisAngle(_v.normalize(), this.supportSwivel);
+        root.getWorldQuaternion(_q2);
+        root.parent.getWorldQuaternion(_parentQ);
+        root.quaternion.copy(_parentQ.invert()).multiply(_q).multiply(_q2);
+        root.updateMatrixWorld(true);
+      }
+    }
   }
 
   update(dt) {
@@ -491,6 +553,28 @@ export class ViewModel {
     this.idle.setEffectiveWeight(this.idleWeight);
 
     this.mixer.update(dt);
+
+    // Roll the weapon in the firing hand: about its own bore, at the grip.
+    //
+    // At the socket rather than at the arm. Rolling the *forearm* is anatomically the
+    // right joint but geometrically the wrong axis — the weapon hangs a long way off the
+    // forearm's line, so pronating it swings the muzzle through a huge arc instead of
+    // turning the gun in place. Rolling the viewmodel root is the other failure: arms and
+    // weapon turn together, so it looks the same from the camera and changes nothing at
+    // all about what the support hand has to reach through.
+    //
+    // The socket is the axis a hand actually rolls a gun about. The support hand's target
+    // lives on the weapon, so it comes round with it while the support shoulder stays put
+    // — which is the only version of this that changes the reach and not just the picture.
+    // Absolute, from the socket's rest orientation. `rotateZ` composes onto whatever is
+    // already there, and no clip keys this bone to put it back — so applied straight it
+    // accumulated every frame and had the rifle past eighty degrees within a stroke.
+    if (this.socket) {
+      this._socketRest ??= this.socket.quaternion.clone();
+      this.socket.quaternion.copy(this._socketRest);
+      if (this.workRoll) this.socket.rotateZ(this.workRoll);
+      this.socket.updateMatrixWorld(true);
+    }
 
     // Support-hand pins hold the grip against the idle sway — but they must *release*
     // for any clip that moves the support arm, or a reload would play with the left

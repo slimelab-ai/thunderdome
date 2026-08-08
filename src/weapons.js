@@ -5,6 +5,34 @@ import { bindAuthoredMaterials } from './materials.js';
 
 // dmg = per bullet torso damage. spread in degrees (hipfire base).
 //
+// `reloadEmpty` and `draw` are the handling model ported from DogEater, whose rule
+// is that every action costs time and the *state you were in* decides how much.
+//
+// **A round in the chamber.** Reload with rounds left and the one already chambered
+// stays there: you finish with `mag + 1` and you only swap the magazine, which is
+// `reload`. Run the gun dry and there is nothing to chamber — you get `mag`, and you
+// pay `reloadEmpty` because the bolt has to be sent home as well. Reloading early is
+// therefore both faster and worth an extra round, which is the whole point: it gives
+// a reason to top up behind cover instead of always firing to slide-lock.
+//
+// **`raise`** is how long the weapon takes to come back up out of a sprint. Sprinting
+// carries it down where it cannot be fired, so closing ground fast costs a moment of
+// helplessness at the end of it rather than being strictly free.
+//
+// **`holster` and `draw`** are the two halves of a swap: putting this weapon away and
+// bringing the next one up. A swap costs the outgoing weapon's `holster` plus the
+// incoming weapon's `draw`, so pistol-to-pistol is about half a second and dropping a
+// DMR for a shotgun is over one. The spread is the point — a sidearm you can get onto
+// a target while a rifle is still coming up is what a sidearm is *for*, and it is the
+// only reason to keep one once you can afford something better.
+//
+// **The rack** is the difference between the two reload times. `reload` buys the
+// magazine change and nothing else; a weapon whose chamber is dead when the fresh
+// magazine seats then works its bolt, slide or charging handle, and that tail is
+// `reloadEmpty - reload` (see `rackTime`). It is its own stage rather than a window
+// inside the reload because whether it is needed is not known when the reload starts:
+// fire the chambered round mid-magazine-change and a tactical reload grows a rack.
+//
 // `suppression` is how hard a round from this weapon pins the people it is fired at,
 // relative to the rifle. Not a damage number — a *threat* number, which is why the
 // DMR outscores the SMG it loses a straight shootout to: a lane covered by something
@@ -14,6 +42,8 @@ import { bindAuthoredMaterials } from './materials.js';
 //
 // `recoilPattern` is the shape of the climb, one entry per shot, `x` right and `y` up,
 // in roughly unit terms — `recoilVelocity` sets how hard it is in degrees per second.
+// `recoilImpulse` advances a few milliseconds of that kick on the firing frame, so
+// low-rate guns punch immediately instead of beginning a slow camera drift.
 // The list is walked in order and repeated if the magazine outlasts it, and the index
 // resets after `recoilCooldown` without firing, so every burst opens the same way.
 //
@@ -26,21 +56,18 @@ import { bindAuthoredMaterials } from './materials.js';
 export const WEAPONS = {
   pistol: {
     id: 'pistol', name: 'P9 SIDEARM', price: 0, tier: 0,
-    dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25,
+    dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25, reloadEmpty: 1.70, draw: 0.30, holster: 0.22, raise: 0.16,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
     // A hand stays free, which is the only reason a shieldman can fight with one.
     // Anything two-handed goes to the shoulder and the shield goes on his back.
     oneHanded: true,
-    // When the slide is worked during the reload, as a fraction of the reload's
-    // duration. Matches the frames in `anim_reload_pistol` where the support hand is
-    // over the top of the weapon — without this the hand mimes a rack the slide never
-    // performs, which is what made the reload read as a rifle's.
-    slideRack: [0.66, 0.82],
+    workRoll: 0.85,   // the slide is on top already, so it needs less to clear the hand
     // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
-    recoilVelocity: 8.05, recoilRandom: 1.4, recoilCooldown: 0.45,
+    recoilVelocity: 9.0, recoilRandom: 1.4, recoilCooldown: 0.45,
+    recoilImpulse: 0.055, viewKick: 0.72,
     // Just above what the decay eats at a fast trigger finger, so sustained
     // deliberate fire does pin somebody after a few seconds and a couple of
     // opportunist shots do nothing. Below about 0.5 a sidearm can never pin anyone
@@ -50,9 +77,10 @@ export const WEAPONS = {
   },
   smg: {
     id: 'smg', name: 'SKORPION K', price: 650, tier: 1,
-    dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6,
+    dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6, reloadEmpty: 2.15, draw: 0.48, holster: 0.30, raise: 0.20,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
+    workRoll: 1.25,   // charging handle on the right
     // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
     // rather than climbing straight — this is a weapon you walk onto a target.
     recoilPattern: [
@@ -62,14 +90,16 @@ export const WEAPONS = {
       [0.38, 0.15], [0.2, 0.15], [-0.05, 0.15], [-0.28, 0.15],
     ],
     recoilVelocity: 5.29, recoilRandom: 1.8, recoilCooldown: 0.5,
+    recoilImpulse: 0.010, viewKick: 0.50,
     suppression: 0.75,
     desc: 'A hose of cheap brass. Wild past 12 meters, filthy up close.',
   },
   shotgun: {
     id: 'shotgun', name: 'PIT BOSS 12G', price: 950, tier: 2,
-    dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4,
+    dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4, reloadEmpty: 2.4, draw: 0.72, holster: 0.42, raise: 0.26,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
+    workRoll: 0.35,   // the pump is under the barrel and needs no clearance at all
     // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
     // between shots; `shellReload` is the time to feed one round, repeated until the
     // tube is full — a shotgun does not swap a magazine.
@@ -77,15 +107,17 @@ export const WEAPONS = {
     // One heavy shove. There is no pattern to learn on a pump gun — you are back on
     // target by the time the next shell is chambered.
     recoilPattern: [[0, 1], [0.12, 1], [-0.12, 1]],
-    recoilVelocity: 17.25, recoilRandom: 2.2, recoilCooldown: 0.6,
+    recoilVelocity: 18.5, recoilRandom: 2.2, recoilCooldown: 0.6,
+    recoilImpulse: 0.065, viewKick: 1.0,
     suppression: 0.6,
     desc: '9 pellets of crowd-pleasing violence. Deletes torsos inside 10m.',
   },
   rifle: {
     id: 'rifle', name: 'AK VULTURE', price: 1500, tier: 3,
-    dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9,
+    dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9, reloadEmpty: 2.55, draw: 0.64, holster: 0.38, raise: 0.24,
     spread: 1.7, adsSpread: 0.4, recoil: 1.5, pellets: 1,
     aiRange: 20, adsFov: 55, sound: 'rifle',
+    workRoll: 1.30,   // charging handle on the right
     // The one worth learning. Six rounds nearly straight up, then a hard break right
     // and a slower drift back across — hold the trigger and you spell out the shape.
     recoilPattern: [
@@ -97,17 +129,20 @@ export const WEAPONS = {
       [-0.36, 0.08], [-0.46, 0.06], [-0.4, 0.06], [-0.22, 0.06],
     ],
     recoilVelocity: 7.13, recoilRandom: 1.1, recoilCooldown: 0.55,
+    recoilImpulse: 0.012, viewKick: 0.58,
     suppression: 1,
     desc: 'The workhorse of every syndicate in the league. 2–3 rounds does it.',
   },
   dmr: {
     id: 'dmr', name: 'LONGPIG DMR', price: 2500, tier: 4,
-    dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1,
+    dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1, reloadEmpty: 2.80, draw: 0.88, holster: 0.52, raise: 0.30,
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
+    workRoll: 1.20,   // charging handle on the right
     // A single hard punch straight up. You lose the sight picture and get it back.
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
     recoilVelocity: 19.55, recoilRandom: 1.0, recoilCooldown: 0.8,
+    recoilImpulse: 0.048, viewKick: 0.86,
     suppression: 1.15,
     desc: 'One shot, one funeral. Scoped. Slow. Surgical.',
   },
@@ -116,7 +151,8 @@ export const WEAPONS = {
 // the knife is innate — every fighter carries one, nobody sells it
 WEAPONS.knife = {
   id: 'knife', name: 'PIT SHANK', price: 0, tier: -1,
-  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0,
+  dmg: 55, rpm: 95, auto: false, mag: 0, reload: 0, reloadEmpty: 0,
+  draw: 0.22, holster: 0.18, raise: 0.12,
   spread: 0, adsSpread: 0, recoil: 0.6, pellets: 1,
   recoilPattern: [], recoilVelocity: 0.0,
   aiRange: 2, adsFov: 70, sound: 'slash', melee: true, meleeRange: 2.4, oneHanded: true,
@@ -348,13 +384,20 @@ export function buildWeaponModel(id) {
   const install = (source) => {
     const model = source.clone(true);
     model.traverse((child) => {
-      if (!child.isMesh) return;
-      child.castShadow = true;
       // Moving parts keep their authored names so the runtime can find them.
+      //
+      // Checked before the mesh guard, because a part is a *node*: the loader splits an
+      // authored object that uses more than one material into several meshes under a
+      // group of the object's name, and the group is what moves. The pistol's slide
+      // became one of those the moment its dark sights were joined onto the metal, and
+      // a mesh-only lookup silently stopped finding it — a slide that no longer cycled,
+      // with nothing anywhere saying why.
       if (CYCLE_TRAVEL[child.name] !== undefined || child.name === 'mag') {
         parts[child.name] = child;
         child.userData.restZ = child.position.z;
       }
+      if (!child.isMesh) return;
+      child.castShadow = true;
       // So do the sights. Aiming is solved against where they actually are rather
       // than against a per-weapon offset somebody tuned by eye, so they have to
       // survive the export as findable objects. See tools/blender/weapons.py.
@@ -426,3 +469,113 @@ const _r = new THREE.Vector3();
 const _u = new THREE.Vector3();
 const _basis = new THREE.Matrix3();
 const _m4 = new THREE.Matrix4();
+
+/**
+ * What a reload gives you, and what it costs.
+ *
+ * Ported from DogEater, where the chambered round is the mechanic that makes reload
+ * timing a decision rather than a reflex. Reload with rounds still in the magazine and
+ * the chambered one stays put: you end at `mag + 1` and pay only the magazine swap.
+ * Run dry and there is nothing chambered, so you get `mag` and pay the longer
+ * `reloadEmpty` because the bolt has to be sent home too.
+ *
+ * Pure, because it is the sort of arithmetic that looks obviously right and is off by
+ * one: `capacity` differs between the two paths, and the reserve has to be able to
+ * short-change either of them.
+ *
+ * @param {object} w        weapon
+ * @param {number} mag      rounds currently in the weapon
+ * @param {number} reserve  rounds available in the pack
+ * @param {number} mult     reload speed multiplier from progression (lower is faster)
+ */
+export function planReload(w, mag, reserve, chambered = mag > 0, mult = 1) {
+  // `mag` is the magazine alone. The chambered round is *not* counted in it — it is
+  // separate state that `loadChamber` moves rounds into — which is why a full magazine
+  // plus a chambered round comes to `mag + 1` with nothing special-casing that.
+  const want = Math.max(0, w.mag - mag);
+  const taken = Math.min(want, Math.max(0, reserve));
+  return {
+    chambered,
+    capacity: w.mag,
+    taken,
+    mag: mag + taken,
+    total: mag + taken + (chambered ? 1 : 0),
+    // The magazine change alone. Every reload pays this and only this — the rack is a
+    // separate stage that follows, because whether it is needed depends on the state of
+    // the chamber when the fresh magazine seats, not on the state it was in when the
+    // player pressed the button. Firing the chambered round during the swap grows a
+    // rack onto a reload that started tactical.
+    duration: (w.reload ?? 0) * mult,
+    rack: chambered ? 0 : rackTime(w) * mult,
+    // What the whole thing costs if nothing interrupts it, which is the number the
+    // handling model is balanced on: `reload` with a round up, `reloadEmpty` without.
+    time: ((chambered ? w.reload : (w.reloadEmpty ?? w.reload)) ?? 0) * mult,
+  };
+}
+
+/**
+ * The rack: bolt, slide or charging handle worked once, in seconds.
+ *
+ * Derived rather than authored, so there is one number per weapon to balance instead of
+ * two that can disagree. An empty reload costs `reloadEmpty`; the magazine change inside
+ * it costs `reload`; the difference is the stroke, and it is what the player watches.
+ */
+export function rackTime(w) {
+  return Math.max(0, (w.reloadEmpty ?? w.reload ?? 0) - (w.reload ?? 0));
+}
+
+/**
+ * Where the magazine change splits into its two stages, as a fraction of `reload`.
+ *
+ * Read off the authored reload clip, which drops the magazine at 0.30: before it the
+ * hands are stripping the old magazine out, after it they are fetching and seating a
+ * fresh one. Splitting there is what lets an interruption cost a whole stage and no more.
+ *
+ * The stages are the unit of everything. A magazine is either in the weapon or it is
+ * not — there is no half-fitted magazine — so being interrupted drops you back to the
+ * start of the stage you were in rather than freezing you inside it. Interrupted while
+ * stripping, you still have your magazine and have lost nothing but the grab. Interrupted
+ * while inserting, the old magazine is gone, the gun holds only what is chambered, and
+ * picking the reload back up means seating a fresh magazine from the beginning.
+ */
+export const MAG_OUT_AT = 0.30;
+
+/** The two stages of a magazine change, in order. */
+export const RELOAD_STAGES = ['strip', 'insert'];
+
+/** How long `stage` takes on this weapon, in seconds. */
+export function stageTime(w, stage, mult = 1) {
+  const full = (w.reload ?? 0) * mult;
+  if (stage === 'strip') return full * MAG_OUT_AT;
+  if (stage === 'insert') return full * (1 - MAG_OUT_AT);
+  if (stage === 'rack') return rackTime(w) * mult;
+  return 0;
+}
+
+/**
+ * How far the magazine hangs out of the well, 0..1, given the stage and how far into it.
+ *
+ * Driven off the stage rather than off a clock, so what is on screen and what the rules
+ * will do cannot drift apart: paused part way through `insert` the magazine is fully out
+ * and stays out, because that is exactly the state the weapon is in.
+ */
+export function magDropFor(stage, k) {
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  if (stage === 'strip') return clamp((k - 0.55) / 0.45);   // pulled clear at the end
+  if (stage === 'insert') return clamp(k < 0.85 ? 1 : (1 - k) / 0.15);   // home at the end
+  return 0;
+}
+
+/**
+ * How long the action takes to cycle after a shot, in seconds.
+ *
+ * DogEater ties this to the refire delay and loads the chamber a hair before the weapon
+ * is ready again: `wait(refire - 0.03) -> LoadChamber() -> wait(0.03)`. The consequence
+ * worth having is that the bolt travel *is* the fire rate — a DMR at 145 rpm throws its
+ * bolt over four tenths of a second and you watch it happen, an SMG at 850 rpm is a
+ * blur — with no per-weapon animation timing to keep in sync.
+ */
+export const CHAMBER_LEAD = 0.03;
+export function cycleTime(w) {
+  return Math.max(0, 60 / w.rpm - CHAMBER_LEAD);
+}

@@ -49,6 +49,28 @@ test('a ray that passes the edge of a wall is not stopped by it', () => {
   assert.equal(mc.raycast(V(0, 4, 0), V(1, 0, 0), 10), null);
 });
 
+test('raycast reports the hit face normal, and for the nearest surface', () => {
+  // A wall on x = 2: its geometric normal is ±x regardless of the shot's angle.
+  // The decal system lies flat against this; the shot direction it used before is
+  // only the normal for a head-on hit.
+  const mc = new MeshCollider(new Float32Array(wallQuad(2, 0, 3, -5, 5)));
+  const n = V(0, 0, 0);
+  const dir = V(1, 0, 0.6).normalize();   // oblique hit
+  const t = mc.raycast(V(0, 1.5, 0), dir, 10, n);
+  assert.ok(t !== null, 'missed the wall');
+  assert.ok(Math.abs(Math.abs(n.x) - 1) < 1e-4 && Math.abs(n.y) < 1e-4 && Math.abs(n.z) < 1e-4,
+    `wall normal should be ±x, got ${n.x.toFixed(3)},${n.y.toFixed(3)},${n.z.toFixed(3)}`);
+
+  // Two walls: the normal must come from the one the ray actually stops at.
+  const two = new MeshCollider(new Float32Array([
+    ...wallQuad(5, 0, 3, -5, 5),
+    ...boxTris(2, 1.5, 0, 1, 1, 1),
+  ]));
+  const t2 = two.raycast(V(0, 1.5, 0), V(1, 0, 0), 10, n);
+  assert.ok(Math.abs(t2 - 1.5) < 1e-4, `expected the box face at 1.5, got ${t2}`);
+  assert.ok(Math.abs(Math.abs(n.x) - 1) < 1e-4, 'normal should be the box face, ±x');
+});
+
 test('maxDist is respected', () => {
   const mc = new MeshCollider(new Float32Array(wallQuad(2, 0, 3, -5, 5)));
   assert.equal(mc.raycast(V(0, 1.5, 0), V(1, 0, 0), 1.5), null);

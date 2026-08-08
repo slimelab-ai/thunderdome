@@ -29,7 +29,12 @@ import puppeteer from 'puppeteer-core';
 
 const CHROME = process.env.CHROME_PATH
   || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const URL = process.env.GAME_URL || 'http://localhost:5173';
+// `--url` to match the other benches; GAME_URL still works for scripted runs.
+const URL = (() => {
+  const i = process.argv.indexOf('--url');
+  if (i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--')) return process.argv[i + 1];
+  return process.env.GAME_URL || 'http://localhost:5173';
+})();
 
 // A prop may not stop a shot more than this far short of its visible surface.
 const PHANTOM_GAP = 0.25;      // metres along the ray
@@ -51,13 +56,27 @@ const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('!!window.__game', { timeout: 30000 });
-await page.evaluate('window.__game.assetsReady');
+// Deliberately *not* `await window.__game.assetsReady` here.
+//
+// Combat assets now sit behind a gate that only opens when a match is actually
+// started (`beginCombatAssetLoading`, wired into `buildArena` as `loadGate`), so
+// `arena.propsReady` — and therefore `assetsReady` — stays pending forever on the
+// menu. Every bench used to wait on it before starting anything, and after that
+// change they all hung until puppeteer's protocol timeout killed them with a stack
+// trace that said nothing about loading. Start the match, then wait for the phase.
 
 const result = await page.evaluate(async () => {
   const g = window.__game;
   const T = g.THREE || window.THREE;
   const combat = await import('/src/combat.js');
-  await g.fight('circuits', 8);
+  g.fight('circuits', 8);
+  // Wait for the match, rather than awaiting the call: combat assets sit behind a gate
+  // that only opens once a match is started, and `step` is a no-op until the phase
+  // flips.
+  for (let i = 0; i < 900 && g.phase !== 'match'; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (g.phase !== 'match') throw new Error(`match never started (phase: ${g.phase})`);
   g.step(1 / 60, 60);
   // Fighters would block their own rays and wander between samples.
   for (const c of [...g.world.combatants]) c.removeFrom(g.world);

@@ -70,12 +70,24 @@ const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('!!window.__game', { timeout: 30000 });
-await page.evaluate('window.__game.assetsReady');
+// Deliberately *not* `await window.__game.assetsReady` here.
+//
+// Combat assets now sit behind a gate that only opens when a match is actually
+// started (`beginCombatAssetLoading`, wired into `buildArena` as `loadGate`), so
+// `arena.propsReady` — and therefore `assetsReady` — stays pending forever on the
+// menu. Every bench used to wait on it before starting anything, and after that
+// change they all hung until puppeteer's protocol timeout killed them with a stack
+// trace that said nothing about loading. Start the match, then wait for the phase.
 
 const report = await page.evaluate(async () => {
   const g = window.__game;
   const T = g.THREE;
   const DT = 1 / 60;
+
+  // The fighter model, and only that. `assetsReady` also waits on the arena props,
+  // which sit behind the combat asset gate and never resolve outside a match — this
+  // bench drives a rig by hand and needs neither.
+  await g.loadCombatAssets();
 
   const rig = new g.FighterRig({ scale: 1 });
   rig.group.position.set(0, 0, 0);

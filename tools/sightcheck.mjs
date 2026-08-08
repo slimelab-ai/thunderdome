@@ -78,7 +78,14 @@ const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForFunction('!!window.__game', { timeout: 30000 });
-await page.evaluate('window.__game.assetsReady');
+// Deliberately *not* `await window.__game.assetsReady` here.
+//
+// Combat assets now sit behind a gate that only opens when a match is actually
+// started (`beginCombatAssetLoading`, wired into `buildArena` as `loadGate`), so
+// `arena.propsReady` — and therefore `assetsReady` — stays pending forever on the
+// menu. Every bench used to wait on it before starting anything, and after that
+// change they all hung until puppeteer's protocol timeout killed them with a stack
+// trace that said nothing about loading. Start the match, then wait for the phase.
 
 const report = await page.evaluate(async (opts) => {
   const g = window.__game;
@@ -94,6 +101,15 @@ const report = await page.evaluate(async (opts) => {
   // with total confidence. The sandbox is the right arena for this: empty, and
   // nothing shoots back while the weapon is being measured.
   g.sandbox(['pistol', 'smg', 'shotgun', 'rifle', 'dmr']);
+  // And then *wait for it*. `startMatch` now parks in a `loading` phase until the
+  // fighter model and the graphics prep have both landed, so calling this and stepping
+  // straight away runs nothing at all — which the guard below reports as "measuring
+  // nothing". Same shape as the trap recorded for `fight()` in docs/ART.md: an entry
+  // point that used to be synchronous quietly became asynchronous.
+  for (let i = 0; i < 600 && g.phase !== 'match'; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  if (g.phase !== 'match') throw new Error(`sandbox never reached a match (phase: ${g.phase})`);
   g.step(1 / 60, 30);
 
   const revive = () => {

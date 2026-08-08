@@ -85,6 +85,17 @@ def post(y, height, *, width=0.004, tall=0.016, depth=0.010, ears=None):
                  (0.004, depth, tall + 0.006), DARK, 0.001, uv_scale=UV)
 
 
+def on_slide():
+    """The sight geometry just authored, for joining into a moving part.
+
+    `notch` and `post` name their pieces rather than returning them, so this collects
+    them back by name. Only ever called immediately after building a pair.
+    """
+    import bpy
+    return [o for o in bpy.data.objects
+            if o.type == "MESH" and o.name.startswith(("rear blade", "front post", "front ear"))]
+
+
 def finish(name, moving=(), budget=900):
     """Join everything except the moving parts and the sights, then export.
 
@@ -115,8 +126,17 @@ def pistol():
     tube("barrel", (0, 0.145, 0.035), 0.009, 0.05, METAL, vertices=8,
          rotation=(math.radians(90), 0, 0), uv_scale=UV)
     # Notch and post, three-dot pattern. Sight line 1 cm over the slide.
+    #
+    # Both are joined into the *slide*, which is where a pistol's sights live. Left in
+    # the static body they stayed put while the slide travelled 3.5 cm underneath them,
+    # so the front post hung in the air over the frame every time the weapon cycled.
+    #
+    # The aim markers stay behind on purpose: they are what the aiming transform is
+    # solved against, and a sight picture that travelled with the slide would swim
+    # sideways on every shot.
     notch(-0.028, 0.069, gap=0.007, blade=0.009, tall=0.013)
     post(0.145, 0.069, width=0.004, tall=0.013)
+    slide = join("slide", [slide] + on_slide())
     aim_marks(-0.028, 0.145, 0.069)
     mag = cube("mag", (0, -0.012, -0.09), (0.026, 0.040, 0.10), DARK, 0.006, uv_scale=UV)
     finish("pistol", moving=(slide, mag), budget=700)
@@ -132,6 +152,12 @@ def smg():
     cube("muzzle brake", (0, 0.40, 0.032), (0.022, 0.045, 0.022), DARK, 0.005, uv_scale=UV)
     cube("grip", (0, -0.03, -0.06), (0.032, 0.050, 0.12), GRIP, 0.012,
          rotation=(math.radians(-10), 0, 0), uv_scale=UV)
+    # The magazine well. Without it the receiver stopped at z=0 and the magazine started
+    # 2 cm below that, so the magazine hung in space under a gun with nowhere to put it —
+    # and a magazine change was a box drifting out from under nothing. It is deliberately
+    # wider than the magazine and overlaps both, so the magazine goes *into* something.
+    cube("magwell", (0, 0.055, -0.012), (0.038, 0.064, 0.034), METAL, 0.005,
+         rotation=(math.radians(4), 0, 0), uv_scale=UV)
     mag = cube("mag", (0, 0.055, -0.10), (0.028, 0.055, 0.16), DARK, 0.006,
                rotation=(math.radians(4), 0, 0), uv_scale=UV)
     cube("stock strut", (0, -0.13, 0.03), (0.020, 0.16, 0.020), DARK, 0.005, uv_scale=UV)
@@ -306,6 +332,10 @@ def dmr():
         torus("scope ring", (0, y, 0.105), 0.023, 0.0045, METAL,
               rotation=(math.radians(90), 0, 0), major_segments=12, minor_segments=5)
         cube("ring foot", (0, y, 0.084), (0.020, 0.018, 0.024), METAL, 0.003, uv_scale=UV)
+    # Magazine well. Same gap the SMG had: the receiver stopped at z=0 and the magazine
+    # started 1.2 cm below it, so it hung under the rifle with nothing to seat into.
+    cube("magwell", (0, -0.01, -0.008), (0.038, 0.064, 0.026), METAL, 0.005,
+         rotation=(math.radians(6), 0, 0), uv_scale=UV)
     mag = cube("mag", (0, -0.01, -0.070), (0.028, 0.055, 0.115), DARK, 0.007,
                rotation=(math.radians(6), 0, 0), uv_scale=UV)
     cube("grip", (0, -0.10, -0.050), (0.032, 0.050, 0.115), GRIP, 0.012,
@@ -313,7 +343,11 @@ def dmr():
     cube("stock", (0, -0.24, 0.012), (0.044, 0.22, 0.090), DARK, 0.016,
          rotation=(math.radians(-4), 0, 0), uv_scale=UV)
     cube("cheek riser", (0, -0.23, 0.062), (0.036, 0.14, 0.024), GRIP, 0.008, uv_scale=UV)
-    finish("dmr", moving=(bolt, mag), budget=1100)
+    # The most expensive weapon in the pack, and it earns it: the scope is an open tube
+    # with a sleeve inside it, two rims, two rings and a duplex reticle, because a scope
+    # you cannot see through is a length of pipe. Raised from 1100, which it had been
+    # over since the reticle went in and which the magazine well pushed further.
+    finish("dmr", moving=(bolt, mag), budget=1260)
 
 
 def knife():

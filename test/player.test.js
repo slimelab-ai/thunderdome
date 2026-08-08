@@ -52,3 +52,22 @@ test('death releases the world proxy so the corpse cannot soak bullets while spe
   assert.equal(world.playerProxy.alive, false);
   assert.deepEqual(camera.position.toArray(), [100, 24, 100]);
 });
+
+test('controller look consumes recoil before moving the underlying aim', () => {
+  const player = Object.assign(Object.create(Player.prototype), {
+    alive: true,
+    yaw: 0,
+    pitch: 0,
+    recoil: {
+      posY: 5,
+      applyLook(dx, dy) {
+        const consumed = Math.min(this.posY, Math.max(0, -dy));
+        this.posY -= consumed;
+        return { x: dx, y: dy + consumed };
+      },
+    },
+  });
+  player.addLook(0, -2 * Math.PI / 180);
+  assert.ok(Math.abs(player.recoil.posY - 3) < 1e-9);
+  assert.equal(player.pitch, 0, 'down-stick correction is spent on the visible kick first');
+});

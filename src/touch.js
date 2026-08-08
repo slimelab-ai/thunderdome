@@ -50,6 +50,7 @@ export class TouchFireLatch {
 
 export function touchModeFromSignals({
   override = null,
+  excluded = false,
   maxTouchPoints = 0,
   touchEvent = false,
   coarsePointer = false,
@@ -57,10 +58,11 @@ export function touchModeFromSignals({
 } = {}) {
   if (override === '1') return true;
   if (override === '0') return false;
+  if (excluded) return false;
   return maxTouchPoints > 0 || touchEvent || coarsePointer || mobileUserAgent;
 }
 
-export function isTouchDevice() {
+export function isTouchDevice({ excluded = false } = {}) {
   // A mouse/trackpad can become the "primary" pointer on hybrid devices, so
   // requiring `(pointer: coarse)` incorrectly hides touch controls there.
   // Chrome's iPhone simulator on Windows can also retain desktop pointer
@@ -68,6 +70,7 @@ export function isTouchDevice() {
   const ua = navigator.userAgent || '';
   return touchModeFromSignals({
     override: new URLSearchParams(window.location.search).get('touch'),
+    excluded,
     maxTouchPoints: navigator.maxTouchPoints || 0,
     touchEvent: 'ontouchstart' in window,
     coarsePointer: matchMedia('(any-pointer: coarse)').matches

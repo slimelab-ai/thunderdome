@@ -169,13 +169,19 @@ export class MeshCollider {
    * Nearest hit along a ray. `dir` must be normalised.
    * Returns the distance, or `null` for a clear ray — matching `Collider.raycast`, so
    * a MeshCollider can stand in wherever one of those does.
+   *
+   * `outNormal`, when given, receives the hit triangle's geometric normal —
+   * unoriented, since the mesh is tested double-sided; callers that care which way
+   * it faces orient it against the ray themselves. Costs one cross product, and
+   * only on a hit.
    */
-  raycast(origin, dir, maxDist = Infinity) {
+  raycast(origin, dir, maxDist = Infinity, outNormal = null) {
     if (!this.count) return null;
     const ox = origin.x, oy = origin.y, oz = origin.z;
     const dx = dir.x, dy = dir.y, dz = dir.z;
     const ix = 1 / (dx || 1e-30), iy = 1 / (dy || 1e-30), iz = 1 / (dz || 1e-30);
     let best = maxDist;
+    let bestTri = -1;
     const stack = _stack;
     let sp = 0;
     stack[sp++] = 0;
@@ -192,7 +198,7 @@ export class MeshCollider {
         const start = this.nodes[b + 6];
         for (let i = start; i < start + n; i++) {
           const t = this._tri(i, ox, oy, oz, dx, dy, dz, best);
-          if (t >= 0 && t < best) best = t;
+          if (t >= 0 && t < best) { best = t; bestTri = i; }
         }
       } else {
         // Nearest child first, so `best` shrinks as early as possible and the far
@@ -211,7 +217,23 @@ export class MeshCollider {
         }
       }
     }
-    return best < maxDist ? best : null;
+    if (best >= maxDist) return null;
+    if (outNormal && bestTri >= 0) this._triNormal(bestTri, outNormal);
+    return best;
+  }
+
+  /** Geometric normal of triangle `i` (an index into the BVH's ordering). */
+  _triNormal(i, out) {
+    const t = this.tris;
+    const o = this.index[i] * 9;
+    const ax = t[o], ay = t[o + 1], az = t[o + 2];
+    const e1x = t[o + 3] - ax, e1y = t[o + 4] - ay, e1z = t[o + 5] - az;
+    const e2x = t[o + 6] - ax, e2y = t[o + 7] - ay, e2z = t[o + 8] - az;
+    return out.set(
+      e1y * e2z - e1z * e2y,
+      e1z * e2x - e1x * e2z,
+      e1x * e2y - e1y * e2x,
+    ).normalize();
   }
 
   /**

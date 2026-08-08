@@ -28,7 +28,6 @@ export { NO_OCCLUDE_LAYER as FX_NO_AO_LAYER } from './layers.js';
 
 const MAX_PARTICLES = 700;      // per pool
 const MAX_TRACERS = 48;
-const MAX_DECALS = 48;
 const MAX_CASINGS = 40;
 
 // ---------------------------------------------------------------- textures
@@ -310,6 +309,13 @@ const FLASH_LIGHT_RANGE = 3.5;
 const _tracerDir = new THREE.Vector3();
 const _decalPos = new THREE.Vector3();
 const _decalNormal = new THREE.Vector3();
+const _tint = new THREE.Color();
+const _iPos = new THREE.Vector3();
+const _iScl = new THREE.Vector3();
+const _qRoll = new THREE.Quaternion();
+// Pool split by texture: holes land per bullet, blood per kill, scorch per blast.
+// Totals the same 48 quads the single mixed pool held.
+const DECAL_COUNTS = { hole: 24, blood: 16, scorch: 8 };
 // Scratch for the casing transform, hoisted so the update loop allocates nothing.
 const _m = new THREE.Matrix4();
 const _cq = new THREE.Quaternion();
@@ -330,20 +336,31 @@ export class FX {
     this.soft = new ParticlePool(scene, { map: smokeTexture(), blending: THREE.NormalBlending });
 
     // ---- tracers ----
+    //
+    // One instanced batch, drawn once. These were 48 separate meshes with 48 cloned
+    // materials — up to 48 transparent draw calls at peak for objects that differ
+    // only by transform and fade. The fade rides in `instanceColor`: the blending is
+    // additive, so scaling the colour toward black is exactly what scaling the
+    // opacity looked like, with no per-instance alpha plumbing. Retired tracers
+    // collapse to a zero matrix, the same trick the casings batch uses.
     this.tracers = [];
     const tGeo = new THREE.BoxGeometry(0.012, 0.012, 1);
     const tMat = new THREE.MeshBasicMaterial({
-      color: 0xffd9a0, transparent: true, opacity: 0,
+      color: 0xffd9a0, transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
+    this.tracerMesh = new THREE.InstancedMesh(tGeo, tMat, MAX_TRACERS);
+    this.tracerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.tracerMesh.frustumCulled = false;
+    this.tracerMesh.layers.set(NO_OCCLUDE_LAYER);
+    _m.makeScale(0, 0, 0);
     for (let i = 0; i < MAX_TRACERS; i++) {
-      const m = new THREE.Mesh(tGeo, tMat.clone());
-      m.visible = false;
-      m.frustumCulled = false;
-      m.layers.set(NO_OCCLUDE_LAYER);
-      scene.add(m);
-      this.tracers.push({ mesh: m, life: 0, maxLife: 0.06 });
+      this.tracerMesh.setMatrixAt(i, _m);
+      this.tracerMesh.setColorAt(i, _tint.setScalar(0));
+      this.tracers.push({ life: 0, maxLife: 0.06 });
     }
+    this.tracerMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.tracerMesh);
     this.tCursor = 0;
 
     // ---- muzzle flash ----
@@ -395,23 +412,62 @@ export class FX {
     this._lastPlayerFlash = -1;
 
     // ---- decals ----
+    //
+    // Three instanced batches, one per texture, replacing 48 separate meshes with 48
+    // private materials. Fixing the map per pool also retires the per-placement
+    // `needsUpdate` dance entirely. Per-decal fade cannot use `instanceColor` here
+    // (normal blending: darkening is not disappearing), so each pool's geometry
+    // carries an `instanceOpacity` attribute and the material splices it into the
+    // fragment alpha. All three materials share one compiled program — same shader,
+    // pinned by customProgramCacheKey.
     this.decalTextures = {
       hole: bulletHoleTexture(),
       blood: bloodTexture(),
       scorch: scorchTexture(),
     };
-    this.decals = [];
-    this.decalGeo = new THREE.PlaneGeometry(1, 1);
-    this.decalCursor = 0;
-    for (let i = 0; i < MAX_DECALS; i++) {
-      const m = new THREE.Mesh(this.decalGeo, new THREE.MeshBasicMaterial({
-        transparent: true, opacity: 0, depthWrite: false,
+    const decalOpacityPatch = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float instanceOpacity;\nvarying float vInstanceOpacity;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvInstanceOpacity = instanceOpacity;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vInstanceOpacity;')
+        .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vInstanceOpacity;');
+    };
+    this.decalMeshes = {};
+    this.decalState = {};
+    this.decalCursor = {};
+    _m.makeScale(0, 0, 0);
+    for (const [kind, count] of Object.entries(DECAL_COUNTS)) {
+      const geo = new THREE.PlaneGeometry(1, 1);
+      geo.setAttribute('instanceOpacity',
+        new THREE.InstancedBufferAttribute(new Float32Array(count), 1).setUsage(THREE.DynamicDrawUsage));
+      // Lit, not basic: a decal is a stain on a wall, and it has to sit in whatever
+      // light that wall is sitting in — full-bright bullet holes glowed in shadowed
+      // corners and stayed lit through LIGHTS OUT. Matte standard so it shades like
+      // the (standard-material) surfaces it lands on; the quads carry real surface
+      // normals, so the lighting matches the wall's own.
+      const mat = new THREE.MeshStandardMaterial({
+        map: this.decalTextures[kind],
+        color: kind === 'scorch' ? 0x0e0d0c : 0xffffff,
+        roughness: 1, metalness: 0,
+        transparent: true, depthWrite: false,
         polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+      });
+      mat.onBeforeCompile = decalOpacityPatch;
+      mat.customProgramCacheKey = () => 'td-decal-instanced';
+      const mesh = new THREE.InstancedMesh(geo, mat, count);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.receiveShadow = true;   // the wall's shadow is the decal's shadow
+      mesh.frustumCulled = false;
+      mesh.layers.set(NO_OCCLUDE_LAYER);
+      for (let i = 0; i < count; i++) mesh.setMatrixAt(i, _m);
+      scene.add(mesh);
+      this.decalMeshes[kind] = mesh;
+      this.decalCursor[kind] = 0;
+      this.decalState[kind] = Array.from({ length: count }, () => ({
+        age: 0, life: 0, grow: 0, base: 1, peak: 1,
+        pos: new THREE.Vector3(), quat: new THREE.Quaternion(),
       }));
-      m.visible = false;
-      m.layers.set(NO_OCCLUDE_LAYER);
-      scene.add(m);
-      this.decals.push({ mesh: m, age: 0, life: 0, grow: 0, base: 1 });
     }
 
     // ---- shell casings ----
@@ -461,8 +517,20 @@ export class FX {
     }
   }
 
-  /** Wall impact: hot spall, a dust puff, and a hole. `dir` orients all three. */
-  sparks(pos, dir = null) {
+  /**
+   * Wall impact: hot spall, a dust puff, and a hole. `dir` orients the particles.
+   *
+   * `surfaceNormal` — the actual face the round hit, oriented back toward the
+   * shooter — is what the hole lies flat against. Without it the shot direction
+   * stands in, which is only right for a head-on hit: at 45° incidence half the
+   * quad hangs off the wall in mid-air. The fallback survives for the box-collider
+   * path before the props land.
+   *
+   * `hole = false` for impacts on things that are not standing surfaces — a riot
+   * shield takes sparks, but a decal stamped where the shield *was* is a bullet
+   * hole hanging in mid-air once the carrier walks on.
+   */
+  sparks(pos, dir = null, surfaceNormal = null, hole = true) {
     for (let i = 0; i < 9; i++) {
       _v.set((Math.random() - 0.5) * 3.4, Math.random() * 2.2 + 0.4, (Math.random() - 0.5) * 3.4);
       if (dir) _v.addScaledVector(dir, -(2 + Math.random() * 4));   // spall comes back at the shooter
@@ -478,7 +546,14 @@ export class FX {
         color: [0.42, 0.40, 0.37], size0: 0.08, size1: 0.34, fade: 0.24,
       });
     }
-    if (dir) this.decal('hole', pos, dir, 0.12 + Math.random() * 0.06, 26, 0.85);
+    // growTime 0: a bullet hole is stamped at full size the frame it lands. It was
+    // 26 — matching its 26 visible seconds — which inflated every hole 5× in slow
+    // motion, the blood-pool spread applied to a thing that should not spread.
+    if (dir && hole) {
+      if (surfaceNormal) _decalNormal.copy(surfaceNormal);
+      else _decalNormal.copy(dir).negate();   // face back along the shot
+      this.decal('hole', pos, _decalNormal, 0.12 + Math.random() * 0.06, 0, 0.85);
+    }
   }
 
   gasPuff(pos) {
@@ -507,8 +582,8 @@ export class FX {
   tracer(from, to) {
     const len = from.distanceTo(to);
     if (len < 0.5) return;
-    const t = this.tracers[this.tCursor = (this.tCursor + 1) % MAX_TRACERS];
-    const m = t.mesh;
+    const i = this.tCursor = (this.tCursor + 1) % MAX_TRACERS;
+    const t = this.tracers[i];
     // Shorter than the flight path, so the round reads as a bolt in motion rather
     // than a wire connecting the muzzle to the impact — but anchored at the *muzzle*
     // end, not centred on the path.
@@ -520,11 +595,16 @@ export class FX {
     // it came from.
     const span = Math.min(len, 4 + len * 0.35);
     _tracerDir.copy(to).sub(from).divideScalar(len);
-    m.position.copy(from).addScaledVector(_tracerDir, span * 0.5);
-    m.lookAt(to);
-    m.scale.set(1, 1, span);
-    m.material.opacity = 0.85;
-    m.visible = true;
+    _iPos.copy(from).addScaledVector(_tracerDir, span * 0.5);
+    // The cross-section is square, so roll is invisible and a from-unit-vectors
+    // quaternion is the whole orientation.
+    _cq.setFromUnitVectors(FORWARD, _tracerDir);
+    _iScl.set(1, 1, span);
+    _m.compose(_iPos, _cq, _iScl);
+    this.tracerMesh.setMatrixAt(i, _m);
+    this.tracerMesh.setColorAt(i, _tint.setScalar(0.85));
+    this.tracerMesh.instanceMatrix.needsUpdate = true;
+    this.tracerMesh.instanceColor.needsUpdate = true;
     t.life = t.maxLife;
   }
 
@@ -637,33 +717,35 @@ export class FX {
   /**
    * Place a decal on a surface.
    *
-   * `normal` is the surface it lies on. For bullet impacts the true face normal would
-   * need the collider to report which face it hit; the shot direction is used instead,
-   * which is within a few degrees for anything but a grazing hit and needs no changes
-   * to the ballistics path. `polygonOffset` on the material keeps it off the wall.
+   * `normal` is the surface it lies on, pointing *out* of it — every caller is
+   * responsible for orientation now that the triangle collider reports the real face
+   * (see `wallHit`); the old shot-direction stand-in only held for head-on hits.
+   * `polygonOffset` on the material keeps it off the wall.
    */
   decal(kind, pos, normal, size, growTime, opacity) {
-    const d = this.decals[this.decalCursor = (this.decalCursor + 1) % MAX_DECALS];
-    const map = this.decalTextures[kind];
-    d.mesh.material.map = map;
-    d.mesh.material.color.set(kind === 'scorch' ? 0x0e0d0c : 0xffffff);
-    d.mesh.material.needsUpdate = true;
+    const state = this.decalState[kind];
+    const mesh = this.decalMeshes[kind];
+    const i = this.decalCursor[kind] = (this.decalCursor[kind] + 1) % state.length;
+    const d = state[i];
     _n.copy(normal).normalize();
     if (_n.lengthSq() < 0.5) _n.set(0, 1, 0);
-    // Decals face *out* of the surface, so flip an inbound shot direction.
-    if (kind === 'hole') _n.negate();
     _q.setFromUnitVectors(FORWARD, _n);
-    d.mesh.quaternion.copy(_q);
-    d.mesh.rotateZ(Math.random() * Math.PI * 2);
-    d.mesh.position.copy(pos).addScaledVector(_n, 0.015);
+    _qRoll.setFromAxisAngle(FORWARD, Math.random() * Math.PI * 2);
+    d.quat.copy(_q).multiply(_qRoll);
+    d.pos.copy(pos).addScaledVector(_n, 0.015);
     d.base = size;
     d.grow = growTime;
     d.age = 0;
     d.life = kind === 'hole' ? 30 : 999;
-    d.mesh.scale.setScalar(growTime > 1 ? size * 0.2 : size);
-    d.mesh.material.opacity = opacity;
     d.peak = opacity;
-    d.mesh.visible = true;
+    const s = growTime > 1 ? size * 0.2 : size;
+    _iScl.set(s, s, s);
+    _m.compose(d.pos, d.quat, _iScl);
+    mesh.setMatrixAt(i, _m);
+    mesh.instanceMatrix.needsUpdate = true;
+    const opAttr = mesh.geometry.attributes.instanceOpacity;
+    opAttr.setX(i, opacity);
+    opAttr.needsUpdate = true;
   }
 
   // -------------------------------------------------------------- update
@@ -680,11 +762,18 @@ export class FX {
     this.hot.update(dt);
     this.soft.update(dt);
 
-    for (const t of this.tracers) {
-      if (!t.mesh.visible) continue;
+    for (let i = 0; i < MAX_TRACERS; i++) {
+      const t = this.tracers[i];
+      if (t.life <= 0) continue;
       t.life -= dt;
-      t.mesh.material.opacity = Math.max(0, t.life / t.maxLife) * 0.85;
-      if (t.life <= 0) t.mesh.visible = false;
+      if (t.life <= 0) {
+        _m.makeScale(0, 0, 0);
+        this.tracerMesh.setMatrixAt(i, _m);
+        this.tracerMesh.instanceMatrix.needsUpdate = true;
+      } else {
+        this.tracerMesh.setColorAt(i, _tint.setScalar((t.life / t.maxLife) * 0.85));
+        this.tracerMesh.instanceColor.needsUpdate = true;
+      }
     }
 
     for (const f of this.flashes) {
@@ -710,18 +799,36 @@ export class FX {
 
     this._updateCasings(dt);
 
-    for (const d of this.decals) {
-      if (!d.mesh.visible) continue;
-      d.age += dt;
-      if (d.age < d.grow) {
-        const k = d.age / d.grow;
-        d.mesh.scale.setScalar(d.base * (0.2 + 0.8 * k));
-      }
-      if (d.life < 900) {
-        // Bullet holes fade out; blood and scorch stay for the bout.
-        const remaining = d.life - d.age;
-        if (remaining < 4) d.mesh.material.opacity = d.peak * Math.max(0, remaining / 4);
-        if (remaining <= 0) d.mesh.visible = false;
+    for (const kind in this.decalMeshes) {
+      const mesh = this.decalMeshes[kind];
+      const state = this.decalState[kind];
+      const opAttr = mesh.geometry.attributes.instanceOpacity;
+      for (let i = 0; i < state.length; i++) {
+        const d = state[i];
+        if (d.life <= 0) continue;
+        d.age += dt;
+        if (d.age < d.grow) {
+          const k = d.age / d.grow;
+          const s = d.base * (0.2 + 0.8 * k);
+          _iScl.set(s, s, s);
+          _m.compose(d.pos, d.quat, _iScl);
+          mesh.setMatrixAt(i, _m);
+          mesh.instanceMatrix.needsUpdate = true;
+        }
+        if (d.life < 900) {
+          // Bullet holes fade out; blood and scorch stay for the bout.
+          const remaining = d.life - d.age;
+          if (remaining < 4) {
+            opAttr.setX(i, d.peak * Math.max(0, remaining / 4));
+            opAttr.needsUpdate = true;
+          }
+          if (remaining <= 0) {
+            d.life = 0;
+            _m.makeScale(0, 0, 0);
+            mesh.setMatrixAt(i, _m);
+            mesh.instanceMatrix.needsUpdate = true;
+          }
+        }
       }
     }
   }

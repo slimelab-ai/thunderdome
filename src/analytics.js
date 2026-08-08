@@ -44,6 +44,13 @@ function serializeEvents(events) {
 const protectedLifecycleEvent = event =>
   event?.event_type === 'match_enter' || event?.event_type === 'match_terminal';
 
+// localStorage is synchronous. Xbox Edge can spend close to a second committing a
+// multi-megabyte value, so the durable outbox contains only the two records needed
+// to recover match lifecycle after a crash. Ordinary combat telemetry remains in
+// memory and is uploaded every five seconds (and by beacon on pagehide) without
+// ever putting a bulk storage write in the animation callback.
+const durableEvents = events => events.filter(protectedLifecycleEvent);
+
 function compactOversizedEvent(event) {
   try {
     const bytes = serialize(event).bytes;
@@ -107,8 +114,11 @@ export class Analytics {
     this.now = now;
     this.installationId = stableId('thunderdome_analytics_installation_id', storage, randomUUID);
     this.sessionId = randomUUID();
-    this.persistScheduled = false;
     this.setQueue(loadOutbox(storage));
+    // Avoid even a tiny synchronous setItem after every network acknowledgement.
+    // `[]` and a missing key are equivalent, while a legacy bulk outbox deliberately
+    // differs and is compacted on the first lifecycle write or delivery attempt.
+    this.persistedOutbox = this.storage.getItem(OUTBOX_KEY) || '[]';
     this.context = {};
     this.flushing = false;
     this.deliveryFailures = 0;
@@ -222,22 +232,11 @@ export class Analytics {
     this.setQueue(this.queue.filter((_, index) => !dropped.has(index)));
   }
 
-  // Lifecycle events reach storage before emit() returns. Ordinary telemetry coalesces
-  // onto the next microtask: rewriting the whole outbox per event is quadratic, and a
-  // headless match emitting thousands of frames in one synchronous burst spent minutes
-  // of wall clock re-serialising records that had not changed.
+  // Lifecycle events reach storage before emit() returns. Ordinary telemetry never
+  // touches synchronous browser storage during play; the network queue and pagehide
+  // beacon are its delivery path.
   schedulePersist(event) {
-    if (protectedLifecycleEvent(event)) {
-      this.persist();
-      return;
-    }
-    if (this.persistScheduled) return;
-    this.persistScheduled = true;
-    queueMicrotask(() => this.persistPending());
-  }
-
-  persistPending() {
-    if (this.persistScheduled) this.persist();
+    if (protectedLifecycleEvent(event)) this.persist();
   }
 
   emit(type, payload = {}, { eventId = null, context = null } = {}) {
@@ -269,10 +268,12 @@ export class Analytics {
   }
 
   persist() {
-    this.persistScheduled = false;
     try {
       this.trimOutbox();
-      this.storage.setItem(OUTBOX_KEY, serializeEvents(this.queue));
+      const serialized = serializeEvents(durableEvents(this.queue));
+      if (serialized === this.persistedOutbox) return true;
+      this.storage.setItem(OUTBOX_KEY, serialized);
+      this.persistedOutbox = serialized;
       return true;
     } catch {
       this.storageFailures++;
@@ -283,9 +284,6 @@ export class Analytics {
   }
 
   isDurablyQueued(eventId) {
-    // Settle any coalesced write first, so the answer describes storage as callers
-    // will find it rather than as it was one microtask ago.
-    this.persistPending();
     try {
       const parsed = JSON.parse(this.storage.getItem(OUTBOX_KEY) || '[]');
       return Array.isArray(parsed) && parsed.some(event => event?.event_id === eventId);
