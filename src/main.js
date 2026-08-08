@@ -3109,9 +3109,59 @@ const SHIELD_TEST = {
     { w: 'smg', hp: 120, sp: 1.35, re: 0.55, arch: 'rusher', ammo: 400, medkit: 1, grenade: 1 },
     { w: 'smg', hp: 110, sp: 1.3, re: 0.55, arch: 'medic', ammo: 400, medkit: 4 },
   ],
-  camera: { height: 52, tilt: -7 },
+  // How far off vertical the overhead view sits. Straight down is unreadable — every
+  // fighter is a hat — so it leans back just enough to give them height.
+  tilt: 7,
   seconds: 90,
 };
+
+/**
+ * Take the roof off, so an overhead camera sees the fight instead of a slab.
+ *
+ * The lane test never hit this because it hides the whole arena and builds its own
+ * box; this one is deliberately fought on the real map, which has a concrete ceiling
+ * at 14 m, trusses at 13.5 and a lamp rig at 11.6. From above, all you see is the
+ * underside of the building.
+ *
+ * Everything overhead is above 11.6 and everything that belongs to the fight is
+ * below the 5 m wall tops, so a cut at seven metres separates them cleanly with no
+ * list of names to maintain. Only the *meshes* go — the point lights hanging in the
+ * rig stay exactly where they are, so the pit is still lit by the lamps you can no
+ * longer see.
+ */
+function liftArenaRoof(minY = ARENA.WALL_H + 2) {
+  const hidden = [];
+  const box = new THREE.Box3();
+  for (const child of scene.children) {
+    if (!(child.isMesh || child.isInstancedMesh) || !child.visible) continue;
+    box.setFromObject(child);
+    // An empty box reports min +Infinity, which would otherwise read as "very high
+    // up" and quietly hide anything without geometry.
+    if (box.isEmpty() || box.min.y <= minY) continue;
+    child.visible = false;
+    hidden.push(child);
+  }
+  const fog = scene.fog;
+  scene.fog = null;   // fifty metres of it between the camera and the floor
+  return () => {
+    for (const child of hidden) child.visible = true;
+    scene.fog = fog;
+  };
+}
+
+/**
+ * How high the camera has to be for the whole pit to fit, given its actual lens.
+ *
+ * Computed rather than tuned, because a hard-coded height is only right for one
+ * field of view and one window shape — the first version was set for a tall window
+ * and cropped the ends of the arena off a wide one.
+ */
+function overheadHeight() {
+  const half = Math.tan((camera.fov * Math.PI) / 180 / 2);
+  const forDepth = (ARENA.D + 12) / (2 * half);
+  const forWidth = (ARENA.W + 12) / (2 * half * camera.aspect);
+  return Math.max(forDepth, forWidth);
+}
 
 function spawnShieldTestSquads(swap = false) {
   for (const c of world.combatants.slice()) c.removeFrom(world);
@@ -3282,10 +3332,18 @@ async function watchShieldTest(options = {}) {
   const squads = spawnShieldTestSquads(options.swap === true);
   const test = makeShieldTest(squads, options);
   const uninstrument = instrumentShieldTest(test);
-  const finish = () => { world.scenario = null; uninstrument(); player.vmRoot.visible = true; };
+  const restoreRoof = liftArenaRoof();
+  const finish = () => {
+    world.scenario = null;
+    uninstrument();
+    restoreRoof();
+    player.vmRoot.visible = true;
+  };
   world.scenario = (dt) => {
     test.step(dt);
-    camera.position.set(0, SHIELD_TEST.camera.height, -SHIELD_TEST.camera.tilt);
+    // Refitted every frame so resizing the window keeps the pit in shot. Set last,
+    // after everything else has had its turn with the camera.
+    camera.position.set(0, overheadHeight(), SHIELD_TEST.tilt);
     camera.lookAt(0, 0, 0);
     if (test.done) finish();
   };
