@@ -3,7 +3,7 @@
 // A content hash of everything under public/assets. Appended to every asset URL so a
 // regenerated texture or model actually reaches a browser that already cached the old
 // one; see that script for why this is not optional.
-export const ASSET_VERSION = '331e9f65c916';
+export const ASSET_VERSION = '0c5c8fb646fc';
 
 /** Append the cache-busting stamp to an asset URL. */
 export function versioned(url) {

@@ -349,12 +349,18 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .loading-kicker { color: var(--gold); font-size: 11px; letter-spacing: 4px; }
 .loading-card h2 { margin: 12px 0 22px; font: 54px/.95 Impact, "Arial Black", sans-serif; letter-spacing: 4px; }
 .loading-meter { height: 7px; margin: 0 0 18px; overflow: hidden; border: 1px solid #3c3c47; background: #111117; }
-.loading-meter i { display: block; width: 8%; height: 100%; background: linear-gradient(90deg, var(--blood), var(--gold)); transition: width .18s ease; }
+.loading-meter i {
+  display: block; width: 8%; height: 100%;
+  background: linear-gradient(90deg, var(--blood), var(--gold));
+  transition: width .18s ease;
+  animation: loading-meter-pulse .7s ease-in-out infinite alternate;
+}
 .loading-card b, .loading-card span, .loading-card small { display: block; }
 .loading-card b { color: #fff; font-size: 14px; letter-spacing: 2px; }
 .loading-card span { margin-top: 6px; color: #aaaab4; font-size: 11px; letter-spacing: 1.4px; }
 .loading-card small { margin-top: 24px; color: #777784; font-size: 10px; line-height: 1.5; }
 @keyframes loading-drift { to { transform: translateX(74px); } }
+@keyframes loading-meter-pulse { from { opacity: 0.58; } to { opacity: 1; } }
 
 #range-panel {
   position: absolute; top: 20px; right: 22px; min-width: 250px; padding: 10px 14px;

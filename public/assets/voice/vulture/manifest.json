@@ -240,10 +240,10 @@
     {
       "category": "firstBlood",
       "index": 4,
-      "text": "First one down! The mop budget just went UP!",
+      "text": "First one down! That got the crowd's attention!",
       "file": "firstBlood/05.opus",
-      "subtitle": "First one down! The mop budget just went UP!",
-      "voiceText": "First one down! The mop budget just went UP!"
+      "subtitle": "First one down! That got the crowd's attention!",
+      "voiceText": "First one down! That got the crowd's attention!"
     },
     {
       "category": "firstBlood",
@@ -2016,10 +2016,10 @@
     {
       "category": "event_molotov",
       "index": 1,
-      "text": "FIRE IN THE PIT! Someone's insurance premium just tripled!",
+      "text": "THE FLOOR IS BURNING! Pick a lane and MOVE!",
       "file": "event_molotov/02.opus",
-      "subtitle": "FIRE IN THE PIT! Someone's insurance premium just tripled!",
-      "voiceText": "FIRE IN THE PIT! Someone's insurance premium just tripled!"
+      "subtitle": "THE FLOOR IS BURNING! Pick a lane and MOVE!",
+      "voiceText": "THE FLOOR IS BURNING! Pick a lane and MOVE!"
     },
     {
       "category": "event_molotov",
