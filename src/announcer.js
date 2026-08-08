@@ -201,7 +201,7 @@ export const LINES = {
     "And we're on the board! Somebody's mother is crying already!",
     "FIRST KILL of the bout — the pit claims its opening tribute!",
     "There's the opener! The night is officially RUINED for someone!",
-    "First one down! The mop budget just went UP!",
+    "First one down! That got the crowd's attention!",
     "The seal is BROKEN, folks! It only gets wetter from here!",
     "Opening casualty! The pit has officially begun collecting!",
     "First one off the board! Everybody else just learned the stakes!",
@@ -455,7 +455,7 @@ export const LINES = {
   ],
   event_molotov: [
     "The cheap seats are throwing MOLOTOVS again! Security, do nothing!",
-    "FIRE IN THE PIT! Someone's insurance premium just tripled!",
+    "THE FLOOR IS BURNING! Pick a lane and MOVE!",
     "It's raining cocktails, folks! The FLAMMABLE kind!",
     "Fire on the floor! Marshmallows available at concessions!",
     "The pit is burning! Choose your footing with unusual care!",

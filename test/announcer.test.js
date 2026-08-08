@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Announcer, AnnouncerVoiceBank, LINES, announcerClipUrl } from '../src/announcer.js';
@@ -28,6 +28,16 @@ test('every authored subtitle has a pre-rendered voice clip', async () => {
     lines.map((_, index) => access(path.join(
       root, 'public/assets/voice/vulture', category, `${String(index + 1).padStart(2, '0')}.opus`,
     )))));
+});
+
+test('voice manifest copy stays synchronized with the authored subtitles', async () => {
+  const manifest = JSON.parse(await readFile(path.join(
+    root, 'public/assets/voice/vulture/manifest.json',
+  ), 'utf8'));
+  for (const line of manifest.lines) {
+    assert.equal(line.text, LINES[line.category]?.[line.index]);
+    assert.equal(line.subtitle, line.text);
+  }
 });
 
 test('an urgent line waits for the current clip without interrupting it', () => {
