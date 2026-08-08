@@ -383,8 +383,8 @@ export class Player {
    */
   _stashReload(slot) {
     this.interruptReload();
-    this.reloadBySlot[slot] = this.reloading > 0 || this.rackT > 0
-      ? { stage: this.reloadStage, magOut: this.magazineOut, rackT: this.rackT }
+    this.reloadBySlot[slot] = this.reloading > 0 || this.rackT > 0 || this.pumpT > 0
+      ? { stage: this.reloadStage, magOut: this.magazineOut, rackT: this.rackT, pumpT: this.pumpT }
       : null;
   }
 
@@ -393,6 +393,10 @@ export class Player {
     this.shellLoading = false;
     this.reloadStage = held?.stage ?? null;
     this.magazineOut = held?.magOut ?? false;
+    // The pump stroke belongs to the shotgun, not to the player. Left global it followed
+    // the swap: put the shotgun down mid-stroke and the sidearm that came up could not
+    // fire until a pump it does not have finished working.
+    this.pumpT = held?.pumpT ?? 0;
     // Durations are re-derived from the weapon rather than stored, so a stage picked back
     // up runs at the length the weapon in hand says it should — which matters the moment
     // a progression multiplier changes between putting a gun down and picking it up.
@@ -1089,14 +1093,18 @@ export class Player {
     // part travels back and forward over `rackDur`, and the support hand is sent to it —
     // see `arms.rackK` below. The magazine guns never racked at all before this: an AK
     // went from empty to firing without the charging handle ever moving.
-    // Paused needs no special case: `rackT` simply stops advancing, so the part and the
-    // hand freeze mid-stroke, which is what an interrupted rack looks like.
-    const rack = this.rackT > 0 && this.rackDur > 0
+    const rack = this.reloadActive && this.rackT > 0 && this.rackDur > 0
       ? Math.sin((1 - this.rackT / this.rackDur) * Math.PI)
       : 0;
     // Which is also where the support hand goes: off the handguard and onto the charging
     // handle for the length of the stage, travelling with it.
-    this.arms.rackK = this.rackT > 0 ? Math.max(0.08, rack) : 0;
+    //
+    // Only while the stage is actually being performed. An abandoned rack means the hand
+    // came off the handle, the same as every other interrupted stage. Left driven it
+    // pinned the support arm to the bolt indefinitely — and because a rack still owed
+    // survives the holster, it then fought the draw animation of whatever came up next,
+    // which is what put the arm through the weapon on a swap.
+    this.arms.rackK = this.reloadActive && this.rackT > 0 ? Math.max(0.08, rack) : 0;
     // The action, driven by the chamber cycle rather than by the recoil impulse it
     // used to be guessed from. This is the same timer that decides when the next round
     // is available, so the bolt is not miming a cycle alongside the real one — it *is*

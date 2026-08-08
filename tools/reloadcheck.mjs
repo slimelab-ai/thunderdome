@@ -157,15 +157,44 @@ const report = await page.evaluate(async (RACK_GRIP) => {
   check(pl.mag > magBefore, 'the fresh magazine never delivered its rounds');
   check(!pl.magazineOut, 'the rack began before the magazine was in');
 
-  // 6. and the support hand is on the charging handle while it is worked
+  // 6. an interrupted rack lets go of the handle, and stays let go across a swap
+  //
+  // It did not. `rackK` kept driving the support hand at the charging handle for as long
+  // as a rack was owed, and because an owed rack survives the holster it then fought the
+  // draw of whatever came up next — an arm through the receiver of a weapon that was not
+  // even being reloaded.
   const handle = pl.currentVM?.parts?.bolt;
   if (!handle) fails.push('the rifle viewmodel has no charging handle to rack');
+  const handlePos = () => handle.getWorldPosition(new T.Vector3());
+  await step(4);                                     // let the hand get onto the handle
+  pl.sprintHeld = true; pl.padMoveZ = -1;
+  pl.update(1 / 60, true);
+  pl.sprintHeld = false; pl.padMoveZ = 0;
+  check(pl.reloadPaused && pl.rackT > 0, 'running did not interrupt the rack');
+  check(pl.rackT === pl.rackDur, 'the interrupted rack was not rewound to the top');
+  await step(10);
+  check(pl.arms.rackK === 0, 'the support hand is still racking an abandoned rack');
+  check(handle.position.z === handle.userData.restZ,
+    'the charging handle is stuck out of battery with nothing working it');
+  // ...and through a swap, which is where it was visible
+  pl.switchTo(1);
+  await until(() => pl.swapT <= 0, 'the pistol to come up');
+  check(pl.arms.rackK === 0, "the pistol is being racked by the rifle's abandoned rack");
+  check(pl.pumpT <= 0, 'a pump stroke followed the swap onto a weapon with no pump');
+  pl.switchTo(0);
+  await until(() => pl.swapT <= 0, 'the rifle to come back up');
+  check(pl.rackT > 0 && pl.reloadPaused, 'the rifle forgot the rack it still owed');
+  check(pl.arms.rackK === 0, 'the support arm is pinned to the bolt through the draw');
+
+  // ...and picking it back up works the handle properly, with a hand on it
+  pl.startReload();
+  await until(() => pl.reloadActive, 'the rack to resume');
   let grip = Infinity, travel = 0;
   const rest = handle?.userData.restZ ?? 0;
   const rackStart = window.__frames || 0;
   while (pl.rackT > 0 && (window.__frames || 0) - rackStart < 500) {
     if (handle) {
-      grip = Math.min(grip, fist().distanceTo(handle.getWorldPosition(new T.Vector3())));
+      grip = Math.min(grip, fist().distanceTo(handlePos()));
       travel = Math.max(travel, Math.abs(handle.position.z - rest));
     }
     await step();
