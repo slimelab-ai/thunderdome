@@ -39,10 +39,6 @@ function makeAnalytics(storage, fetchImpl = async () => ({
     randomUUID: () => `generated-${++id}`,
     now: () => new Date('2026-07-24T06:00:00.000Z'),
     autoStart: false,
-    // Zero-delay coalescing so `settle()` drains the persist timer; the production
-    // default only stretches the window, it does not change the write-once property
-    // these tests pin down.
-    persistDelayMs: 0,
   });
 }
 
@@ -148,19 +144,18 @@ test('simulation provenance rejects an ambiguous unseeded batch', () => {
   assert.throws(() => analytics.setSimulationContext({ batchId: 'batch-10' }), /numeric seed/);
 });
 
-test('a synchronous telemetry burst coalesces into a single outbox write', async () => {
+test('ordinary telemetry never rewrites synchronous browser storage during play', async () => {
   const storage = new MemoryStorage();
   const analytics = makeAnalytics(storage);
 
-  // A headless match emits its whole run inside one synchronous task. Writing the
-  // outbox per event is quadratic; one write per burst is the property that matters.
+  // These records still live in the network queue, but serializing the whole queue
+  // into localStorage can freeze a constrained browser for hundreds of milliseconds.
   for (let i = 0; i < 500; i++) analytics.emit('combat_frame', { frame: i });
-  assert.equal(storage.outboxWrites(), 0, 'no outbox write should land mid-burst');
+  assert.equal(analytics.queue.length, 500);
 
   await settle();
-  assert.ok(storage.outboxWrites() <= 2,
-    `500 events should coalesce, took ${storage.outboxWrites()} writes`);
-  assert.equal(JSON.parse(storage.getItem(OUTBOX_KEY)).length, 500);
+  assert.equal(storage.outboxWrites(), 0);
+  assert.equal(storage.getItem(OUTBOX_KEY), null);
 });
 
 test('lifecycle events are durable before emit returns, without waiting for a microtask', () => {
@@ -171,24 +166,21 @@ test('lifecycle events are durable before emit returns, without waiting for a mi
   analytics.emit('match_enter', {}, { eventId: 'enter-1' });
 
   assert.equal(analytics.isDurablyQueued('enter-1'), true);
-  // The coalesced frame rides along on the lifecycle write rather than being lost.
-  assert.equal(JSON.parse(storage.getItem(OUTBOX_KEY)).length, 2);
+  assert.deepEqual(JSON.parse(storage.getItem(OUTBOX_KEY)).map(event => event.event_id), ['enter-1']);
 });
 
-test('the byte ledger tracks the queue across trimming and delivery', async () => {
+test('successful delivery drains memory while the durable ledger stays lifecycle-only', async () => {
   const storage = new MemoryStorage();
   const analytics = makeAnalytics(storage, acceptWholeBatch);
 
   for (let i = 0; i < 40; i++) analytics.emit('combat_frame', { blob: 'x'.repeat(200) });
-  await settle();
-
-  const ledger = () => analytics.outboxBytes();
-  assert.equal(ledger(), storage.getItem(OUTBOX_KEY).length,
-    'ledger must equal the bytes actually written');
+  analytics.emit('match_enter', {}, { eventId: 'enter-ledger' });
+  assert.equal(JSON.parse(storage.getItem(OUTBOX_KEY)).length, 1);
 
   await analytics.flush();
   assert.equal(analytics.queue.length, 0);
-  assert.equal(ledger(), storage.getItem(OUTBOX_KEY).length);
+  assert.equal(analytics.outboxBytes(), 2);
+  assert.deepEqual(JSON.parse(storage.getItem(OUTBOX_KEY)), []);
 });
 
 test('an oversized outbox sheds expendable records but never lifecycle events', async () => {

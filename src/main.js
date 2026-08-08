@@ -1774,6 +1774,10 @@ function fireEvent() {
   const pool = match.mode === 'liquidation' ? LIQUIDATION_EVENTS : EVENTS;
   let ev = pool[(Math.random() * pool.length) | 0];
   if (ev === 'bounty' && !match.enemies.some(c => c.alive && !c.boss)) ev = 'frenzy';
+  runtimeDiagnostics?.emit('game_arena_event', {
+    event: ev,
+    match_time: +match.time.toFixed(3),
+  });
   audio.klaxon();
   if (ev === 'bounty') {
     const marks = match.enemies.filter(c => c.alive && !c.boss);
@@ -3788,6 +3792,13 @@ function tick() {
         last_start_age_ms: announcer._lastVoiceStartAt
           ? Math.round(now - announcer._lastVoiceStartAt)
           : null,
+      },
+      analytics: {
+        queued_events: analytics.queue.length,
+        queued_bytes: analytics.outboxBytes(),
+        delivery_failures: analytics.deliveryFailures,
+        storage_failures: analytics.storageFailures,
+        last_successful_flush_at: analytics.lastSuccessfulFlushAt,
       },
       render: pipeline.stats(),
     });
