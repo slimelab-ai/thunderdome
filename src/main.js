@@ -347,7 +347,12 @@ async function warmShaderCache({ between = async () => {} } = {}) {
     const job = jobs[index];
     const stage = new THREE.Group();
     stage.position.set(0, -80, 0);
-    stage.add(...job.objects());
+    // The effects job stages nothing of its own — it compiles sprites that already
+    // live in the scene — and `add()` with no arguments is a three.js console error
+    // for adding `undefined`, which is exactly the kind of boot noise that hides a
+    // real one.
+    const staged = job.objects();
+    if (staged.length) stage.add(...staged);
     scene.add(stage);
     const restore = [];
     if (job.label === 'effects') {
