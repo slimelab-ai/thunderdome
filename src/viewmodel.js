@@ -244,6 +244,7 @@ export class ViewModel {
     this.current = null;         // the full-body clip currently overriding idle
     this.idleWeight = 1;
     this.rackK = 0;              // 0..1 stroke of the rack, driven by the player
+    this.workRoll = 0;           // radians of firing-wrist roll, likewise
     this.pinWeight = 1;
     // Weights are driven every frame rather than crossfaded. Two normal-blend actions
     // touching the same bones at weight 1 blend 50/50, so an override clip has to
@@ -525,6 +526,28 @@ export class ViewModel {
     this.idle.setEffectiveWeight(this.idleWeight);
 
     this.mixer.update(dt);
+
+    // Roll the weapon in the firing hand: about its own bore, at the grip.
+    //
+    // At the socket rather than at the arm. Rolling the *forearm* is anatomically the
+    // right joint but geometrically the wrong axis — the weapon hangs a long way off the
+    // forearm's line, so pronating it swings the muzzle through a huge arc instead of
+    // turning the gun in place. Rolling the viewmodel root is the other failure: arms and
+    // weapon turn together, so it looks the same from the camera and changes nothing at
+    // all about what the support hand has to reach through.
+    //
+    // The socket is the axis a hand actually rolls a gun about. The support hand's target
+    // lives on the weapon, so it comes round with it while the support shoulder stays put
+    // — which is the only version of this that changes the reach and not just the picture.
+    // Absolute, from the socket's rest orientation. `rotateZ` composes onto whatever is
+    // already there, and no clip keys this bone to put it back — so applied straight it
+    // accumulated every frame and had the rifle past eighty degrees within a stroke.
+    if (this.socket) {
+      this._socketRest ??= this.socket.quaternion.clone();
+      this.socket.quaternion.copy(this._socketRest);
+      if (this.workRoll) this.socket.rotateZ(this.workRoll);
+      this.socket.updateMatrixWorld(true);
+    }
 
     // Support-hand pins hold the grip against the idle sway — but they must *release*
     // for any clip that moves the support arm, or a reload would play with the left

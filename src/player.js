@@ -1072,6 +1072,39 @@ export class Player {
     let rx = kickVm * 0.22 + (changeK > 0 ? Math.sin(changeK * Math.PI) * arc : 0);
     let ry = 0;
     let rz = kickVm * 0.05;
+
+    // ---- working the action ----
+    //
+    // Nobody reaches a charging handle where it lies. A right-side handle is worked by
+    // rolling the weapon over so the handle comes up and toward you, then taking it over
+    // the top of the receiver — because the alternative is putting your forearm through
+    // the gun, which is exactly what this used to do.
+    //
+    // The roll is per weapon (`workRoll`) because what has to be reached differs: a full
+    // cant for the side-charging rifles, a light one for a pistol whose slide is already
+    // on top, and barely anything for a pump that sits under the barrel and needs no
+    // clearance at all. The gun tucks in and down as it rolls, so it reads as being
+    // brought into the body to be worked rather than pivoting where it hangs.
+    //
+    // Held flat across the middle of the stroke rather than peaking with it: the roll is
+    // the posture the work is done *in*, so it settles, the action is worked, and it
+    // comes back. Following the stroke made the weapon flick over and back in the same
+    // tenth of a second.
+    const plateau = (k) => Math.max(0, Math.min(1, Math.min(k, 1 - k) / 0.25));
+    const workK = Math.max(
+      this.reloadActive && this.rackT > 0 && this.rackDur > 0
+        ? plateau(1 - this.rackT / this.rackDur) : 0,
+      w.pump && this.pumpT > 0 ? plateau(1 - this.pumpT / w.pump) : 0,
+    );
+    const roll = workK > 0 ? (w.workRoll ?? 0) * workK : 0;
+    if (roll) {
+      // The gun tucks in and down as it comes over, so it reads as being brought into the
+      // body to be worked rather than pivoting where it hangs.
+      vm.position.y -= roll * 0.055;
+      vm.position.z += roll * 0.045;    // in toward the chest, not out at arm's length
+    }
+    // Set before `arms.update`, which is where the pronation is applied.
+    this.arms.workRoll = roll;
     // The knife's strike is the authored `melee` clip on the arms rig, and nothing
     // else. This used to add a procedural arc on top of it — 86 degrees of pitch on
     // the viewmodel root plus 18 cm of sideways travel — so two animations of the

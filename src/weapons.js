@@ -59,6 +59,7 @@ export const WEAPONS = {
     dmg: 34, rpm: 280, auto: false, mag: 12, reload: 1.25, reloadEmpty: 1.70, draw: 0.30, holster: 0.22, raise: 0.16,
     spread: 1.3, adsSpread: 0.22, recoil: 1.3, pellets: 1,
     aiRange: 15, adsFov: 60, sound: 'pistol',
+    workRoll: 0.38,   // the slide, over the top: a light cant to clear the hand
     // Semi-auto, so the pattern is short and the cooldown rarely lets it run: a
     // sidearm's recoil is a flick you ride out between shots, not a climb.
     recoilPattern: [[0, 1], [0.14, 0.98], [-0.16, 0.96]],
@@ -76,6 +77,7 @@ export const WEAPONS = {
     dmg: 15, rpm: 850, auto: true, mag: 32, reload: 1.6, reloadEmpty: 2.15, draw: 0.48, holster: 0.30, raise: 0.20,
     spread: 3.1, adsSpread: 1.3, recoil: 0.65, pellets: 1, falloff: 14,
     aiRange: 13, adsFov: 62, sound: 'smg',
+    workRoll: 0.52,   // charging handle on the right
     // Fast and light: little per shot, but 850 rpm stacks it quickly, and it wanders
     // rather than climbing straight — this is a weapon you walk onto a target.
     recoilPattern: [
@@ -94,6 +96,7 @@ export const WEAPONS = {
     dmg: 17, rpm: 82, auto: false, mag: 6, reload: 2.4, reloadEmpty: 2.4, draw: 0.72, holster: 0.42, raise: 0.26,
     spread: 4.6, adsSpread: 3.0, recoil: 3.2, pellets: 9, falloff: 24,
     aiRange: 8, adsFov: 64, sound: 'shotgun',
+    workRoll: 0.16,   // the pump is under the barrel; barely a cant
     // Pump action, loaded shell by shell. `pump` is the stroke that has to complete
     // between shots; `shellReload` is the time to feed one round, repeated until the
     // tube is full — a shotgun does not swap a magazine.
@@ -111,6 +114,7 @@ export const WEAPONS = {
     dmg: 43, rpm: 600, auto: true, mag: 30, reload: 1.9, reloadEmpty: 2.55, draw: 0.64, holster: 0.38, raise: 0.24,
     spread: 1.7, adsSpread: 0.4, recoil: 1.5, pellets: 1,
     aiRange: 20, adsFov: 55, sound: 'rifle',
+    workRoll: 0.55,   // charging handle on the right
     // The one worth learning. Six rounds nearly straight up, then a hard break right
     // and a slower drift back across — hold the trigger and you spell out the shape.
     recoilPattern: [
@@ -131,6 +135,7 @@ export const WEAPONS = {
     dmg: 82, rpm: 145, auto: false, mag: 10, reload: 2.1, reloadEmpty: 2.80, draw: 0.88, holster: 0.52, raise: 0.30,
     spread: 0.9, adsSpread: 0.06, recoil: 2.5, pellets: 1,
     aiRange: 28, adsFov: 34, sound: 'dmr',
+    workRoll: 0.50,   // charging handle on the right
     // A single hard punch straight up. You lose the sight picture and get it back.
     recoilPattern: [[0, 1], [0.08, 1], [-0.09, 1]],
     recoilVelocity: 19.55, recoilRandom: 1.0, recoilCooldown: 0.8,
@@ -376,13 +381,20 @@ export function buildWeaponModel(id) {
   const install = (source) => {
     const model = source.clone(true);
     model.traverse((child) => {
-      if (!child.isMesh) return;
-      child.castShadow = true;
       // Moving parts keep their authored names so the runtime can find them.
+      //
+      // Checked before the mesh guard, because a part is a *node*: the loader splits an
+      // authored object that uses more than one material into several meshes under a
+      // group of the object's name, and the group is what moves. The pistol's slide
+      // became one of those the moment its dark sights were joined onto the metal, and
+      // a mesh-only lookup silently stopped finding it — a slide that no longer cycled,
+      // with nothing anywhere saying why.
       if (CYCLE_TRAVEL[child.name] !== undefined || child.name === 'mag') {
         parts[child.name] = child;
         child.userData.restZ = child.position.z;
       }
+      if (!child.isMesh) return;
+      child.castShadow = true;
       // So do the sights. Aiming is solved against where they actually are rather
       // than against a per-weapon offset somebody tuned by eye, so they have to
       // survive the export as findable objects. See tools/blender/weapons.py.
