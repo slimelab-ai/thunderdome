@@ -411,15 +411,13 @@ function scheduleBackgroundGraphicsPrep() {
   };
   assetsReady.then(async () => {
     await voiceReady;
-    if (xboxBrowser) {
-      await prepTurn('arena-shaders', 'COMPILING ARENA MATERIALS · DRIVER PASS');
-      try {
-        await renderer.compileAsync(scene, camera);
-      } catch {
-        try { renderer.compile(scene, camera); } catch { /* first reflection face remains the backstop */ }
-      }
-    }
-    await prepTurn('environment', 'BAKING REFLECTIONS · 0/6');
+    // Xbox Edge produced a white composer target after an explicit whole-scene
+    // compile. Let the first reflection render compile the same arena programs via
+    // the normal render path that is known to leave its WebGL state valid. Name the
+    // work before it begins so the long driver pass is not mislabeled as face 0/6.
+    await prepTurn('environment', xboxBrowser
+      ? 'COMPILING ARENA MATERIALS · FIRST DRIVER PASS'
+      : 'BAKING REFLECTIONS · 0/6');
     await pipeline.bakeEnvironment({
       size: xboxBrowser ? 64 : 128,
       // Six identical-quality faces, yielded between frames. Desktop used to bake
@@ -737,6 +735,19 @@ const DEATH_LINES = [
 
 // ============================================================ match state
 let phase = 'menu'; // menu | settings | intro | match | shop | dead | champion
+renderer.domElement.addEventListener('webglcontextlost', event => {
+  runtimeDiagnostics?.emit('game_webgl_context_lost', {
+    status_message: event.statusMessage || null,
+    phase,
+    graphics_prep: graphicsPrepStage,
+  });
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  runtimeDiagnostics?.emit('game_webgl_context_restored', {
+    phase,
+    graphics_prep: graphicsPrepStage,
+  });
+});
 scheduleBackgroundGraphicsPrep();
 let settingsReturnPhase = 'menu';
 let locked = false;
@@ -1245,11 +1256,11 @@ function startMatch({ prepared = false } = {}) {
     ui.showHUDOnly();
   };
 
-  // The Xbox trace showed the first playable frame compiling 16 additional shader
-  // programs and blocking for 21.4 seconds. Compile the *actual assembled bout*
-  // while its loading overlay is still up, then let one full composer frame draw so
-  // shadow/GTAO overrides are warm too. This changes scheduling, never features.
-  if (!startMatch.firstBoutWarmed) {
+  // Desktop drivers tolerate an explicit assembled-bout compile and hidden composer
+  // warmup. Xbox Edge does not: the August 8 trace reached this path and emerged
+  // from loading with a permanently white camera target. On Xbox, reveal the match
+  // and let its normal first render compile lazily, preserving valid WebGL state.
+  if (!xboxBrowser && !startMatch.firstBoutWarmed) {
     startMatch.firstBoutWarmed = true;
     phase = 'loading';
     graphicsPrepStage = 'match-shaders';
