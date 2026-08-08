@@ -16,7 +16,7 @@ import {
   lanesSpokenFor,
 } from './tactics.js';
 import {
-  ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena,
+  ContactMemory, contactRadius, withinVision, worthGrenading, clampToArena, VISION,
 } from './perception.js';
 import {
   SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, stepOutOfLane, worthSuppressing,
@@ -300,6 +300,19 @@ const SHIELD_STANCES = {
  * shieldman in the open still beats a rumour of somebody else. Shooting the plate is
  * donating ammunition, and the squad should act like it knows that.
  */
+/**
+ * How stubbornly a fighter stays in the fight he is already in, and what it takes to
+ * pull him out of it.
+ *
+ * `SWITCH_MARGIN` is the ceiling on commitment — past it, only losing sight of the
+ * man will move him. Deliberately set below what a serious wound is worth
+ * (`THREAT_CAP`): being shot in the back always wins, being approached never does.
+ */
+const SWITCH_MARGIN = 70;
+const THREAT_WEIGHT = 2.2;
+const THREAT_CAP = 110;
+const THREAT_HALFLIFE = 4;
+
 const SHIELD_TARGET_PENALTY = 42;
 
 /**
@@ -504,6 +517,10 @@ export class Combatant {
     this.shieldCrouch = null;
     /** Elected to hold a shieldman's attention while the squad goes round him. */
     this.baiting = false;
+    /** Damage taken per enemy, bled off over seconds. Drives who he turns on. */
+    this.threat = new Map();
+    /** When the current target became the current target. */
+    this.engagedAt = -99;
     /** What squadmates have told him they are doing. Never read off them. */
     this.knownLanes = new Map();
     /** Holding the angle for the squad, or moving behind somebody who is. */
@@ -740,6 +757,13 @@ export class Combatant {
       if (dmg > this.maxHp * 0.12) {
         audio.hurt(1.2 / (1 + this.pos.distanceTo(world.cameraPos) * 0.09));
       }
+    }
+    // Who is doing this to him. Retargeting used to be decided by geometry alone —
+    // visible, and nearer — so a man who had put half your health away was outbid by
+    // anyone who happened to walk closer. Damage is the one signal that should be
+    // able to pull a fighter out of the gunfight he is already in.
+    if (shooter && shooter.team !== this.team && shooter !== this) {
+      this.threat.set(shooter, (this.threat.get(shooter) ?? 0) + dmg);
     }
     this.sinceHit = 0;
     this.healingT = 0; // getting shot interrupts bandaging
@@ -1072,11 +1096,32 @@ export class Combatant {
     }
 
     // ---- acquire target ----
+    // Grudges fade. Roughly a four-second half-life, so a man who shot you and left
+    // stops being the most interesting thing in the room, while one who is still
+    // shooting you tops it up faster than it drains.
+    if (this.threat.size) {
+      const keep = Math.exp(-dt / THREAT_HALFLIFE);
+      for (const [who, heat] of this.threat) {
+        const next = heat * keep;
+        if (next < 0.5 || !who.alive) this.threat.delete(who); else this.threat.set(who, next);
+      }
+    }
+
     if (this.thinkTimer <= 0 || (this.target && !this._targetAlive())) {
-      this.thinkTimer = 0.35 + Math.random() * 0.25;
+      // He reconsiders slowly while somebody is in his sights and quickly when
+      // nobody is — which is the right way round, and was previously neither: a
+      // third of a second flat, whatever he was doing.
+      const engaged = !!this.target && !!this.contact?.visible;
+      this.thinkTimer = engaged ? 0.8 + Math.random() * 0.5 : 0.3 + Math.random() * 0.2;
       const previousTarget = this.target;
       this.contact = this.perception.best(now, {
         from: this.pos, current: this.target,
+        // Commitment, growing with how long he has been in it. A fight he has just
+        // started is easy to walk away from; one he is several seconds into takes a
+        // real reason. The old flat 8 was worth sixteen metres of distance, so
+        // anybody who wandered closer took the fight off whoever he was shooting.
+        stickiness: engaged ? Math.min(SWITCH_MARGIN, 10 + (now - this.engagedAt) * 12) : 6,
+        danger: (e) => Math.min(THREAT_CAP, (this.threat.get(e) ?? 0) * THREAT_WEIGHT),
         // Shooting a shield is donating ammunition. Anyone else visible is a better
         // idea — unless he is the man elected to hold its attention, who is supposed
         // to be looking straight at it.
@@ -1084,6 +1129,7 @@ export class Combatant {
       });
       this.target = this.contact?.entity || null;
       if (this.target !== previousTarget) {
+        this.engagedAt = now;
         world.onCombatEvent?.('target_change', this, {
           from: previousTarget?.isPlayer ? 'YOU' : previousTarget?.name || null,
           to: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
@@ -1188,7 +1234,8 @@ export class Combatant {
         this._reacquireRadius = !this.contact ? null
           : this.contact.visible ? 0
             : contactRadius(this.contact, now);
-        this.contact = this.perception.see(this.target, this.target.pos, now);
+        this.contact = this.perception.see(this.target, this.target.pos, now,
+          withinVision(this.pos, this.yaw, this.target.pos, { halfFov: VISION.focalFov }));
         // Call it in. The squad converges on where *he* saw them, a beat later.
         _shareMates.length = 0;
         for (const c of aliveSquad(world, this.team)) if (c !== this) _shareMates.push(c);
@@ -2384,7 +2431,10 @@ export class Combatant {
       const aim = hostile.isPlayer
         ? playerAimPoint(world, eye, world.playerProxy, _scanAim)
         : hostile.aimPoint(_scanAim);
-      if (hasLoS(world, eye, aim)) this.perception.see(hostile, hostile.pos, now);
+      if (hasLoS(world, eye, aim)) {
+        this.perception.see(hostile, hostile.pos, now,
+          withinVision(this.pos, this.yaw, hostile.pos, { halfFov: VISION.focalFov }));
+      }
       else this.perception.markUnseen(hostile, now);
     };
     if (this.team === 'enemy') look(world.playerProxy);

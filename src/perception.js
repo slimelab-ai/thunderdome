@@ -56,7 +56,51 @@ export const VISION = {
   range: 60,
   /** Inside this, facing stops mattering — you notice someone at arm's length. */
   proximity: 4,
+  /**
+   * Half the arc he is actually *looking* at, as opposed to merely facing.
+   *
+   * The wide cone above is right for noticing that somebody is there. It was wrong
+   * as the only cone, because it was also what decided who he could pick a fight
+   * with: a man appearing ninety-five degrees off his nose was, in the same frame, a
+   * fully-resolved target he could swing onto and shoot. That is the snap you see
+   * when a flanker arrives — not cheating exactly, but a model in which peripheral
+   * vision and a sight picture are the same thing.
+   *
+   * Forty degrees either side is the sight picture. Outside it he knows you are
+   * there; it takes him a moment to make you his problem.
+   */
+  focalFov: (40 * Math.PI) / 180,
 };
+
+/**
+ * How long a man glimpsed out of the corner of the eye takes to become a target,
+ * and what he is worth until he does.
+ *
+ * The penalty is sized against the terms in `best`, where being visible at all is
+ * worth 100: heavy enough that the man you are already shooting at keeps your
+ * attention, light enough that it loses to somebody who is actually hurting you.
+ * That ordering is the whole point — attention follows damage, not geometry.
+ */
+export const FOCUS = {
+  seconds: 0.6,
+  peripheralPenalty: 60,
+  /**
+   * How long a sight picture survives him looking away.
+   *
+   * Without this the lock reset the instant his nose left the target — which happens
+   * constantly, because he strafes and jinks while he fights — so the man he was
+   * shooting kept dropping out of focus, losing to whoever was at the edge of vision,
+   * and flipping back a moment later. Measured, it made retargeting *more* frequent
+   * rather than less: 8.9 switches per fighter per minute against 6.6 before. A
+   * glance away is not forgetting where somebody is.
+   */
+  lapse: 1.6,
+};
+
+/** Has this contact been in the sight picture long enough to be engaged? */
+export function focused(contact, now) {
+  return contact?.focalSince !== undefined && now - contact.focalSince >= FOCUS.seconds;
+}
 
 /**
  * What each kind of noise tells a listener, and how far it carries.
@@ -162,10 +206,20 @@ export class ContactMemory {
   get size() { return this.contacts.size; }
 
   /** A confirmed sighting: exact, and it resets any search in progress. */
-  see(entity, pos, now) {
-    return this._record(entity, {
+  see(entity, pos, now, focal = true) {
+    const c = this._record(entity, {
       kind: 'visual', x: pos.x, y: pos.y, z: pos.z, error: 0, confidence: 1, t: now,
     });
+    // The clock starts when he *looks* at you, and resets when he looks away. A man
+    // held in the corner of the eye for a whole fight never accumulates a sight
+    // picture, which is the difference between being noticed and being aimed at.
+    if (focal) {
+      if (c.focalSince === undefined) c.focalSince = now;
+      c.lastFocalAt = now;
+    } else if (now - (c.lastFocalAt ?? -99) > FOCUS.lapse) {
+      c.focalSince = undefined;
+    }
+    return c;
   }
 
   /**
@@ -286,7 +340,8 @@ export class ContactMemory {
    * for whoever we were already engaging so fighters don't oscillate between two
    * equally plausible ghosts.
    */
-  best(now, { from, current = null, playerBias = 0.7, stickiness = 8, penalty = null } = {}) {
+  best(now, { from, current = null, playerBias = 0.7, stickiness = 8, penalty = null,
+    danger = null } = {}) {
     let best = null, bestScore = -Infinity;
     for (const contact of this.contacts.values()) {
       const dist = Math.hypot(contact.x - from.x, contact.z - from.z);
@@ -294,6 +349,15 @@ export class ContactMemory {
         + contactConfidence(contact, now) * 20
         - dist * (contact.entity.isPlayer ? playerBias : 1) * 0.5
         + (contact.entity === current ? stickiness : 0)
+        // Who is actually hurting him. Rounds landing outrank geometry: the man
+        // putting holes in you is the problem even if somebody else is nearer, and
+        // he is also what earns a flanker the right to interrupt a fight in front.
+        + (danger ? danger(contact.entity) : 0)
+        // ...and a shape at the edge of vision is not yet a target.
+        // The man he is already fighting is exempt: he knows exactly where that one
+        // is, whichever way his nose happens to be pointing this frame.
+        - (contact.visible && contact.entity !== current && !focused(contact, now)
+          ? FOCUS.peripheralPenalty : 0)
         // Some contacts are visible, close, and still the wrong man to pick a fight
         // with — a shield fronting you is the case this exists for. The caller
         // supplies the judgement; perception only knows where people are.
