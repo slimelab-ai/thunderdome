@@ -3256,6 +3256,9 @@ async function runShieldDuel({ rushers = 1, seeds = [1, 2, 3, 4, 5, 6], weapon =
 // ate, how much they landed while paying the accuracy tax for it, and whether the
 // other squad went round them or stood in front donating ammunition.
 
+/** Guards the scorer: two of these sharing one world produce fiction. */
+let shieldScorerBusy = false;
+
 const _shieldProbeFrom = new THREE.Vector3();
 const _shieldProbeTo = new THREE.Vector3();
 
@@ -3505,6 +3508,23 @@ function instrumentShieldTest(test) {
  * visible as one rather than averaged into a conclusion.
  */
 async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options } = {}) {
+  // One scorer at a time, ever.
+  //
+  // These loops yield so the tab stays responsive, which also means a second one can
+  // be started while the first is mid-match — and then two harnesses interleave on
+  // the same global world, the same `match`, and the same seeded `Math.random`,
+  // each stepping the other's fight and reseeding the other's dice. It does not
+  // error. It produces numbers, and the numbers are worthless: the same five-on-six
+  // configuration measured 6 wins in 8 while alone and 1 in 12 while sharing the
+  // world with another run. Anything measured that way is unrecoverable, so this
+  // refuses loudly rather than quietly averaging two fights together.
+  if (shieldScorerBusy) {
+    throw new Error(
+      'shield scorer already running — await the previous call before starting another',
+    );
+  }
+  shieldScorerBusy = true;
+  try {
   // The arena is built at boot behind the asset gate; open it and that is all the
   // world this needs. `spawnShieldTestSquads` starts a fresh match per seed, which
   // matters because a finished match stops thinking — reusing one showed up as a
@@ -3557,6 +3577,9 @@ async function runShieldTest({ seeds = [1, 2, 3, 4, 5, 6], rank = 5, ...options 
     stance: Object.fromEntries(['carry', 'aim', 'hunker', 'sprint', 'turtle']
       .map(k => [k, +(runs.reduce((a, r) => a + r.stance[k], 0) / runs.length).toFixed(2)])),
   };
+  } finally {
+    shieldScorerBusy = false;
+  }
 }
 
 /**
