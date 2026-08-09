@@ -3256,6 +3256,9 @@ async function runShieldDuel({ rushers = 1, seeds = [1, 2, 3, 4, 5, 6], weapon =
 // ate, how much they landed while paying the accuracy tax for it, and whether the
 // other squad went round them or stood in front donating ammunition.
 
+const _shieldProbeFrom = new THREE.Vector3();
+const _shieldProbeTo = new THREE.Vector3();
+
 const SHIELD_TEST = {
   // A shieldman with a two-handed weapon is a man carrying furniture, so the wall
   // runs pistols by construction. The counter-squad is deliberately well rounded
@@ -3386,6 +3389,11 @@ function makeShieldTest(squads, options = {}) {
     plateAte: 0, wallDealt: 0, lineDealt: 0,
     lineFrontalFrames: 0, lineFlankFrames: 0, lineSeeingFrames: 0,
     baitFrames: 0,
+    // Why a bigger wall stops being a better wall. `muted` counts men who can see an
+    // enemy and are not allowed to shoot at him because a squadmate is in the way;
+    // `spread` is how wide the wall stands, measured across the line of advance.
+    // Between them they separate "these men are nerfed" from "these men are queueing".
+    wallMuted: 0, wallSeeing: 0, spreadSum: 0, spreadSamples: 0,
     wallDeaths: 0, lineDeaths: 0,
     step(dt) {
       this.elapsed += dt;
@@ -3410,8 +3418,41 @@ function makeShieldTest(squads, options = {}) {
         if (fronted) this.lineFrontalFrames++; else this.lineFlankFrames++;
         if (c.baiting) this.baitFrames++;
       }
-      const wallAlive = squads.wall.filter(c => c.alive).length;
-      const lineAlive = squads.line.filter(c => c.alive).length;
+      const live = squads.wall.filter(c => c.alive);
+      const foes = squads.line.filter(c => c.alive);
+      if (live.length && foes.length) {
+        for (const c of live) {
+          let nearest = null, best = Infinity;
+          for (const f of foes) {
+            const d = c.pos.distanceToSquared(f.pos);
+            if (d < best) { best = d; nearest = f; }
+          }
+          if (!nearest || best > 30 * 30) continue;
+          _shieldProbeFrom.set(c.pos.x, c.pos.y + 1.15, c.pos.z);
+          _shieldProbeTo.set(nearest.pos.x, nearest.pos.y + 1.15, nearest.pos.z);
+          if (!hasLoS(world, _shieldProbeFrom, _shieldProbeTo)) continue;
+          this.wallSeeing++;
+          if (c._friendlyInLine(world, _shieldProbeFrom, _shieldProbeTo)) this.wallMuted++;
+        }
+        // Width of the formation across its own line of advance: the axis a wall is
+        // supposed to occupy, and the one a column does not.
+        let cx = 0, cz = 0, ex = 0, ez = 0;
+        for (const c of live) { cx += c.pos.x; cz += c.pos.z; }
+        cx /= live.length; cz /= live.length;
+        for (const f of foes) { ex += f.pos.x; ez += f.pos.z; }
+        ex = ex / foes.length - cx; ez = ez / foes.length - cz;
+        const el = Math.hypot(ex, ez) || 1;
+        const px = -ez / el, pz = ex / el;
+        let min = Infinity, max = -Infinity;
+        for (const c of live) {
+          const t = (c.pos.x - cx) * px + (c.pos.z - cz) * pz;
+          if (t < min) min = t;
+          if (t > max) max = t;
+        }
+        if (live.length > 1) { this.spreadSum += max - min; this.spreadSamples++; }
+      }
+      const wallAlive = live.length;
+      const lineAlive = foes.length;
       if (!wallAlive || !lineAlive || this.elapsed > cfg.seconds) this.done = true;
     },
     report() {
@@ -3434,6 +3475,8 @@ function makeShieldTest(squads, options = {}) {
         // raised shield, how much of it did they spend somewhere it was not pointing?
         flankShare: +(this.lineFlankFrames / seen).toFixed(2),
         baitShare: +(this.baitFrames / seen).toFixed(2),
+        mutedShare: +(this.wallMuted / Math.max(1, this.wallSeeing)).toFixed(2),
+        wallSpread: +(this.spreadSum / Math.max(1, this.spreadSamples)).toFixed(1),
       };
     },
   };
@@ -3540,6 +3583,9 @@ async function runShieldLadder({ sizes = [2, 3, 4, 5, 6, 7, 8], seeds = [1, 2, 3
       lineSurvivors: r.lineSurvivors,
       wallDealt: r.wallDealt,
       lineDealt: r.lineDealt,
+      dealtPerMan: +(r.wallDealt / wallCount).toFixed(0),
+      mutedShare: +(r.runs.reduce((a, x) => a + x.mutedShare, 0) / r.runs.length).toFixed(2),
+      wallSpread: +(r.runs.reduce((a, x) => a + x.wallSpread, 0) / r.runs.length).toFixed(1),
     });
   }
   return { versus: SHIELD_TEST.balanced.length, rows };
