@@ -7,6 +7,7 @@ import {
   PLAYER_TYPE, HIRE_TYPES, trainingTrees, trainingCost, combatProfile,
 } from './progression.js';
 import { CREW_CONTRACT_CAP, DEPLOYED_CREW_CAP } from './roster.js';
+import { nextShopCharacter } from './squad-auto.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -34,6 +35,8 @@ const MUT_NAMES = {
 };
 
 const CREW_NAMES = ['Moose', 'Wren', 'Sledge', 'Ivy', 'Tarmac', 'Nadia', 'Brick', 'Kestrel', 'Yusuf', 'Dora', 'Flint', 'Marrow'];
+const KILLFEED_SLOT_COUNT = 5;
+const KILLFEED_LIFETIME_MS = 6000;
 let crewNameIdx = 0;
 export function nextCrewName() { return CREW_NAMES[crewNameIdx++ % CREW_NAMES.length]; }
 
@@ -54,10 +57,24 @@ export class UI {
     };
     this.screens = {
       menu: $('screen-menu'), intro: $('screen-intro'), shop: $('screen-shop'),
+      loading: $('screen-loading'),
       death: $('screen-death'), champion: $('screen-champion'), executed: $('screen-executed'),
       pause: $('screen-pause'),
     };
     this._eventTimer = null;
+    // Xbox Edge was spending almost a full second collecting/reflowing the HUD when
+    // the first dynamically-created killfeed node was removed. Keep a tiny fixed
+    // pool for the whole page lifetime and expire entries with opacity only, so a
+    // kill never schedules DOM destruction on the combat thread.
+    this._killfeedSequence = 0;
+    this._killfeedSlots = Array.from({ length: KILLFEED_SLOT_COUNT }, () => {
+      const entry = document.createElement('div');
+      entry.className = 'kf-entry';
+      entry.style.opacity = '0';
+      entry.setAttribute('aria-hidden', 'true');
+      this.el.killfeed.appendChild(entry);
+      return { entry, sequence: -1, fadeToken: 0 };
+    });
     this.selChar = 'player';
     this.hireOpen = false;
     this.controllerCarry = null;
@@ -90,22 +107,42 @@ export class UI {
     this.el.spectator.classList.add('hidden');
   }
 
+  cycleShopCharacter(direction = 1) {
+    if (this.screens.shop.classList.contains('hidden') || this.hireOpen) return false;
+    const tabs = [...document.querySelectorAll('#char-tabs [data-char]')].filter(tab => !tab.disabled);
+    const selection = tabs.map(tab => tab.getAttribute('data-char'));
+    const next = nextShopCharacter(selection, this.selChar, direction);
+    const target = tabs.find(tab => String(tab.getAttribute('data-char')) === String(next));
+    if (!target) return false;
+    target.click();
+    return true;
+  }
+
   // ---------- HUD ----------
   updateHUD(player, career, match) {
+    // Every write below is diffed against what is already on the page. The HUD runs
+    // once per frame, and most frames nothing in it has changed; an unguarded
+    // textContent or style write still costs style/layout work in the browser. The
+    // `_last` fields on the elements are the same pattern the tags/slots/squad
+    // blocks below always used — now applied consistently.
     const hpF = Math.max(0, player.hp / player.maxHp);
-    this.el.hpNum.textContent = Math.ceil(player.hp);
-    this.el.hpFill.style.width = `${hpF * 100}%`;
-    this.el.hpFill.style.background = healthColor(hpF);
-    this.el.lowhp.style.opacity = hpF < 0.35 ? String(0.5 + (0.35 - hpF)) : '0';
+    const hpKey = `${Math.ceil(player.hp)}|${hpF.toFixed(3)}|${player.armDmg.toFixed(2)}|${player.legDmg.toFixed(2)}`;
+    if (this.el.hpNum._last !== hpKey) {
+      this.el.hpNum._last = hpKey;
+      this.el.hpNum.textContent = Math.ceil(player.hp);
+      this.el.hpFill.style.width = `${hpF * 100}%`;
+      this.el.hpFill.style.background = healthColor(hpF);
+      this.el.lowhp.style.opacity = hpF < 0.35 ? String(0.5 + (0.35 - hpF)) : '0';
 
-    // body diagram
-    const bodyF = healthColor(hpF);
-    this.el.bp.head.style.fill = bodyF;
-    this.el.bp.torso.style.fill = bodyF;
-    this.el.bp.armL.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
-    this.el.bp.armR.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
-    this.el.bp.legL.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
-    this.el.bp.legR.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
+      // body diagram
+      const bodyF = healthColor(hpF);
+      this.el.bp.head.style.fill = bodyF;
+      this.el.bp.torso.style.fill = bodyF;
+      this.el.bp.armL.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
+      this.el.bp.armR.style.fill = healthColor(Math.min(hpF, 1 - player.armDmg));
+      this.el.bp.legL.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
+      this.el.bp.legR.style.fill = healthColor(Math.min(hpF, 1 - player.legDmg));
+    }
 
     // status tags
     let tags = '';
@@ -115,28 +152,57 @@ export class UI {
 
     // ammo / weapon — reserve is real rounds in the backpack now
     const melee = !!player.weapon.melee;
-    this.el.ammoMag.textContent = melee ? '—' : player.mag;
+    // What the player has in hand is the magazine plus whatever is chambered.
+    const inWeapon = player.roundsInWeapon ?? player.mag;
+    const magTxt = melee ? '—' : String(inWeapon);
+    if (this.el.ammoMag._last !== magTxt) {
+      this.el.ammoMag._last = magTxt;
+      this.el.ammoMag.textContent = magTxt;
+    }
+    this._drawRounds(player, melee);
+
     const res = player.reserve();
-    const resEl = $('ammo-reserve');
+    this.el.ammoReserve = this.el.ammoReserve || $('ammo-reserve');
+    const resEl = this.el.ammoReserve;
     const resTxt = melee ? '—' : String(res);
     if (resEl.textContent !== resTxt) {
       resEl.textContent = resTxt;
       resEl.style.color = !melee && res <= player.weapon.mag ? 'var(--blood)' : '';
     }
-    this.el.weaponName.textContent = player.weapon.name;
-    this.el.reloadHint.classList.toggle('hidden', player.reloading <= 0);
+    if (this.el.weaponName._last !== player.weapon.name) {
+      this.el.weaponName._last = player.weapon.name;
+      this.el.weaponName.textContent = player.weapon.name;
+    }
+    // Three states, not two. A reload that was broken off part way is not "reloading" —
+    // it is a gun in a state the player has to decide what to do about, and the one that
+    // matters is a magazine lying out of the well with a single round in the chamber.
+    const hint = player.magazineOut && player.reloadPaused ? 'MAG OUT — [R]'
+      : player.reloadPaused && (player.reloading > 0 || player.rackT > 0) ? 'RELOAD PAUSED — [R]'
+      : player.rackT > 0 ? 'CHARGING…'
+      : player.reloading > 0 ? 'RELOADING…' : '';
+    this.el.reloadHint.classList.toggle('hidden', !hint);
+    this.el.reloadHint.classList.toggle('paused', !!player.reloadPaused);
+    if (hint && this.el.reloadHint._last !== hint) {
+      this.el.reloadHint._last = hint;
+      this.el.reloadHint.textContent = hint;
+    }
 
     // weapon slots: guns on 1/2, the knife pinned on 3
-    const slotsKey = player.slots.join(',') + player.slotIdx + (player.knifeOut ? 'K' : '');
+    const slotsKey = player.slots.join(',') + player.slotIdx + (player.knifeOut ? 'K' : '')
+      + (player.hideKnifeSlot ? 'H' : '');
     if (this.el.weaponSlots._last !== slotsKey) {
       this.el.weaponSlots._last = slotsKey;
       this.el.weaponSlots.innerHTML = player.slots.map((id, i) =>
         `<span class="wslot ${!player.knifeOut && i === player.slotIdx ? 'active' : ''}">${i + 1}·${WEAPONS[id].name.split(' ')[0]}</span>`).join('') +
-        `<span class="wslot ${player.knifeOut ? 'active' : ''}">3·SHANK</span>`;
+        (player.hideKnifeSlot ? '' : `<span class="wslot ${player.knifeOut ? 'active' : ''}">3·SHANK</span>`);
     }
 
-    this.el.rank.textContent = career.rank;
-    this.el.money.textContent = career.money.toLocaleString();
+    const rankMoneyKey = `${career.rank}|${career.money}`;
+    if (this.el.rank._last !== rankMoneyKey) {
+      this.el.rank._last = rankMoneyKey;
+      this.el.rank.textContent = career.rank;
+      this.el.money.textContent = career.money.toLocaleString();
+    }
     this.el.frenzy.classList.toggle('hidden', !match.frenzy);
 
     // consumables (straight out of the backpack)
@@ -162,13 +228,29 @@ export class UI {
     }
 
     // crosshair spread
-    const spreadPx = 6 + player.currentSpread() * 14;
-    this.el.crosshair.style.setProperty('--sp', `${spreadPx.toFixed(1)}px`);
-    this.el.crosshair.style.opacity = player.ads > 0.7 && player.weapon.id === 'dmr' ? '0.4' : '1';
+    const spread = `${(6 + player.currentSpread() * 14).toFixed(1)}px`;
+    if (this.el.crosshair._lastSp !== spread) {
+      this.el.crosshair._lastSp = spread;
+      this.el.crosshair.style.setProperty('--sp', spread);
+    }
+    // Fade the crosshair out as the weapon comes up.
+    //
+    // Every weapon has real sights now, and the point of aiming is to use them; a
+    // painted dot sitting on top of the front post is two aiming references arguing.
+    // Gone by the time the weapon is 60% up, so the handover happens while the sights
+    // are still travelling and there is never a moment with both.
+    const chOpacity = Math.max(0, 1 - player.ads * 1.7).toFixed(2);
+    if (this.el.crosshair._lastOp !== chOpacity) {
+      this.el.crosshair._lastOp = chOpacity;
+      this.el.crosshair.style.opacity = chOpacity;
+    }
 
     // objective
     const alive = match.enemiesAlive;
-    this.el.objective.textContent = alive > 0 ? `${alive} HOSTILE${alive > 1 ? 'S' : ''} REMAINING` : '';
+    if (this.el.objective._last !== alive) {
+      this.el.objective._last = alive;
+      this.el.objective.textContent = alive > 0 ? `${alive} HOSTILE${alive > 1 ? 'S' : ''} REMAINING` : '';
+    }
 
     // squad panel
     const key = match.crew.map(c => `${c.name}:${c.alive ? Math.ceil(c.hp) : 'X'}`).join('|');
@@ -178,6 +260,51 @@ export class UI {
         ? `<div class="sq-card">${c.name}<span class="sq-hp"><i style="width:${(c.hp / c.maxHp) * 100}%"></i></span></div>`
         : `<div class="sq-card dead">${c.name}</div>`
       ).join('');
+    }
+  }
+
+  /**
+   * The magazine, drawn as rounds, with the chambered one separate and larger.
+   *
+   * A number cannot show the two things the handling model actually turns on: that the
+   * round in the chamber is not in the magazine, and that during a magazine change it is
+   * the only round in the gun. As rounds it is one glance — the strip empties as you
+   * shoot, goes dark the moment the magazine leaves the well, and the big one on the end
+   * is the shot you still have. It goes hollow and red when the chamber is dead, which
+   * is the same instant the trigger stops answering.
+   *
+   * Pips are pooled and only their classes change; the strip is rebuilt only when the
+   * capacity does, which is on a weapon swap.
+   */
+  _drawRounds(player, melee) {
+    const magEl = this.el.ammoMagRounds ||= $('ammo-mag-rounds');
+    const chEl = this.el.ammoChamberRound ||= $('ammo-chamber-round');
+    if (!magEl || !chEl) return;
+    const capacity = melee ? 0 : (player.weapon.mag || 0);
+    if (magEl._cap !== capacity) {
+      magEl._cap = capacity;
+      magEl.innerHTML = capacity ? '<i class="rnd"></i>'.repeat(capacity) : '';
+      chEl.innerHTML = capacity ? '<i class="rnd chamber"></i>' : '';
+      magEl._pips = [...magEl.children];
+      magEl._loaded = -1;
+    }
+    if (!capacity) return;
+    // Nothing to draw from while the magazine is out of the weapon: the strip goes dark
+    // rather than empty, because those rounds are not gone, they are in your other hand.
+    const out = player.magazineOut;
+    const loaded = out ? 0 : player.mag;
+    if (magEl._loaded !== loaded) {
+      magEl._loaded = loaded;
+      // Fed from the back, so the rounds that go first are the ones nearest the chamber.
+      for (let i = 0; i < capacity; i++) {
+        magEl._pips[i].classList.toggle('spent', capacity - i > loaded);
+      }
+    }
+    if (magEl._out !== out) { magEl._out = out; magEl.classList.toggle('out', out); }
+    const ch = chEl.firstChild;
+    if (ch && ch._up !== player.chambered) {
+      ch._up = player.chambered;
+      ch.classList.toggle('spent', !player.chambered);
     }
   }
 
@@ -202,12 +329,23 @@ export class UI {
   }
 
   killfeed(killerName, victimName, headshot, friendlyKiller) {
-    const e = document.createElement('div');
+    const slot = this._killfeedSlots.reduce((oldest, candidate) =>
+      candidate.sequence < oldest.sequence ? candidate : oldest);
+    const e = slot.entry;
+    slot.sequence = ++this._killfeedSequence;
+    const fadeToken = ++slot.fadeToken;
     e.className = 'kf-entry' + (friendlyKiller ? ' friendly' : '');
     e.innerHTML = `<b>${killerName}</b> ${headshot ? '<span class="kf-head">☠ headshot</span>' : '🗡'} ${victimName}`;
-    this.el.killfeed.prepend(e);
-    while (this.el.killfeed.children.length > 5) this.el.killfeed.lastChild.remove();
-    setTimeout(() => e.remove(), 6000);
+    e.style.order = String(-slot.sequence);
+    e.style.transition = 'none';
+    e.style.opacity = '1';
+    e.setAttribute('aria-hidden', 'false');
+    (this._killfeedSetTimeout || setTimeout)(() => {
+      if (slot.fadeToken !== fadeToken) return;
+      e.style.transition = 'opacity 0.2s ease-out';
+      e.style.opacity = '0';
+      e.setAttribute('aria-hidden', 'true');
+    }, KILLFEED_LIFETIME_MS);
   }
 
   eventBanner(title, sub, color = 'var(--blood)') {
@@ -243,6 +381,9 @@ export class UI {
     const draftTurn = draftBout
       ? (actions.draftShopState?.() || { mustEndTurn: false, locked: false })
       : { mustEndTurn: false, locked: false };
+    const autoPlans = actions.autoPlans?.() || {
+      heal: { cost: 0 }, upgrade: { cost: 0 }, ammo: { cost: 0 },
+    };
     $('screen-shop').classList.toggle('turn-locked', draftTurn.locked);
     $('shop-sub').textContent = liquidation
       ? `Liquidation · Round ${career.liquidation.round} · ${draftBout ? `draft envelope ${career.liquidation.draft.fundedRounds}/10 (+$${career.liquidation.draft.lastEnvelope.toLocaleString()})` : 'STRANGLE PHASE'} · rival $${career.liquidation.enemyMoney.toLocaleString()}`
@@ -315,7 +456,12 @@ export class UI {
     tapeWrap.classList.toggle('hidden', !liquidation);
     if (liquidation) {
       const tape = $('market-tape');
-      tape.innerHTML = (career.liquidation.marketLog || []).map(entry => {
+      const log = career.liquidation.marketLog || [];
+      const previousCount = Number(tape.dataset.entryCount || 0);
+      const previousTop = tape.scrollTop;
+      const wasFollowing = previousCount === 0 ||
+        tape.scrollHeight - tape.clientHeight - tape.scrollTop <= 12;
+      tape.innerHTML = log.map(entry => {
         if (entry.kind === 'round') {
           return `<div class="tape-round"><span>ROUND ${entry.round}</span></div>`;
         }
@@ -331,7 +477,13 @@ export class UI {
           `<span class="tape-action">${verb} ${item}</span>` +
           `<b class="${credit ? 'tape-credit' : 'tape-debit'}">${credit ? '+' : '−'}$${entry.amount.toLocaleString()}</b></div>`;
       }).join('');
-      tape.scrollTop = tape.scrollHeight;
+      tape.dataset.entryCount = String(log.length);
+      const logReplaced = log.length < previousCount;
+      if (logReplaced || (log.length > previousCount && wasFollowing)) {
+        tape.scrollTop = tape.scrollHeight;
+      } else {
+        tape.scrollTop = previousTop;
+      }
     }
 
     const turnStatus = $('shop-turn-status');
@@ -351,6 +503,15 @@ export class UI {
       : null;
     $('btn-next-fight').disabled = draftTurn.mustEndTurn;
     $('sell-bin').textContent = liquidation ? '💰 SELL — return to the shared pool at 100% market rate' : '💰 SELL — drop anything here to liquidate (55%)';
+    const autoButton = (action, label, description, plan, unit = '$') => `
+      <button class="btn squad-auto-btn" data-auto-squad="${action}" ${draftTurn.locked || !(plan.actionable ?? (plan.cost > 0)) ? 'disabled' : ''}>
+        <span><b>${label}</b><small>${description}</small></span>
+        <strong>${unit === '$' ? '$' : ''}${plan.cost.toLocaleString()}${unit === '$' ? '' : ` ${unit}`}</strong>
+      </button>`;
+    $('squad-auto-actions').innerHTML =
+      autoButton('autoHeal', 'AUTO-HEAL', 'YOU → CREW · FULL PATCH', autoPlans.heal) +
+      autoButton('autoUpgrade', 'AUTO-UPGRADE', 'SPEND EACH FIGHTER’S XP', autoPlans.upgrade, 'XP') +
+      autoButton('autoAmmo', 'AUTO-AMMO', 'YOU → CREW · 2 STACKS / WEAPON', autoPlans.ammo);
 
     // ---- stash grid ----
     const compactLandscape = window.innerWidth <= 1050 && window.innerWidth > window.innerHeight;
@@ -572,6 +733,7 @@ export class UI {
     };
     wire('[data-buy-item]', 'data-buy-item', actions.buyItem);
     wire('[data-buy-to]', 'data-buy-to', (t) => actions.buyItemTo(t, this.selChar));
+    wire('[data-auto-squad]', 'data-auto-squad', (action) => actions[action]?.());
     wire('[data-bench]', 'data-bench', (i) => actions.toggleBench(parseInt(i)));
     wire('[data-train]', 'data-train', (id) => actions.train(this.selChar, id));
     wire('[data-patch]', 'data-patch', (v) => v === 'player' ? actions.patchPlayer() : actions.patchCrew(parseInt(v)));
@@ -732,8 +894,8 @@ export class UI {
       (benchedOut ? `<span class="limb-flag">⚠ ${benchedOut} CREW OUT — NEED MEDICAL</span>` : '');
     const bets = liquidation ? liquidationBets : [0, 200, 500, 1000];
     $('bet-row').innerHTML = liquidation
-      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.liquidation.enemyMoney.toLocaleString()}</span> ` +
-        bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}</button>`).join('')
+      ? `<span class="dim">SELF-BET · pays ${odds.toFixed(2)}× · selected $${career.bet.toLocaleString()} → $${Math.round(career.bet * odds).toLocaleString()} return<br>YOUR $${career.money.toLocaleString()} vs RIVAL $${career.liquidation.enemyMoney.toLocaleString()} · LOSS STREAK ${career.liquidation.playerLossStreak || 0}–${career.liquidation.enemyLossStreak || 0}<br>CREDIT STAKES OR REPEATED DEFEATS CAN END THE WAR DURING THE DRAFT</span> ` +
+        bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}">$${b.toLocaleString()}${b > career.money ? ' ⚠' : ''}</button>`).join('')
       : `<span class="dim">BET ON YOURSELF · pays ${odds.toFixed(2)}×</span> ` +
       bets.map(b => `<button class="btn bet-btn ${career.bet === b ? 'kit-cur' : ''}" data-bet="${b}"
         ${b <= career.money ? '' : 'disabled'}>${b === 0 ? 'NO BET' : '$' + b}</button>`).join('');

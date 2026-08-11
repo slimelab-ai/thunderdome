@@ -19,6 +19,7 @@ export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), r
       pendingEnemyShop: false, playerFirst: false, playerTurnEnded: false, lastEnvelope: 0,
     },
     enemyMoney: 0, round: 1, playerWins: 0, enemyWins: 0, lastResupply: null,
+    playerLossStreak: 0, enemyLossStreak: 0,
     complete: false, // the war is over: someone's bankroll died with no envelope left to save it
     enemy: { strategy: 'balanced', inventory: {}, recruits: ['enforcer'] },
     marketLog: [{ kind: 'round', round: 1 }],
@@ -28,7 +29,17 @@ export function newLiquidationState(bankroll = suggestedLiquidationBankroll(), r
 
 export function recordMarketRound(state, round = state.round) {
   state.marketLog ||= [];
-  if (!state.marketLog.some(entry => entry.kind === 'round' && entry.round === round)) {
+  let latestRound = null;
+  for (let i = state.marketLog.length - 1; i >= 0; i--) {
+    if (state.marketLog[i].kind === 'round') {
+      latestRound = state.marketLog[i];
+      break;
+    }
+  }
+  // The tape is append-only. If a restored or delayed action arrives for a round
+  // already present earlier in history, give it a fresh header at the tail instead
+  // of making it look as though it was inserted beneath the old header.
+  if (latestRound?.round !== round) {
     state.marketLog.push({ kind: 'round', round });
   }
   return state.marketLog;
@@ -58,10 +69,54 @@ export function liquidationOdds(state, playerMoney) {
 }
 
 export function liquidationBetOptions(state, playerMoney) {
-  // The $250 floor can push a desperate squad below zero; that is the terminal
-  // pressure Liquidation needs instead of allowing two broke squads to stalemate.
-  const values = [250, ...[0.10, 0.25, 0.50].map(f => Math.max(250, Math.floor(playerMoney * f / 50) * 50))];
-  return [...new Set(values)];
+  const cash = Math.max(0, playerMoney);
+  const envelope = draftShare(state);
+  // Normal bets scale through an all-in. Two explicit blood markers let either
+  // side borrow against up to two future envelopes, making a voluntary wager
+  // large enough to end a war during the protected draft.
+  const values = [
+    250,
+    ...[0.10, 0.25, 0.50, 1].map(f => Math.max(250, Math.floor(cash * f / 50) * 50)),
+    envelope,
+    envelope * 2,
+  ];
+  return [...new Set(values)].filter(value => value <= liquidationCreditLimit(state, playerMoney));
+}
+
+export function liquidationCreditLimit(state, money) {
+  const draftCredit = state.draft.complete ? 0 : draftShare(state) * 2;
+  return Math.max(250, Math.max(0, money) + draftCredit);
+}
+
+export function canPlaceLiquidationBet(state, money, amount) {
+  return liquidationBetOptions(state, money).includes(amount);
+}
+
+export function recordLiquidationOutcome(state, playerWon) {
+  if (playerWon) {
+    state.playerLossStreak = 0;
+    state.enemyLossStreak = (state.enemyLossStreak || 0) + 1;
+    return {
+      loser: 'rival',
+      streak: state.enemyLossStreak,
+      penalty: liquidationStreakPenalty(state, state.enemyLossStreak),
+    };
+  }
+  state.enemyLossStreak = 0;
+  state.playerLossStreak = (state.playerLossStreak || 0) + 1;
+  return {
+    loser: 'player',
+    streak: state.playerLossStreak,
+    penalty: liquidationStreakPenalty(state, state.playerLossStreak),
+  };
+}
+
+export function liquidationStreakPenalty(state, streak) {
+  if (streak < 2) return 0;
+  // A second straight loss burns half an envelope. A third burns a full one;
+  // combined with the mandatory stake, a squad living envelope-to-envelope can
+  // no longer be rescued indefinitely.
+  return Math.round(draftShare(state) * (streak - 1) / 2);
 }
 
 export function resupplyLiquidation(state, market, random = Math.random) {
@@ -126,6 +181,95 @@ export function allocateRivalSupply(inventory, type, fighterIndex, rosterSize, c
   return Math.min(cap, evenShare + (fighterIndex < remainder ? 1 : 0));
 }
 
+const WEAPON_POWER = { knife: 0.55, pistol: 1, smg: 1.25, shotgun: 1.35, rifle: 1.6, dmr: 1.75 };
+const RIVAL_GUNS = ['smg', 'shotgun', 'rifle', 'dmr'];
+
+function ammoForGun(type) {
+  return `ammo_${ITEM_TYPES[type].ammo}`;
+}
+
+export function rivalSquadReadiness(state) {
+  const roster = enemyRoster(state);
+  const fighters = roster.map(fighter => ({
+    weapon: fighter.w,
+    ammo: fighter.ammo,
+    fieldable: fighter.ammo > 0,
+    dps: +(fighter.hp * (WEAPON_POWER[fighter.w] || 1) * (fighter.ammo > 0 ? 1 : 0.55)).toFixed(1),
+  }));
+  return {
+    rosterSize: fighters.length,
+    fieldable: fighters.filter(fighter => fighter.fieldable).length,
+    squadDps: Math.round(fighters.reduce((sum, fighter) => sum + fighter.dps, 0)),
+    fighters,
+  };
+}
+
+export function liquidationRiskModel(state, playerSignals = {}) {
+  const envelope = draftShare(state);
+  const fundedRounds = state.draft?.fundedRounds || 0;
+  const rivalPower = Math.max(1, enemyRoster(state).reduce((total, fighter) => {
+    const weapon = WEAPON_POWER[fighter.w] || 1;
+    return total + fighter.hp * weapon * (1 + (fighter.ar || 0));
+  }, 0));
+  const opponentPower = Math.max(1, Number(playerSignals.opponentPower) || rivalPower);
+  // A small symmetric prior prevents one odd loadout snapshot from producing
+  // false certainty. Confidence is deliberately bounded: nobody is invincible.
+  const rawConfidence = (rivalPower + 100) / (rivalPower + opponentPower + 200);
+  const confidence = Math.max(0.12, Math.min(0.88, rawConfidence));
+  const expectedStake = Math.max(250, Number(playerSignals.expectedStake) || 250);
+  const nextLossStreak = (state.enemyLossStreak || 0) + 1;
+  const streakPenalty = liquidationStreakPenalty(state, nextLossStreak);
+
+  // A loss must leave enough for its stake, known margin call, the next minimum
+  // stake, and a confidence-weighted recovery/retool budget.
+  const recoveryBudget = envelope * (1.5 - confidence);
+  const lossCost = expectedStake + streakPenalty + 250 + recoveryBudget;
+  const confidenceWeight = 1.2 - confidence * 0.4;
+  const expectedWinIncome = expectedStake * confidence;
+
+  // Future envelopes are guaranteed income, but distant envelopes cannot cure
+  // insolvency today. Discount the remaining total aggressively and never let
+  // it erase more than 80% of the loss runway.
+  const remainingEnvelopes = Math.max(0, LIQUIDATION_DRAFT_TURNS - fundedRounds);
+  const remainingDraftIncome = remainingEnvelopes * envelope;
+  const discountedDraftRelief = Math.min(
+    lossCost * 0.8,
+    remainingDraftIncome * 0.15 * (0.5 + confidence),
+  );
+  const reserveTarget = Math.max(250, Math.ceil(
+    (lossCost * confidenceWeight - expectedWinIncome - discountedDraftRelief) / 50,
+  ) * 50);
+
+  return {
+    reserveTarget,
+    confidence: +confidence.toFixed(3),
+    rivalPower: Math.round(rivalPower),
+    opponentPower: Math.round(opponentPower),
+    expectedStake: Math.round(expectedStake),
+    expectedLossCost: Math.round(lossCost),
+    expectedWinIncome: Math.round(expectedWinIncome),
+    recoveryBudget: Math.round(recoveryBudget),
+    streakPenalty,
+    remainingEnvelopes,
+    remainingDraftIncome,
+    discountedDraftRelief: Math.round(discountedDraftRelief),
+  };
+}
+
+export function liquidationReserveTarget(state, playerSignals = {}) {
+  return liquidationRiskModel(state, playerSignals).reserveTarget;
+}
+
+export function liquidationRivalStake(state, playerSignals = {}) {
+  const risk = liquidationRiskModel(state, playerSignals);
+  const riskable = Math.max(0, state.enemyMoney - risk.reserveTarget);
+  const pressure = risk.confidence >= 0.68 ? 0.15 : risk.confidence >= 0.56 ? 0.1 : 0;
+  const amount = pressure > 0
+    ? Math.max(250, Math.floor(Math.min(riskable, state.enemyMoney * pressure) / 50) * 50)
+    : 250;
+  return { amount, riskable: Math.round(riskable), confidence: risk.confidence, reserveTarget: risk.reserveTarget };
+}
+
 const STRATEGIES = {
   swarm: {
     guns: ['smg', 'pistol'], ammo: ['ammo_9mm'], armor: ['vest1', 'pads1'],
@@ -145,11 +289,75 @@ const STRATEGIES = {
   },
 };
 
+function strategyNeeds(state, plan) {
+  const inventory = state.enemy.inventory;
+  const rosterSize = Math.max(1, (state.enemy.recruits || []).length);
+  const guns = RIVAL_GUNS;
+  const gunTarget = rosterSize;
+  const gunCount = guns.reduce((total, type) => total + Math.floor(inventory[type] || 0), 0);
+  const ammoTarget = Math.max(1, Math.min(gunTarget, gunCount));
+  const ammoCount = guns.reduce((total, type) => {
+    const users = Math.floor(inventory[type] || 0);
+    return total + Math.min(users, Math.floor(inventory[ammoForGun(type)] || 0));
+  }, 0);
+  return { rosterSize, guns, gunTarget, gunCount, ammoTarget, ammoCount };
+}
+
+function saleItem(type, quantity = 1) {
+  const def = ITEM_TYPES[type];
+  return def.kind === 'ammo'
+    ? { type, rounds: AMMO_TYPES[def.ammoType].box * quantity }
+    : { type };
+}
+
+function chooseLiquidationSale(state, market, plan, emergency = false) {
+  const inv = state.enemy.inventory;
+  const needs = strategyNeeds(state, plan);
+  const keep = {};
+  for (const type of needs.guns) keep[type] = Math.min(needs.rosterSize, inv[type] || 0);
+  const ammoUsers = {};
+  for (const fighter of enemyRoster(state)) {
+    const ammo = ammoForGun(fighter.w);
+    ammoUsers[ammo] = (ammoUsers[ammo] || 0) + 1;
+  }
+  for (const [type, users] of Object.entries(ammoUsers)) {
+    keep[type] = Math.min(Math.max(1, users), inv[type] || 0);
+  }
+  for (const [type, count] of Object.entries({ medkit: 1, grenade: 1, splint: 1 })) {
+    keep[type] = Math.min(count, inv[type] || 0);
+  }
+  for (const type of plan.armor) keep[type] = Math.min(needs.rosterSize, inv[type] || 0);
+
+  const candidates = Object.entries(inv)
+    .filter(([type, count]) => ITEM_TYPES[type] && count > 0)
+    .map(([type, count]) => {
+      const excess = Math.max(0, count - (keep[type] || 0));
+      const quantity = Math.min(1, emergency ? count : excess);
+      const value = quantity > 0 ? market.quoteSell(saleItem(type, quantity)) : 0;
+      const offPlan = !plan.guns.includes(type) && !plan.ammo.includes(type) && !plan.armor.includes(type)
+        && !['medkit', 'grenade', 'splint'].includes(type);
+      return { type, quantity, value, offPlan, excess };
+    })
+    .filter(candidate => candidate.quantity > 0 && candidate.value > 0)
+    .sort((a, b) => Number(b.offPlan) - Number(a.offPlan) || b.excess - a.excess || b.value - a.value);
+  return candidates[0] || null;
+}
+
 export function runLiquidationAI(state, market, playerSignals = {}) {
   const inv = state.enemy.inventory;
+  const risk = liquidationRiskModel(state, playerSignals);
+  const reserveTarget = risk.reserveTarget;
+  // A reserve only has strategic value while it is attainable. Once repeated losses
+  // or a real power deficit make the rival an underdog, cash above the next stake is
+  // comeback capital: armor, medicine and usable weapons improve the probability of
+  // ever earning that runway. The old policy froze $400-$500 beneath a $2,700-$5,700
+  // target and walked the same under-equipped squad into five consecutive losses.
+  const comebackMode = (state.enemyLossStreak || 0) >= 2 || risk.confidence < 0.48;
+  const strategicFloor = comebackMode ? Math.max(250, risk.expectedStake) : reserveTarget;
+  const spendable = Math.max(0, state.enemyMoney - strategicFloor);
   const price = t => market.quoteBuy(t);
   const pressure = t => market.info(t)?.pressure || 1;
-  const affordable = t => Number.isFinite(price(t)) && price(t) <= state.enemyMoney;
+  const affordable = t => Number.isFinite(price(t)) && price(t) <= spendable;
   const alternatives = ['ammo_9mm', 'ammo_762', 'ammo_buck', 'ammo_308'].sort((a, b) => pressure(a) - pressure(b));
 
   if (playerSignals.hoarded9mm || pressure('ammo_9mm') > 1.5) state.enemy.strategy = 'rifle';
@@ -158,67 +366,194 @@ export function runLiquidationAI(state, market, playerSignals = {}) {
   const plan = STRATEGIES[state.enemy.strategy];
   const owned = t => inv[t] || 0;
   const recruits = state.enemy.recruits ||= ['enforcer'];
+  const emergency = state.enemyMoney < 0;
+  const liquidationFloor = risk.expectedStake + risk.streakPenalty;
+  const sale = (emergency || state.enemyMoney < liquidationFloor || playerSignals.liquidationOnly)
+    ? chooseLiquidationSale(state, market, plan, emergency)
+    : null;
+  if (sale) {
+    const value = market.sell(saleItem(sale.type, sale.quantity));
+    state.enemyMoney += value;
+    inv[sale.type] = Math.max(0, +(owned(sale.type) - sale.quantity).toFixed(3));
+    recordMarketTrade(state, 'rival', 'sell', sale.type, value);
+    return {
+      kind: 'sell', type: sale.type, quantity: sale.quantity, value, risk,
+      reason: emergency ? 'avoid_insolvency' : 'restore_runway',
+      action: `LIQUIDATE: sold ${ITEM_TYPES[sale.type].name} for $${value}`,
+    };
+  }
+  if (playerSignals.liquidationOnly) {
+    return {
+      kind: 'hold', reason: 'liquidation_complete', reserveTarget, risk,
+      cash: state.enemyMoney, spendable: 0,
+      action: `HOLD: liquidation pass complete at $${state.enemyMoney}`,
+    };
+  }
+
   const fundedRounds = state.draft?.fundedRounds || 0;
   const desiredRoster = fundedRounds <= 0 ? 1 : Math.min(5, Math.max(
     plan.desiredRoster,
     1 + Math.floor(fundedRounds / 2),
+    Math.floor(Number(playerSignals.opponentRoster) || 1),
   ));
-  if (recruits.length < desiredRoster) {
+  const needs = strategyNeeds(state, plan);
+  // Readiness purchases may use the speculative reserve, but never the next
+  // minimum stake. A stranded squad must be allowed to spend through its future
+  // margin-call reserve: preserving cash while fielding knives guarantees that
+  // the margin call arrives.
+  const combatFloor = Math.max(250, risk.expectedStake);
+  const readinessSpendable = Math.max(0, state.enemyMoney - combatFloor);
+  const readinessAffordable = t => Number.isFinite(price(t)) && price(t) <= readinessSpendable;
+  const gunCandidates = [
+    ...plan.guns.filter(type => type !== 'pistol'),
+    ...['smg', 'shotgun', 'rifle', 'dmr'].filter(type => !plan.guns.includes(type)),
+  ];
+  const readinessBefore = rivalSquadReadiness(state);
+  // A contract includes the same starter pistol and 9mm box that a player hire
+  // receives. When outnumbered, another armed body adds far more squad damage
+  // per dollar than replacing a working pistol with a slightly stronger gun.
+  if (readinessBefore.fieldable >= recruits.length && recruits.length < desiredRoster) {
     const candidates = plan.recruits
       .map((type, order) => ({ type, order, cost: market.quoteRecruit(type) }))
-      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= state.enemyMoney)
+      .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= readinessSpendable)
       .sort((a, b) => a.order - b.order || a.cost - b.cost);
     const recruit = candidates[recruits.length - 1] || candidates[0];
     if (recruit) {
       const cost = market.buyRecruit(recruit.type);
       state.enemyMoney -= cost;
       recruits.push(recruit.type);
+      inv.ammo_9mm = owned('ammo_9mm') + 1;
       const label = `${HIRE_TYPES[recruit.type].name} CONTRACT`;
-      recordMarketTrade(state, 'rival', 'hire', null, cost, label);
-      return { kind: 'hire', type: recruit.type, cost, action: `${state.enemy.strategy.toUpperCase()}: hired ${label} for $${cost}` };
+      recordMarketTrade(state, 'rival', 'hire', null, cost, `${label} + SIDEARM KIT`);
+      return {
+        kind: 'hire', type: recruit.type, cost, risk, priority: 'combat_readiness',
+        included: ['pistol', 'ammo_9mm'],
+        readinessBefore,
+        readinessAfter: rivalSquadReadiness(state),
+        action: `${state.enemy.strategy.toUpperCase()}: hired ${label} with sidearm kit for $${cost}`,
+      };
     }
   }
+  // First complete an owned gun. This is the cheapest immediate increase to
+  // fielded squad DPS and lets the bot counter an ammo squeeze by comparing all
+  // four ammunition families instead of clinging to its strategy label.
+  const dryGunAmmo = RIVAL_GUNS
+    .filter(type => owned(type) > 0 && owned(ammoForGun(type)) < owned(type))
+    .map(type => ({ type: ammoForGun(type), power: WEAPON_POWER[type], cost: price(ammoForGun(type)) }))
+    .filter(candidate => Number.isFinite(candidate.cost) && candidate.cost <= readinessSpendable)
+    .sort((a, b) => (b.power / b.cost) - (a.power / a.cost));
+  const dryPistolAmmo = readinessBefore.fieldable < recruits.length
+    && readinessAffordable('ammo_9mm') ? 'ammo_9mm' : null;
+  let target = dryPistolAmmo || dryGunAmmo[0]?.type || null;
+  if (!target) target = needs.gunCount < needs.gunTarget
+    ? gunCandidates.find(type => {
+      const ammo = ammoForGun(type);
+      const kitCost = price(type) + (owned(ammo) > owned(type) ? 0 : price(ammo));
+      return readinessAffordable(type) && kitCost <= readinessSpendable;
+    })
+    : null;
+  if (!target && needs.ammoCount < needs.ammoTarget) {
+    const equippedAmmo = plan.guns
+      .filter(type => type !== 'pistol' && owned(type) > 0)
+      .map(type => `ammo_${ITEM_TYPES[type].ammo}`);
+    target = [...new Set([...equippedAmmo, ...plan.ammo])]
+      .sort((a, b) => pressure(a) - pressure(b))
+      .find(readinessAffordable);
+  }
+  if (target) {
+    const cost = market.buy(target);
+    state.enemyMoney -= cost;
+    inv[target] = owned(target) + 1;
+    recordMarketTrade(state, 'rival', 'buy', target, cost);
+    return {
+      kind: 'buy', type: target, cost, reserveTarget, risk, priority: 'combat_readiness',
+      readinessBefore,
+      readinessAfter: rivalSquadReadiness(state),
+      action: `${state.enemy.strategy.toUpperCase()}: readiness buy ${ITEM_TYPES[target].name} for $${cost}`,
+    };
+  }
+  if (needs.gunCount < needs.gunTarget || needs.ammoCount < needs.ammoTarget) {
+    return {
+      kind: 'hold', reason: 'readiness_unaffordable', reserveTarget, risk,
+      cash: state.enemyMoney, spendable: readinessSpendable,
+      readiness: readinessBefore,
+      action: `HOLD: cannot increase fielded squad DPS without breaching the $${combatFloor} stake floor`,
+    };
+  }
+
   // Establish a working weapon first, then deliberately stock combat supplies.
   // Without explicit goals these items never entered the old candidate list.
-  const plannedAmmo = plan.ammo.reduce((total, type) => total + owned(type), 0);
-  const plannedGuns = plan.guns.reduce((total, type) => total + owned(type), 0);
   const supplies = { medkit: 2, grenade: 2, splint: 1 };
-  let target = plannedAmmo < 2
-    ? [...plan.ammo].sort((a, b) => pressure(a) - pressure(b)).find(affordable)
-    : null;
-  if (!target && plannedGuns < 1) target = plan.guns.find(affordable);
-  if (!target) target = Object.keys(supplies).find(t => owned(t) < supplies[t] && affordable(t));
+  const soldThisRound = new Set((state.marketLog || [])
+    .filter(entry => entry.kind === 'trade' && entry.round === state.round
+      && entry.side === 'rival' && entry.action === 'sell')
+    .map(entry => entry.type));
+  target = null;
+  if (!target) target = Object.keys(supplies)
+    .find(t => !soldThisRound.has(t) && owned(t) < supplies[t] && affordable(t));
   if (!target) target = plan.armor.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.guns.find(t => owned(t) < 3 && affordable(t));
   if (!target) target = plan.ammo.find(t => owned(t) < 4 && affordable(t));
   if (!target) target = alternatives.find(t => affordable(t));
-  if (!target) return null;
+  if (!target) {
+    return {
+      kind: 'hold',
+      reason: spendable <= 0 ? 'cash_reserve' : 'no_purchase_inside_reserve',
+      reserveTarget, strategicFloor, comebackMode,
+      risk,
+      cash: state.enemyMoney,
+      spendable,
+      action: `HOLD: keeping $${state.enemyMoney} cash (spending floor $${strategicFloor}, reserve target $${reserveTarget})`,
+    };
+  }
   const cost = market.buy(target);
   state.enemyMoney -= cost;
   inv[target] = owned(target) + 1;
   const action = `${state.enemy.strategy.toUpperCase()}: bought ${ITEM_TYPES[target].name} for $${cost}`;
   recordMarketTrade(state, 'rival', 'buy', target, cost);
-  return { type: target, cost, action };
+  return { kind: 'buy', type: target, cost, reserveTarget, strategicFloor, comebackMode, risk, action };
 }
 
 export function enemyRoster(state) {
   const inv = state.enemy.inventory;
   const strategy = state.enemy.strategy;
-  const gun = strategy === 'swarm' ? 'smg' : (inv.rifle ? 'rifle' : inv.shotgun ? 'shotgun' : 'pistol');
-  const ammoType = ITEM_TYPES[gun].ammo;
-  const ammoItem = `ammo_${ammoType}`;
-  const totalRounds = (inv[ammoItem] || 0) * AMMO_TYPES[ammoType].box;
+  const plan = STRATEGIES[strategy] || STRATEGIES.balanced;
   let recruits = (state.enemy.recruits || ['enforcer'])
     .filter(type => HIRE_TYPES[type])
     .slice(0, 5);
   if (!recruits.length) recruits = ['enforcer'];
-  const count = Math.max(1, recruits.length);
+  const available = Object.fromEntries(RIVAL_GUNS.map(type => [type, Math.floor(inv[type] || 0)]));
+  const preference = [
+    ...plan.guns.filter(type => type !== 'pistol'),
+    ...RIVAL_GUNS.filter(type => !plan.guns.includes(type)),
+  ];
+  const assignments = recruits.map((_, index) => {
+    const preferred = plan.guns[index % plan.guns.length];
+    if (preferred !== 'pistol' && available[preferred] > 0 && inv[ammoForGun(preferred)] > 0) {
+      available[preferred]--;
+      return preferred;
+    }
+    const substitute = preference.find(type => available[type] > 0 && inv[ammoForGun(type)] > 0);
+    if (substitute) {
+      available[substitute]--;
+      return substitute;
+    }
+    return 'pistol';
+  });
+  const usersByAmmo = {};
+  for (const gun of assignments) {
+    const ammoType = ITEM_TYPES[gun].ammo;
+    usersByAmmo[ammoType] = (usersByAmmo[ammoType] || 0) + 1;
+  }
   return recruits.map((type, i) => {
     const fighter = HIRE_TYPES[type];
+    const gun = assignments[i];
+    const ammoType = ITEM_TYPES[gun].ammo;
+    const totalRounds = (inv[`ammo_${ammoType}`] || 0) * AMMO_TYPES[ammoType].box;
     return {
       w: gun, hp: fighter.hp, sp: fighter.spreadMult, re: fighter.reaction,
-      ar: strategy === 'heavy' ? 0.5 : (inv.vest1 ? 0.25 : 0),
-      arch: fighter.archetype, ammo: Math.floor(totalRounds / count),
+      ar: strategy === 'heavy' && inv.vest2 ? 0.5 : (inv.vest1 ? 0.25 : 0),
+      arch: fighter.archetype, ammo: Math.floor(totalRounds / usersByAmmo[ammoType]),
       name: `RIVAL ${i + 1}`,
     };
   });

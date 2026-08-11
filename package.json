@@ -7,12 +7,26 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "assets": "npm run assets:tex && npm run assets:models",
+    "assets:tex": "node tools/textures/generate.mjs && node tools/asset-version.mjs",
+    "assets:models": "node tools/blender/build.mjs && node tools/asset-version.mjs",
+    "shot": "node tools/shot.mjs",
+    "animcheck": "node tools/animcheck.mjs",
+    "fightercheck": "node tools/fightercheck.mjs",
+    "sightcheck": "node tools/sightcheck.mjs",
+    "reloadcheck": "node tools/reloadcheck.mjs",
+    "collisioncheck": "node tools/collisioncheck.mjs",
+    "decalcheck": "node tools/decalcheck.mjs",
+    "voice:generate": "node tools/voice/generate.mjs",
+    "simulate:liquidation": "node tools/liquidation-sim/run.mjs"
+    ,"simulate:liquidation:real": "node tools/headless-liquidation.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "puppeteer-core": "^23.11.1",
     "vite": "^6.0.0"
   }
 }

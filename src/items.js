@@ -152,26 +152,73 @@ export function useFromPack(ch, type) {
 }
 
 export function ammoInPack(ch, ammoType) {
+  return ammoInGrid(ch.pack, ammoType);
+}
+
+export function ammoInGrid(grid, ammoType) {
   let n = 0;
-  for (const e of ch.pack.items) {
+  for (const e of grid.items) {
     const def = ITEM_TYPES[e.it.type];
     if (def.kind === 'ammo' && def.ammoType === ammoType) n += e.it.rounds;
   }
   return n;
 }
 
-export function consumeAmmo(ch, ammoType, n) {
+export function takeAmmoFromGrid(grid, ammoType, n) {
   let left = n;
-  for (const e of [...ch.pack.items]) {
+  for (const e of [...grid.items]) {
     if (left <= 0) break;
     const def = ITEM_TYPES[e.it.type];
     if (def.kind !== 'ammo' || def.ammoType !== ammoType) continue;
     const take = Math.min(left, e.it.rounds);
     e.it.rounds -= take;
     left -= take;
-    if (e.it.rounds <= 0) removeFromGrid(ch.pack, e.it.uid);
+    if (e.it.rounds <= 0) removeFromGrid(grid, e.it.uid);
   }
   return n - left;
+}
+
+export function addAmmoToPack(ch, ammoType, n) {
+  const box = AMMO_TYPES[ammoType]?.box;
+  if (!box || n <= 0) return 0;
+  let left = n;
+
+  // Refill carried partial boxes before occupying another backpack cell.
+  for (const e of ch.pack.items) {
+    if (left <= 0) break;
+    const def = ITEM_TYPES[e.it.type];
+    if (def.kind !== 'ammo' || def.ammoType !== ammoType || e.it.rounds >= box) continue;
+    const add = Math.min(left, box - e.it.rounds);
+    e.it.rounds += add;
+    left -= add;
+  }
+
+  while (left > 0) {
+    const item = makeItem(`ammo_${ammoType}`);
+    item.rounds = Math.min(left, box);
+    if (!autoPlace(ch.pack, item)) break;
+    left -= item.rounds;
+  }
+  return n - left;
+}
+
+export function extractAmmoFromPack(ch, uid, n) {
+  const entry = ch.pack.items.find(candidate => candidate.it.uid === uid);
+  const def = entry && ITEM_TYPES[entry.it.type];
+  if (!entry || def?.kind !== 'ammo' || n <= 0) return null;
+  const rounds = Math.min(n, entry.it.rounds);
+  if (rounds >= entry.it.rounds) {
+    removeFromGrid(ch.pack, uid);
+    return entry.it;
+  }
+  entry.it.rounds -= rounds;
+  const extracted = makeItem(entry.it.type);
+  extracted.rounds = rounds;
+  return extracted;
+}
+
+export function consumeAmmo(ch, ammoType, n) {
+  return takeAmmoFromGrid(ch.pack, ammoType, n);
 }
 
 // what guns can this character actually feed? Nothing fed → the knife.

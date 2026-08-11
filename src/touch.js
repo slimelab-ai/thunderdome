@@ -1,14 +1,83 @@
-// Mobile touch controls, standard mobile-FPS layout: a floating virtual
-// thumbstick on the left half moves, dragging anywhere on the right half aims,
-// and a thumb cluster of buttons handles everything else. The InputHub reads
+// Mobile touch controls: a floating virtual thumbstick on the left half moves,
+// the broad, unobstructed middle/right surface aims, and actions sit on the
+// screen edges. The InputHub reads
 // moveX/moveY (running them through the exponential stick curve) and drains
 // look deltas via consumeLook(); button edges call straight into the player.
 
 const STICK_R = 52;   // px travel of the virtual stick
 
-export function isTouchDevice() {
-  return (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
-    && matchMedia('(pointer: coarse)').matches;
+export function nextTouchSprintState({
+  magnitude,
+  dx,
+  dy,
+  sprinting = false,
+  blocked = false,
+  stanceActive = false,
+}) {
+  if (stanceActive) return { sprinting: false, blocked: true };
+  if (magnitude < 0.35) blocked = false;
+  if (blocked) return { sprinting: false, blocked };
+  if (magnitude > 0.97 && dy < -0.82 && Math.abs(dx) < 0.48) {
+    return { sprinting: true, blocked: false };
+  }
+  if (magnitude < 0.72 || dy > -0.45) sprinting = false;
+  return { sprinting, blocked: false };
+}
+
+export class TouchFireLatch {
+  constructor(onStart, onStop) {
+    this.onStart = onStart;
+    this.onStop = onStop;
+    this.touches = new Set();
+  }
+
+  press(id) {
+    if (this.touches.has(id)) return;
+    if (this.touches.size === 0) this.onStart();
+    this.touches.add(id);
+  }
+
+  release(id) {
+    if (!this.touches.delete(id)) return;
+    if (this.touches.size === 0) this.onStop();
+  }
+
+  reset() {
+    if (this.touches.size > 0) this.onStop();
+    this.touches.clear();
+  }
+}
+
+export function touchModeFromSignals({
+  override = null,
+  excluded = false,
+  maxTouchPoints = 0,
+  touchEvent = false,
+  coarsePointer = false,
+  mobileUserAgent = false,
+} = {}) {
+  if (override === '1') return true;
+  if (override === '0') return false;
+  if (excluded) return false;
+  return maxTouchPoints > 0 || touchEvent || coarsePointer || mobileUserAgent;
+}
+
+export function isTouchDevice({ excluded = false } = {}) {
+  // A mouse/trackpad can become the "primary" pointer on hybrid devices, so
+  // requiring `(pointer: coarse)` incorrectly hides touch controls there.
+  // Chrome's iPhone simulator on Windows can also retain desktop pointer
+  // capabilities, so its emulated mobile user agent is an independent signal.
+  const ua = navigator.userAgent || '';
+  return touchModeFromSignals({
+    override: new URLSearchParams(window.location.search).get('touch'),
+    excluded,
+    maxTouchPoints: navigator.maxTouchPoints || 0,
+    touchEvent: 'ontouchstart' in window,
+    coarsePointer: matchMedia('(any-pointer: coarse)').matches
+      || matchMedia('(pointer: coarse)').matches,
+    mobileUserAgent: navigator.userAgentData?.mobile === true
+      || /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(ua),
+  });
 }
 
 export class TouchControls {
@@ -26,7 +95,12 @@ export class TouchControls {
     this._move = null;          // {id, x, y} — the touch owning the stick
     this._looks = new Map();    // touch id → last {x, y} for drag aiming
     this._btnTouches = new Map();
-    this._firing = false;
+    this.sprintBlocked = false;
+    this.fireLatch = new TouchFireLatch(
+      () => this.player.onMouseDown(0),
+      () => this.player.onMouseUp(0)
+    );
+    this._lookHintShown = false;
     this._build();
   }
 
@@ -41,6 +115,10 @@ export class TouchControls {
     if (v === this.enabled) return;
     this.enabled = v;
     this.root.classList.toggle('hidden', !v);
+    if (v && !this._lookHintShown) {
+      this._lookHintShown = true;
+      this.root.classList.add('show-look-hint');
+    }
     if (!v) this._resetAll();
   }
 
@@ -52,48 +130,70 @@ export class TouchControls {
     if (v) this._resetAll();
   }
 
+  setLayout(layout) {
+    this.root.dataset.layout = ['thumbs', 'left', 'claw'].includes(layout) ? layout : 'thumbs';
+  }
+
   // toggle-button highlights follow the player's real state
   sync() {
     const p = this.player;
     this.root.querySelector('#t-ads').classList.toggle('on', !!p.adsHeld);
     this.root.querySelector('#t-crouch').classList.toggle('on', !!p.crouchToggled);
+    this.root.querySelector('#t-lean-left').classList.toggle('on', p.leanToggle === -1);
+    this.root.querySelector('#t-lean-right').classList.toggle('on', p.leanToggle === 1);
   }
 
   _build() {
     const root = document.createElement('div');
     root.id = 'touch-ui';
     root.className = 'hidden';
+    root.dataset.layout = 'thumbs';
     root.innerHTML = `
+      <div id="t-look-hint" aria-hidden="true"><span>DRAG TO LOOK</span></div>
       <div id="t-stick"><div id="t-stick-nub"></div></div>
-      <button id="t-pause" class="t-btn">❚❚</button>
-      <button id="t-fire" class="t-btn">FIRE</button>
-      <button id="t-ads" class="t-btn">ADS</button>
-      <button id="t-jump" class="t-btn">JUMP</button>
-      <button id="t-reload" class="t-btn">RLD</button>
-      <button id="t-crouch" class="t-btn">CRCH</button>
-      <button id="t-swap" class="t-btn">SWAP</button>
-      <button id="t-knife" class="t-btn">🔪</button>
-      <button id="t-nade" class="t-btn">💣</button>
-      <button id="t-med" class="t-btn">✚</button>
-      <button id="t-splint" class="t-btn">🩹</button>`;
+      <button id="t-pause" class="t-btn t-square" aria-label="Pause">❚❚</button>
+      <button id="t-fire" class="t-btn t-fire-btn" aria-label="Right fire and drag to aim"><span>FIRE<small>DRAG</small></span></button>
+      <button id="t-fire-left" class="t-btn t-fire-btn" aria-label="Left fire"><span>FIRE<small>LEFT</small></span></button>
+      <button id="t-ads" class="t-btn" aria-label="Aim down sights">ADS</button>
+      <button id="t-jump" class="t-btn" aria-label="Jump">JUMP</button>
+      <button id="t-reload" class="t-btn" aria-label="Reload">RLD</button>
+      <button id="t-crouch" class="t-btn" aria-label="Toggle crouch">CRCH</button>
+      <button id="t-swap" class="t-btn t-square" aria-label="Swap weapon">SWAP</button>
+      <button id="t-knife" class="t-btn t-square" aria-label="Toggle knife">🔪</button>
+      <button id="t-nade" class="t-btn t-square" aria-label="Throw grenade">💣</button>
+      <button id="t-med" class="t-btn t-square" aria-label="Use medkit">✚</button>
+      <button id="t-splint" class="t-btn t-square" aria-label="Use splint">🩹</button>
+      <button id="t-lean-left" class="t-btn t-lean" aria-label="Toggle lean left"><b>‹</b><span>LEAN</span></button>
+      <button id="t-lean-right" class="t-btn t-lean" aria-label="Toggle lean right"><span>LEAN</span><b>›</b></button>`;
     document.body.appendChild(root);
     this.root = root;
     this.stick = root.querySelector('#t-stick');
     this.nub = root.querySelector('#t-stick-nub');
 
     const p = this.player;
-    // aims: keep dragging on the fire button to track while shooting
+    // Right fire doubles as an aim surface. Left fire is a fixed trigger so the
+    // right thumb can keep tracking independently.
     this._actions = {
-      't-fire': { down: () => { p.onMouseDown(0); this._firing = true; }, up: () => { p.onMouseUp(0); this._firing = false; }, aims: true },
+      't-fire': {
+        down: (id) => this.fireLatch.press(id),
+        up: (id) => this.fireLatch.release(id),
+        aims: true,
+      },
+      't-fire-left': {
+        down: (id) => this.fireLatch.press(id),
+        up: (id) => this.fireLatch.release(id),
+      },
       't-ads': { down: () => { p.adsHeld = !p.adsHeld; } },
       't-jump': { down: () => p.onKey('Space', true), up: () => p.onKey('Space', false) },
       't-reload': { down: () => p.startReload() },
-      't-crouch': { down: () => { p.crouchToggled = !p.crouchToggled; } },
+      't-crouch': { down: () => { this._cancelSprintForStance(); p.crouchToggled = !p.crouchToggled; } },
       't-swap': { down: () => p.onWheel(1) },
       't-knife': { down: () => (p.knifeOut ? p.onWheel(1) : p.drawKnife()) },
       't-nade': { down: () => p.throwGrenade() },
       't-med': { down: () => p.startHeal('medkit') },
       't-splint': { down: () => p.startHeal('splint') },
+      't-lean-left': { down: () => { this._cancelSprintForStance(); p.leanToggle = p.leanToggle === -1 ? 0 : -1; } },
+      't-lean-right': { down: () => { this._cancelSprintForStance(); p.leanToggle = p.leanToggle === 1 ? 0 : 1; } },
       't-pause': { down: () => this.onPause() },
     };
 
@@ -112,7 +212,7 @@ export class TouchControls {
     }
     if (btn) {
       const act = this._actions[btn.id];
-      act?.down?.();
+      act?.down?.(t.identifier);
       this._btnTouches.set(t.identifier, btn.id);
       btn.classList.add('press');
       if (act?.aims) this._looks.set(t.identifier, { x: t.clientX, y: t.clientY });
@@ -136,9 +236,16 @@ export class TouchControls {
       const m = Math.hypot(dx, dy);
       if (m > 1) { dx /= m; dy /= m; }
       this._setStick(dx, dy);
-      // slam forward → sprint; ease off → walk (hysteresis so it doesn't flicker)
-      if (m > 0.92 && dy < -0.35) this.sprint = true;
-      else if (m < 0.7) this.sprint = false;
+      const sprintState = nextTouchSprintState({
+        magnitude: m,
+        dx,
+        dy,
+        sprinting: this.sprint,
+        blocked: this.sprintBlocked,
+        stanceActive: !!(this.player.crouchToggled || this.player.leanToggle),
+      });
+      this.sprint = sprintState.sprinting;
+      this.sprintBlocked = sprintState.blocked;
       return;
     }
     const look = this._looks.get(t.identifier);
@@ -153,13 +260,14 @@ export class TouchControls {
   _end(t) {
     const btnId = this._btnTouches.get(t.identifier);
     if (btnId) {
-      this._actions[btnId]?.up?.();
+      this._actions[btnId]?.up?.(t.identifier);
       this.root.querySelector(`#${btnId}`)?.classList.remove('press');
       this._btnTouches.delete(t.identifier);
     }
     if (this._move && t.identifier === this._move.id) {
       this._move = null;
       this.sprint = false;
+      this.sprintBlocked = false;
       this._setStick(0, 0);
       this.stick.style.display = 'none';
     }
@@ -172,8 +280,13 @@ export class TouchControls {
     this.nub.style.transform = `translate(${dx * STICK_R}px, ${dy * STICK_R}px)`;
   }
 
+  _cancelSprintForStance() {
+    this.sprint = false;
+    this.sprintBlocked = true;
+  }
+
   _resetAll() {
-    if (this._firing) { this.player.onMouseUp(0); this._firing = false; }
+    this.fireLatch.reset();
     this.player.onKey('Space', false);
     for (const id of this._btnTouches.values()) this.root.querySelector(`#${id}`)?.classList.remove('press');
     this._btnTouches.clear();
@@ -182,6 +295,7 @@ export class TouchControls {
     this.moveX = 0;
     this.moveY = 0;
     this.sprint = false;
+    this.sprintBlocked = false;
     this._dx = 0;
     this._dy = 0;
     this.stick.style.display = 'none';

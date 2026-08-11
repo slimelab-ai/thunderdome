@@ -43,7 +43,7 @@ test('aim assist targets an enemy near the crosshair and applies friction', () =
   const { hub } = makeHub({ enemies: [enemyAt(0.8, 1.62, -12)] });
   const target = hub._assistTarget();
   assert.ok(target, 'enemy inside the slow cone should be targeted');
-  assert.ok(target.ang < AIM_ASSIST.gamepad.slowCone);
+  assert.ok(target.edgeAng < AIM_ASSIST.gamepad.slowCone);
   const mult = hub._friction(target, AIM_ASSIST.gamepad);
   assert.ok(mult < 1 && mult >= AIM_ASSIST.gamepad.friction - 1e-9);
   // no target → no slowdown
@@ -65,11 +65,11 @@ test('aim assist ignores far, off-cone, friendly, and occluded enemies', () => {
   assert.equal(occluded.hub._assistTarget(), null);
 });
 
-test('rotational pull rotates the view toward the target, capped per frame', () => {
+test('touch rotational pull rotates the view toward the target, capped per frame', () => {
   const { hub, player } = makeHub({ enemies: [enemyAt(0.5, 1.62, -12)] });
-  const target = hub._assistTarget();
+  const target = hub._assistTarget(AIM_ASSIST.touch);
   assert.ok(target);
-  hub._applyPull(target, AIM_ASSIST.gamepad, 1 / 60);
+  hub._applyPull(target, AIM_ASSIST.touch, 1 / 60);
   // enemy is to the right of center (-Z forward, +X right) → yaw decreases
   assert.ok(player.yaw < 0, `yaw should pull right (negative), got ${player.yaw}`);
   assert.ok(Math.abs(player.yaw) <= AIM_ASSIST.pullMaxRate / 60 + 1e-9);
@@ -78,7 +78,7 @@ test('rotational pull rotates the view toward the target, capped per frame', () 
   for (let i = 0; i < 30; i++) {
     const t = hub._assistTarget();
     if (!t) break;
-    hub._applyPull(t, AIM_ASSIST.gamepad, 1 / 60);
+    hub._applyPull(t, AIM_ASSIST.touch, 1 / 60);
     hub.camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
     hub.camera.updateMatrixWorld();
     const now = hub._assistTarget()?.ang ?? 0;
@@ -150,6 +150,32 @@ test('gamepad update wires buttons, movement, and pause edges into the player', 
   assert.equal(resumed, 1);
 });
 
+test('a connected gamepad remains available while idle and reconnect clears stale Start edges', () => {
+  const { hub } = makeHub();
+  const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+  const pad = { index: 0, id: 'Xbox Controller', connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons };
+  hub._pad = () => pad;
+
+  hub.update(1 / 60, 'menu');
+  assert.equal(hub.gamepadConnected, true);
+  hub.gamepadActiveAt = -10;
+  assert.equal(hub.gamepadActive, false, 'recent modality can expire');
+  assert.equal(hub.gamepadConnected, true, 'play authorization does not expire with it');
+
+  buttons[9] = { pressed: true, value: 1 };
+  let advances = 0;
+  hub.onMenuInput = (action) => { if (action === 'advance') advances++; };
+  hub.update(1 / 60, 'intro');
+  assert.equal(advances, 1);
+
+  hub._pad = () => null;
+  hub.update(1 / 60, 'intro');
+  assert.equal(hub.gamepadConnected, false);
+  hub._pad = () => pad;
+  hub.update(1 / 60, 'intro');
+  assert.equal(advances, 2, 'held Start is a fresh edge after browser handoff/reconnect');
+});
+
 test('looking with the right stick turns the view and aim assist slows it near a target', () => {
   const enemies = [enemyAt(0.5, 1.62, -12)];
   const clean = makeHub();           // no enemies
@@ -167,7 +193,7 @@ test('looking with the right stick turns the view and aim assist slows it near a
     `friction should slow the turn: ${assisted.player.yaw} vs ${clean.player.yaw}`);
 });
 
-test('controller look settings govern turn speed and keep default magnetism subtle', () => {
+test('controller look settings govern turn speed and keep default magnetism controlled', () => {
   const { hub, player } = makeHub();
   const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
   hub._pad = () => ({ connected: true, mapping: 'standard', axes: [0, 0, 1, 0], buttons });
@@ -177,11 +203,29 @@ test('controller look settings govern turn speed and keep default magnetism subt
 
   const centered = { ang: 0 };
   const friction = hub._friction(centered, AIM_ASSIST.gamepad, hub.controllerSettings.aimAssist);
-  assert.ok(friction > 0.9, `default slowdown should be mild, got ${friction}`);
+  assert.ok(friction < 0.9 && friction > 0.8,
+    `default slowdown should be perceptible but controlled, got ${friction}`);
 
   const before = player.yaw;
-  hub._applyPull({ point: new THREE.Vector3(1, 1.62, -12) }, AIM_ASSIST.gamepad, 1 / 60, 0);
-  assert.equal(player.yaw, before, 'zero magnetism must not rotate the player');
+  hub._applyTracking({ entity: {}, wantYaw: -0.1, wantPitch: 0 }, AIM_ASSIST.gamepad, 1 / 60, 0, true);
+  assert.equal(player.yaw, before, 'zero assistance must not rotate the player');
+});
+
+test('gamepad tracking follows target motion without pulling toward a static centre', () => {
+  const enemy = enemyAt(0.5, 1.62, -12);
+  const { hub, player } = makeHub({ enemies: [enemy] });
+  const first = hub._assistTarget();
+  hub._applyTracking(first, AIM_ASSIST.gamepad, 1 / 60, 1, true);
+  assert.equal(player.yaw, 0, 'acquiring an off-centre target must not snap toward it');
+
+  const same = hub._assistTarget();
+  hub._applyTracking(same, AIM_ASSIST.gamepad, 1 / 60, 1, true);
+  assert.equal(player.yaw, 0, 'a stationary target must not create centre-seeking pull');
+
+  enemy.aimPoint = (out = new THREE.Vector3()) => out.set(0.8, 1.62, -12);
+  const moved = hub._assistTarget();
+  hub._applyTracking(moved, AIM_ASSIST.gamepad, 1 / 60, 1, true);
+  assert.ok(player.yaw < 0, 'rightward target motion should be partially inherited');
 });
 
 test('aim magnetism never steers an idle crosshair just because fire or ADS is held', () => {
@@ -193,6 +237,32 @@ test('aim magnetism never steers an idle crosshair just because fire or ADS is h
   buttons[6] = { pressed: true, value: 1 };
   hub._pad = () => ({ connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons });
   hub.setControllerSettings({ aimAssist: 1 });
+  hub.update(1 / 60, 'match');
+  assert.equal(player.yaw, 0);
+  assert.equal(player.pitch, 0);
+});
+
+test('touch movement alone never rotates the camera toward an aim-assist target', () => {
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(0, 1.62, 0);
+  camera.updateMatrixWorld();
+  const player = {
+    yaw: 0, pitch: 0, ads: 0, alive: true,
+    padMoveX: 0, padMoveZ: 0, sprintHeld: false,
+    addLook(dYaw, dPitch) { this.yaw += dYaw; this.pitch += dPitch; },
+  };
+  const touch = {
+    enabled: true, moveX: 0, moveY: -1, sprint: false,
+    consumeLook: () => ({ dx: 0, dy: 0 }),
+    sync: () => {},
+  };
+  const hub = new InputHub(
+    player,
+    { combatants: [enemyAt(0.35, 1.62, -12)], colliders: [] },
+    camera,
+    { touch }
+  );
+  hub._pad = () => null;
   hub.update(1 / 60, 'match');
   assert.equal(player.yaw, 0);
   assert.equal(player.pitch, 0);

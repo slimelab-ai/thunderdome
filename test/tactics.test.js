@@ -1,0 +1,164 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  coordinatedBreachLane, offsetBreachGoal, safeBreachLane, LANE_ABANDON,
+  shouldSprintAtTarget, searchProbe, SEARCH_PROBES, lanesSpokenFor, CALL_TTL,
+} from '../src/tactics.js';
+
+test('a squad assigns one suppressor and alternating breach lanes', () => {
+  const support = { role: 'support', navSeed: 99 };
+  const first = { role: 'pointman', navSeed: 10 };
+  const second = { role: 'pointman', navSeed: 20 };
+  const flanker = { role: 'flanker', navSeed: 30 };
+  const squad = [flanker, second, support, first];
+
+  assert.equal(coordinatedBreachLane(squad, support), 0);
+  assert.equal(coordinatedBreachLane(squad, first), -1);
+  assert.equal(coordinatedBreachLane(squad, second), 1);
+  assert.equal(coordinatedBreachLane(squad, flanker), -2);
+});
+
+test('breach goals fan out perpendicular to the defended sightline', () => {
+  const target = { x: -4, y: 0, z: 10 };
+  const attacker = { x: -4, y: 0, z: -10 };
+
+  assert.deepEqual(offsetBreachGoal(target, attacker, 0), { x: -4, y: 0, z: 10 });
+  assert.deepEqual(offsetBreachGoal(target, attacker, -1), { x: 1, y: 0, z: 10 });
+  assert.deepEqual(offsetBreachGoal(target, attacker, 1), { x: -9, y: 0, z: 10 });
+  assert.deepEqual(offsetBreachGoal(target, attacker, -2), { x: 4, y: 0, z: 10 });
+});
+
+test('a covered approach is rerouted, and the assigned lane is kept when it is clear', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+
+  const nothingCovered = safeBreachLane(target, attacker, -1, () => 0);
+  assert.equal(nothingCovered.lane, -1, 'the squad assignment stands while it can');
+  assert.equal(nothingCovered.covered, false);
+
+  // The whole middle of the pit is being worked; only the wide lanes are clear.
+  const middleSwept = goal => (Math.abs(goal.x) < 7 ? 1 : 0);
+  const rerouted = safeBreachLane(target, attacker, -1, middleSwept);
+  assert.equal(rerouted.covered, false);
+  assert.ok(Math.abs(rerouted.goal.x) >= 7, 'it goes around rather than through');
+  assert.notEqual(rerouted.lane, -1);
+});
+
+test('a route out of the beaten zone beats staying in it, even starting under fire', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  // The situation that broke the boolean version: a fighter already under fire, so
+  // *every* lane costs something. The cheapest one still has to win.
+  const cost = goal => (Math.abs(goal.x) >= 7 ? 0.2 : 0.6);
+  const out = safeBreachLane(target, attacker, 0, cost);
+  assert.equal(out.covered, false, 'partly-swept is not a reason to stop');
+  assert.ok(Math.abs(out.goal.x) >= 7, 'it takes the way out rather than cowering');
+  assert.equal(out.cost, 0.2);
+});
+
+test('ties go to the squad assignment, so a crossfire stays a crossfire', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const flat = safeBreachLane(target, attacker, 2, () => 0.3);
+  assert.equal(flat.lane, 2);
+});
+
+test('with every position beside him covered, it stages partway round first', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  // Anything level with the target is swept; the ground short of him is not. That is
+  // the shape of a defender covering a wide arc, and the old chooser had no candidate
+  // it could offer for it.
+  const levelSwept = goal => (goal.z > 6 ? 1 : 0);
+  const staged = safeBreachLane(target, attacker, 0, levelSwept);
+  assert.equal(staged.covered, false, 'there is somewhere to go after all');
+  assert.equal(staged.staging, true);
+  assert.ok(staged.goal.z < 10, 'short of him, not level with him');
+
+  // ...and when the direct ring is clean it is still preferred, untouched.
+  const clean = safeBreachLane(target, attacker, -1, () => 0);
+  assert.equal(clean.goal.z, 10, 'the ordinary breach still goes all the way in');
+  assert.ok(!clean.staging);
+});
+
+test('a staging goal sits between the attacker and the target, offset to the side', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const full = offsetBreachGoal(target, attacker, -1);
+  const half = offsetBreachGoal(target, attacker, -1, { reach: 0.5 });
+  assert.equal(full.z, 10);
+  assert.equal(half.z, 0, 'halfway along the approach');
+  assert.equal(half.x, full.x, 'and offset the same distance to the side');
+});
+
+test('when every approach is covered end to end the answer is stop, not least-bad', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  const pinned = safeBreachLane(target, attacker, 1, () => 1);
+  assert.equal(pinned.covered, true);
+  assert.equal(pinned.lane, 1, 'it reports the assigned lane so the caller can hold on it');
+  assert.deepEqual(pinned.goal, offsetBreachGoal(target, attacker, 1));
+
+  // Just under the abandon line is still worth walking.
+  const marginal = safeBreachLane(target, attacker, 1, () => LANE_ABANDON - 0.01);
+  assert.equal(marginal.covered, false);
+});
+
+test('a search sweeps through the last-known point, then the cover either side', () => {
+  const lastKnown = { x: 0, y: 0, z: 4 };
+  const searcher = { x: 0, y: 0, z: -6 };   // approaching from -z, so forward is +z
+
+  const push = searchProbe(lastKnown, searcher, 6, 0);
+  assert.deepEqual([+push.x.toFixed(2), +push.z.toFixed(2)], [0, 10], 'first, keep going');
+
+  const left = searchProbe(lastKnown, searcher, 6, 1);
+  const right = searchProbe(lastKnown, searcher, 6, 2);
+  assert.equal(+left.x.toFixed(2), 6);
+  assert.equal(+right.x.toFixed(2), -6);
+  assert.equal(left.z, right.z, 'the two flanks are the same depth, opposite sides');
+
+  const back = searchProbe(lastKnown, searcher, 6, 3);
+  assert.ok(back.z < lastKnown.z, 'last, back toward where he came from');
+
+  // The sweep is finite and stays in the pit.
+  const far = searchProbe({ x: 19, y: 0, z: 14 }, { x: 0, y: 0, z: 0 }, 40, 0);
+  assert.ok(Math.abs(far.x) <= 20 && Math.abs(far.z) <= 14.5);
+  assert.equal(SEARCH_PROBES, 5);
+});
+
+test('firearm users stop sprinting on visual contact while melee fighters close', () => {
+  assert.equal(shouldSprintAtTarget({ sight: false, distance: 20 }), true);
+  assert.equal(shouldSprintAtTarget({ sight: true, distance: 20 }), false);
+  assert.equal(shouldSprintAtTarget({ sight: true, melee: true, distance: 8 }), true);
+  assert.equal(shouldSprintAtTarget({ sight: false, distance: 20, legDamage: 0.7 }), false);
+});
+
+test('a lane a squadmate has called costs more, but is still available', () => {
+  const target = { x: 0, y: 0, z: 10 };
+  const attacker = { x: 0, y: 0, z: -10 };
+  // Equal ground everywhere, so the only thing separating the lanes is who spoke.
+  const taken = new Set([-1]);
+  const picked = safeBreachLane(target, attacker, -1, () => 0.3, { taken });
+  assert.notEqual(picked.lane, -1, 'he yields the angle a squadmate claimed');
+
+  // ...but not at any price. Two men on one good angle beats one on a lethal one.
+  const onlyMinusOneIsSafe = (goal, lane) => (lane === -1 ? 0.1 : 0.9);
+  const shared = safeBreachLane(target, attacker, 2, onlyMinusOneIsSafe, { taken });
+  assert.equal(shared.lane, -1);
+});
+
+test('only calls he was actually told, about this target, and recently, count', () => {
+  const mate = { alive: true };
+  const dead = { alive: false };
+  const holder = {};
+  const other = {};
+  const calls = new Map([
+    [mate, { lane: 2, target: holder, at: 100 }],
+    [dead, { lane: 3, target: holder, at: 100 }],
+    [other, { lane: 4, target: {}, at: 100 }],
+  ]);
+  const taken = lanesSpokenFor(calls, holder, 101);
+  assert.deepEqual([...taken], [2], 'a dead caller and a call about somebody else are ignored');
+  assert.equal(lanesSpokenFor(calls, holder, 100 + CALL_TTL + 1).size, 0, 'and stale calls expire');
+  assert.equal(lanesSpokenFor(null, holder, 0).size, 0, 'a fighter told nothing knows nothing');
+});

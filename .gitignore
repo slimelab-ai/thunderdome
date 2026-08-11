@@ -1,6 +1,11 @@
 node_modules
 dist
+data/synthetic-liquidation/
+data/headless-liquidation/
+.cache/
 .DS_Store
 .deployed-sha
 .deployed-dev-sha
 cloudflared-credentials.json
+
+__pycache__/

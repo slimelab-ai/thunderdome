@@ -20,13 +20,16 @@ export const TOUCH = {
 };
 
 export const AIM_ASSIST = {
-  // friction: look-speed multiplier while the reticle sits inside the slow cone.
-  // rotation: fraction of the remaining angular error closed per second.
-  // Gamepad deliberately stays Halo-like: a narrow, mild slowdown with only
-  // enough rotational pull to soften micro-corrections, never steer the aim.
-  gamepad: { friction: 0.78, rotation: 1.0, slowCone: 0.105, pullCone: 0.04 },
-  touch: { friction: 0.42, rotation: 6.0, slowCone: 0.15, pullCone: 0.085 },
+  // Gamepad assist is target-volume friction plus movement tracking. It does not
+  // pull toward the target's centre: that magnetic centre-seeking was the source
+  // of the slippery, sometimes self-steering feel on Xbox.
+  gamepad: { friction: 0.5, tracking: 0.9, slowCone: 0.045, retainPadding: 0.035 },
+  // Touch gets a slightly wider slowdown window, but no longer receives the
+  // strong magnetic pull that used to steer fights for the player.
+  touch: { friction: 0.7, rotation: 2.2, slowCone: 0.115, pullCone: 0.038 },
   range: 42,            // meters; no assist past this
+  targetRadius: 0.55,   // approximate torso radius used to turn a point into a volume
+  trackMaxRate: 1.2,    // rad/s cap on inherited target motion
   pullMaxRate: 1.5,     // rad/s cap on the pull
 };
 
@@ -34,6 +37,11 @@ export const DEFAULT_CONTROLLER_SETTINGS = Object.freeze({
   sensitivity: 0.65,
   cursorSensitivity: 0.8,
   exponent: 2.15,
+  aimAssist: 0.35,
+});
+
+export const DEFAULT_TOUCH_SETTINGS = Object.freeze({
+  layout: 'thumbs',
   aimAssist: 0.35,
 });
 
@@ -71,10 +79,13 @@ export class InputHub {
     this.onControllerActive = onControllerActive;
     this.onControllerSample = onControllerSample;
     this.controllerSettings = { ...DEFAULT_CONTROLLER_SETTINGS, ...controllerSettings };
+    this.touchSettings = { ...DEFAULT_TOUCH_SETTINGS };
     this.prevButtons = [];
     this.menuYHeldFor = 0;
     this.menuYHoldFired = false;
     this.gamepadActiveAt = -10;
+    this.controllerConnected = false;
+    this._padIdentity = null;
     this.sprintLatch = false;   // L3 arms it; easing off the stick clears it
     this.rtHeld = false;
     this.ltHeld = false;
@@ -82,14 +93,47 @@ export class InputHub {
     this._to = new THREE.Vector3();
     this._aim = new THREE.Vector3();
     this._best = new THREE.Vector3();
+    this._assistLock = null;
+    this._assistTracking = null;
+
+    // Polling remains the source of truth, but these events let Xbox Edge promote
+    // the pad as soon as its browser-level controller mode hands it to the page.
+    // The first poll still covers engines which do not dispatch the events.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('gamepadconnected', () => {
+        this.controllerConnected = true;
+        this.prevButtons = [];
+        this.onControllerActive?.();
+      });
+      window.addEventListener('gamepaddisconnected', () => this.resetGamepadState());
+    }
   }
 
   // true while a pad has produced input recently — lets a controller play
   // without pointer lock and turns its aim assist on
   get gamepadActive() { return performance.now() / 1000 - this.gamepadActiveAt < 3; }
 
+  // Unlike the recent-input modality flag above, connection is deliberately
+  // sticky while the pad is present. An idle controller must not make the game
+  // revoke controller play or treat a pointer-lock change as a pause.
+  get gamepadConnected() { return this.controllerConnected; }
+
+  resetGamepadState() {
+    this.controllerConnected = false;
+    this._padIdentity = null;
+    this.prevButtons = [];
+    this.menuYHeldFor = 0;
+    this.menuYHoldFired = false;
+    if (this.rtHeld) { this.player.onMouseUp?.(0); this.rtHeld = false; }
+    if (this.ltHeld) { this.player.onMouseUp?.(2); this.ltHeld = false; }
+  }
+
   setControllerSettings(settings) {
     this.controllerSettings = { ...this.controllerSettings, ...settings };
+  }
+
+  setTouchSettings(settings) {
+    this.touchSettings = { ...this.touchSettings, ...settings };
   }
 
   update(dt, phase) {
@@ -104,21 +148,34 @@ export class InputHub {
     let padMove = { x: 0, y: 0, mag: 0 };
 
     if (pad) {
-      const val = (i) => pad.buttons[i] ? Math.max(pad.buttons[i].value || 0, pad.buttons[i].pressed ? 1 : 0) : 0;
+      const identity = `${pad.index ?? 0}:${pad.id || ''}`;
+      if (!this.controllerConnected || identity !== this._padIdentity) {
+        // A browser controller-mode popup can consume the Start release. Treat the
+        // pad returned afterwards as a fresh device so stale edges cannot strand it.
+        this.prevButtons = [];
+        this._padIdentity = identity;
+        this.controllerConnected = true;
+        this.onControllerActive?.();
+      }
+      // Some console Chromium builds expose legacy array-like lists here rather
+      // than real Arrays. Normalize once so `some`/`map` cannot throw in the frame.
+      const buttons = Array.from(pad.buttons || []);
+      const axes = Array.from(pad.axes || []);
+      const val = (i) => buttons[i] ? Math.max(buttons[i].value || 0, buttons[i].pressed ? 1 : 0) : 0;
       const pressed = (i) => val(i) > STICK.triggerAt;
       const edge = (i) => pressed(i) && !this.prevButtons[i];
 
-      if (pad.buttons.some((b) => b.pressed || (b.value || 0) > STICK.triggerAt)
-        || pad.axes.some((a) => Math.abs(a) > STICK.deadzone)) {
+      if (buttons.some((b) => b.pressed || (b.value || 0) > STICK.triggerAt)
+        || axes.some((a) => Math.abs(a) > STICK.deadzone)) {
         this.gamepadActiveAt = now;
         this.onControllerActive?.();
       }
       padLook = stickCurve(
-        pad.axes[2] || 0, pad.axes[3] || 0,
+        axes[2] || 0, axes[3] || 0,
         STICK.deadzone, this.controllerSettings.exponent
       );
       this.onControllerSample?.({
-        raw: Math.min(1, Math.hypot(pad.axes[2] || 0, pad.axes[3] || 0)),
+        raw: Math.min(1, Math.hypot(axes[2] || 0, axes[3] || 0)),
         curved: padLook.mag,
       });
 
@@ -129,8 +186,8 @@ export class InputHub {
       }
 
       if (!inMatch) {
-        const ax = pad.axes[0] || 0;
-        const ay = pad.axes[1] || 0;
+        const ax = axes[0] || 0;
+        const ay = axes[1] || 0;
         const cursor = stickCurve(ax, ay, 0.14, 1.45);
         if (cursor.mag > 0) {
           this.onMenuInput?.({
@@ -178,7 +235,7 @@ export class InputHub {
       }
 
       if (inMatch && p.alive) {
-        padMove = stickCurve(pad.axes[0] || 0, pad.axes[1] || 0, STICK.deadzone, STICK.expo);
+        padMove = stickCurve(axes[0] || 0, axes[1] || 0, STICK.deadzone, STICK.expo);
         p.padMoveX += padMove.x;
         p.padMoveZ += padMove.y;
 
@@ -209,19 +266,19 @@ export class InputHub {
         }
       }
 
-      this.prevButtons = pad.buttons.map((_, i) => pressed(i));
+      this.prevButtons = buttons.map((_, i) => pressed(i));
+    } else if (this.controllerConnected || this._padIdentity !== null) {
+      this.resetGamepadState();
     }
 
     // -------- touch --------
     const touchOn = !!(this.touch && this.touch.enabled);
     let touchLook = { dx: 0, dy: 0 };
-    let touchMoveMag = 0;
     if (touchOn && inMatch && p.alive) {
       touchLook = this.touch.consumeLook();
       const mv = stickCurve(this.touch.moveX, this.touch.moveY, 0.06, TOUCH.stickExpo);
       p.padMoveX += mv.x;
       p.padMoveZ += mv.y;
-      touchMoveMag = mv.mag;
     } else if (this.touch) {
       this.touch.consumeLook(); // don't bank aim deltas while paused
     }
@@ -237,7 +294,9 @@ export class InputHub {
     // -------- aim assist + look --------
     const usingTouchAssist = touchOn && !this.gamepadActive;
     const assistCfg = usingTouchAssist ? AIM_ASSIST.touch : AIM_ASSIST.gamepad;
-    const assistStrength = usingTouchAssist ? 1 : this.controllerSettings.aimAssist;
+    const assistStrength = usingTouchAssist
+      ? this.touchSettings.aimAssist
+      : this.controllerSettings.aimAssist;
     const target = (this.gamepadActive || touchOn) ? this._assistTarget(assistCfg) : null;
 
     if (padLook.mag > 0) {
@@ -249,7 +308,7 @@ export class InputHub {
       );
     }
     if (touchLook.dx || touchLook.dy) {
-      const mult = this._friction(target, AIM_ASSIST.touch);
+      const mult = this._friction(target, AIM_ASSIST.touch, this.touchSettings.aimAssist);
       const adsK = 1 - p.ads * (1 - TOUCH.adsSlow);
       p.addLook(
         -touchLook.dx * TOUCH.lookSens * adsK * mult,
@@ -257,32 +316,44 @@ export class InputHub {
       );
     }
 
-    // Rotational pull only while the player is actively steering. Merely
-    // aiming or firing never makes an idle crosshair track by itself.
-    const activeIntent = padLook.mag > 0 || padMove.mag > 0.15 || touchMoveMag > 0.15
-      || touchLook.dx !== 0 || touchLook.dy !== 0;
-    if (target && activeIntent && target.ang < assistCfg.pullCone) {
-      this._applyPull(target, assistCfg, dt, assistStrength);
+    if (usingTouchAssist) {
+      const activeIntent = touchLook.dx !== 0 || touchLook.dy !== 0;
+      if (target && activeIntent && target.ang < assistCfg.pullCone) {
+        this._applyPull(target, assistCfg, dt, assistStrength);
+      }
+    } else {
+      // Halo-style rotational assistance inherits some target motion while either
+      // stick is engaged. It never closes the error to target centre on its own.
+      this._applyTracking(target, AIM_ASSIST.gamepad, dt, assistStrength,
+        padLook.mag > 0 || padMove.mag > 0.1);
     }
   }
 
   _pad() {
     if (!navigator.getGamepads) return null;
-    let fallback = null;
-    for (const g of navigator.getGamepads()) {
-      if (!g || !g.connected) continue;
-      if (g.mapping === 'standard') return g;
-      fallback ||= g;
+    try {
+      let fallback = null;
+      for (const g of navigator.getGamepads() || []) {
+        if (!g || !g.connected) continue;
+        if (g.mapping === 'standard') return g;
+        fallback ||= g;
+      }
+      return fallback;
+    } catch {
+      // A disabled browser-level controller mode may temporarily deny the API.
+      // Input absence is recoverable; throwing once per rAF would freeze rendering.
+      return null;
     }
-    return fallback;
   }
 
-  // enemy nearest the crosshair inside the slow cone, in range, with line of sight
+  // Enemy volume nearest the crosshair, with hysteresis so adjacent fighters do not
+  // trade ownership every frame. `edgeAng` is distance from the target silhouette,
+  // rather than distance from a single chest point.
   _assistTarget(cfg = AIM_ASSIST.gamepad) {
     const cam = this.camera;
     cam.getWorldDirection(this._fwd);
     let best = null;
-    let bestAng = cfg.slowCone;
+    let bestScore = Infinity;
     for (const c of this.world.combatants) {
       if (!c.alive || c.team === 'player') continue;
       c.aimPoint(this._aim);
@@ -291,34 +362,81 @@ export class InputHub {
       if (dist > AIM_ASSIST.range || dist < 1.0) continue;
       this._to.normalize();
       const ang = this._to.angleTo(this._fwd);
-      if (ang >= bestAng) continue;
-      if (!hasLoS(this.world.colliders, cam.position, this._aim)) continue;
+      const radius = Math.atan2(AIM_ASSIST.targetRadius, dist);
+      const edgeAng = Math.max(0, ang - radius);
+      const retained = c === this._assistLock;
+      if (edgeAng >= cfg.slowCone + (retained ? cfg.retainPadding || 0 : 0)) continue;
+      const score = edgeAng - (retained ? 0.012 : 0);
+      if (score >= bestScore) continue;
+      if (!hasLoS(this.world, cam.position, this._aim)) continue;
       this._best.copy(this._aim);
-      best = { ang, dist, point: this._best };
-      bestAng = ang;
+      const dx = this._best.x - cam.position.x;
+      const dy = this._best.y - cam.position.y;
+      const dz = this._best.z - cam.position.z;
+      best = {
+        entity: c,
+        ang,
+        edgeAng,
+        radius,
+        dist,
+        point: this._best,
+        wantYaw: Math.atan2(-dx, -dz),
+        wantPitch: Math.atan2(dy, Math.hypot(dx, dz)),
+      };
+      bestScore = score;
     }
+    this._assistLock = best?.entity || null;
+    if (!best) this._assistTracking = null;
     return best;
   }
 
   // sensitivity slowdown, strongest dead-center, fading out at the cone edge
   _friction(target, cfg, strength = 1) {
     if (!target) return 1;
-    const depth = Math.min(1, (1 - target.ang / cfg.slowCone) * 3);
+    const edge = target.edgeAng ?? target.ang;
+    const linear = Math.max(0, Math.min(1, 1 - edge / cfg.slowCone));
+    const depth = linear * linear * (3 - 2 * linear);
     return 1 - (1 - cfg.friction) * depth * strength;
+  }
+
+  _applyTracking(target, cfg, dt, strength = 1, active = false) {
+    if (!target || strength <= 0) {
+      this._assistTracking = null;
+      return;
+    }
+    const previous = this._assistTracking;
+    this._assistTracking = {
+      entity: target.entity,
+      yaw: target.wantYaw,
+      pitch: target.wantPitch,
+    };
+    if (!active || !previous || previous.entity !== target.entity) return;
+
+    let dYaw = target.wantYaw - previous.yaw;
+    dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
+    const dPitch = target.wantPitch - previous.pitch;
+    const cap = AIM_ASSIST.trackMaxRate * strength * dt;
+    const scale = cfg.tracking * strength;
+    const clamp = value => Math.max(-cap, Math.min(cap, value * scale));
+    this.player.addLook(clamp(dYaw), clamp(dPitch));
   }
 
   _applyPull(target, cfg, dt, strength = 1) {
     const p = this.player;
-    const cam = this.camera.position;
+    const camera = this.camera;
+    const cam = camera.position;
     const dx = target.point.x - cam.x;
     const dy = target.point.y - cam.y;
     const dz = target.point.z - cam.z;
     const wantYaw = Math.atan2(-dx, -dz);          // yaw 0 faces -Z
     const wantPitch = Math.atan2(dy, Math.hypot(dx, dz));
-    let dYaw = wantYaw - p.yaw;
+    // Compare with the visible camera, not the recoil-free base aim. Otherwise a
+    // climbing weapon makes the assist pull base pitch down and recovery later
+    // carries the crosshair below the target.
+    let dYaw = wantYaw - camera.rotation.y;
     dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
-    const dPitch = wantPitch - p.pitch;
-    const k = Math.min(1, cfg.rotation * strength * dt);
+    const dPitch = wantPitch - camera.rotation.x;
+    const k = Math.min(1, (cfg.rotation || 0) * strength * dt);
     const cap = AIM_ASSIST.pullMaxRate * strength * dt;
     const clamp = (v) => Math.max(-cap, Math.min(cap, v));
     p.addLook(clamp(dYaw * k), clamp(dPitch * k));

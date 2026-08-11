@@ -75,33 +75,95 @@ Open http://localhost:5173 in a real browser (pointer lock needs one).
 
 ## Tech
 
-Vite + Three.js. Signature arena props are authored as optimized GLB models in
-headless Blender; the environment around them remains procedural, textures are
-generated on canvas (concrete grime, neon signage, odds board), and every sound is
-synthesized with WebAudio (per-weapon gunshots, crowd ambience that roars on kills,
-klaxons, ricochets).
+Vite + Three.js. The visual side is documented in full in [docs/ART.md](docs/ART.md) —
+palette, lighting rules, material standard, poly/draw budgets and animation rules.
+The short version:
 
-Regenerate the arena prop pack with
-`blender --background --python tools/blender/generate_arena_props.py`.
+- **Forward pipeline with a post chain** in `src/render.js`: HDR scene → GTAO → bloom →
+  ACES tone map → SMAA → colour grade (split-tone, vignette, grain, chromatic
+  aberration). Four quality tiers, auto-selected from the device on first run and
+  overridable at runtime, plus adaptive resolution that trims the render scale when
+  frames run long. Ambient occlusion is `ultra` only — it is the most expensive pass
+  and the least missed in a room this dark.
+- **PBR throughout.** Every surface is a `MeshStandardMaterial` fed by a baked
+  albedo/normal/ORM set. A reflection probe rendered from inside the pit provides the
+  environment map, so cage steel and gunmetal actually read as metal.
+- **Shared material registry** (`src/materials.js`). Assets ship geometry only, with
+  materials named `TD_*`; the runtime binds the real textures. The whole arena runs
+  on about ten materials, and UVs are world-scaled so a wall and a crate show the
+  same size of aggregate.
+- **First-person arms** (`src/viewmodel.js`) wrapped around the same authored weapon
+  the world uses, with draw/reload/melee clips time-scaled to each weapon's own
+  durations and per-weapon grip pins for the support hand.
+- **Skinned fighters** (`src/fighter-rig.js`). One 20-bone skinned mesh with a
+  two-layer animation state machine: locomotion crossfades on a speed/stance graph,
+  and aim/fire/reload/throw/flinch layer over it as additive clips. Hitboxes are
+  invisible boxes parented to bones, so combat raycasts follow the animation and the
+  visual mesh is never the collision surface.
+- **Everything is reproducible output.** No `.blend` files, no hand-edited textures:
+  geometry comes from headless Blender scripts and textures from a Canvas2D bakery
+  that runs in headless Chrome.
+- **Audio ships no assets either** — every sound is synthesized with WebAudio
+  (per-weapon gunshots, crowd ambience that roars on kills, klaxons, ricochets), and
+  VULTURE's commentary is spoken through the Web Speech API.
+
+```sh
+npm run assets          # textures then models
+npm run assets:tex      # tools/textures/*.mjs  → public/assets/textures/*.webp
+npm run assets:models   # tools/blender/*.py    → public/assets/models/*.glb
+npm run assets:models -- fighter    # just one script
+```
+
+Look changes are reviewed by script rather than by eye-balling a running game:
+
+```sh
+npm run dev
+node tools/shot.mjs shots/arena.png --pose arena     # lighting reference frame
+node tools/shot.mjs shots/f.png --pose fighters      # character turntable
+node tools/shot.mjs shots/m.png --pose match         # live first-person frame
+node tools/shot.mjs shots/d.png --pose diag          # draw calls + scene report
+```
+
+Animations are verified by measurement rather than by eye, because a still frame
+cannot show snapping or an inverted axis:
+
+```sh
+npm run animcheck                    # every weapon, every action
+npm run animcheck -- --weapon rifle
+```
+
+To look at one yourself, boot into an empty arena with the loadout you need and
+nothing shooting back — `http://localhost:5173/?sandbox=rifle,shotgun`, or
+`__game.sandbox('rifle')` from the console.
 
 | File | What it is |
 | --- | --- |
 | `src/main.js` | Game state machine, match lifecycle, squads/ranks, events, economy, save |
+| `src/render.js` | Render pipeline: post-processing chain, quality tiers, reflection probe |
+| `src/materials.js` | Shared PBR material registry, world-scale UV projection, GLB material binding |
 | `src/player.js` | FPS controller: movement, ADS, recoil/bloom, limb-damage effects, viewmodel |
 | `src/input.js` | Gamepad polling, exponential stick curves, aim assist (friction + rotational pull) |
 | `src/touch.js` | Mobile touch UI: virtual thumbstick, drag-aim surface, action buttons |
-| `src/combatant.js` | Humanoid rigs with per-limb hitboxes + full squad AI (both teams) |
+| `src/fighter-rig.js` | Skinned fighter: animation state machine, additive upper body, bone hitboxes |
+| `src/combatant.js` | Squad AI for both teams, driving the rig above |
 | `src/combat.js` | Hitscan ballistics, spread, wall/capsule intersection, damage model |
 | `src/arena.js` | The pit: geometry, colliders, lighting rig, crowd, signage, flank gantries |
 | `src/nav.js` | Multi-layer 3D navmesh: per-surface nodes (floor + decks overlap), walk/drop links, A*, string-pulling |
-| `src/weapons.js` | Weapon stats + procedural viewmodels |
+| `src/weapons.js` | Weapon stats, authored models, moving-part animation |
+| `src/viewmodel.js` | First-person arms: clip state machine, per-weapon grip pins |
 | `src/fx.js` | Pooled particles, tracers, muzzle flash, blood decals |
 | `src/announcer.js` | VULTURE's commentary library and ticker |
 | `src/ui.js` | HUD, body-damage diagram, killfeed, shop, screens |
 | `src/audio.js` | Synthesized audio engine |
+| `tools/blender/` | Headless Blender authoring: shared library, arena props, fighter, weapons |
+| `tools/textures/` | Canvas2D PBR texture bakery, run in headless Chrome |
+| `tools/shot.mjs` | Scripted visual capture harness and its poses |
+| `tools/animcheck.mjs` | Animation test bed: snapping, hand reach and recoil direction |
 
-Debug: `window.__game` exposes `{world, match, player, phase, career, step(dt, n), setLocked(v)}`
-for headless simulation of match frames.
+Debug: `window.__game` exposes `{world, match, player, phase, career, renderer, camera,
+scene, pipeline, stats, step(dt, n), setLocked(v), setQuality(tier), fight(mode, rank),
+freeCam(pos, look)}` for headless simulation and capture. `__game.stats` reports the
+live quality tier, render scale, draw calls and render time.
 
 ## Gameplay analytics
 
@@ -119,3 +181,18 @@ To inspect a day without copying it out of the volume:
 ```sh
 docker exec thunderdome_analytics sh -c 'tail -n 20 /data/events-$(date -u +%F).ndjson'
 ```
+
+### Private synthetic Liquidation wars
+
+The repository also has a Node-only simulation harness. It is not imported by the
+website or included in the browser build. Two copies of the Liquidation bot shop
+against one shared market, fight a seeded event-level combat model, and persist the
+strategy and combat stream for offline analysis.
+
+```sh
+npm run simulate:liquidation -- --matches 10 --seed 20260730
+```
+
+Each batch is written under `data/synthetic-liquidation/` as raw `events.ndjson`,
+per-war results, a JSON aggregate, and a ten-war Markdown report. Use `--output`
+to put batches on a persistent analysis volume.

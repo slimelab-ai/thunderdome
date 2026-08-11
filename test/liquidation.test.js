@@ -4,8 +4,12 @@ import { LiquidationMarket, CircuitMarket } from '../src/market.js';
 import { makeItem } from '../src/items.js';
 import {
   newLiquidationState, fundDraftRound, runLiquidationAI, suggestedLiquidationBankroll,
-  liquidationOdds, liquidationBetOptions, resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
+  liquidationOdds, liquidationBetOptions, liquidationCreditLimit, canPlaceLiquidationBet,
+  recordLiquidationOutcome, liquidationRiskModel, liquidationReserveTarget,
+  resupplyLiquidation, draftCanCoverDebt, allocateRivalSupply,
   recordMarketRound, recordMarketTrade, enemyRoster, commitPlayerDraftTurn,
+  liquidationRivalStake,
+  rivalSquadReadiness,
 } from '../src/liquidation.js';
 
 test('shared AMM raises price under demand and returns sold stock', () => {
@@ -16,6 +20,20 @@ test('shared AMM raises price under demand and returns sold stock', () => {
   const refund = market.sell(makeItem('ammo_9mm'));
   assert.ok(Math.abs(refund - paid) <= 1, '100% live quote has no fixed-price haircut');
   assert.equal(market.info('ammo_9mm').units, market.info('ammo_9mm').initial);
+});
+
+test('series quotes exactly match the cost of sequential market buys', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const quoted = market.quoteBuySeries('ammo_9mm', 3);
+  const paid = market.buy('ammo_9mm') + market.buy('ammo_9mm') + market.buy('ammo_9mm');
+  assert.equal(quoted, paid);
+
+  const circuit = new CircuitMarket();
+  const multiplier = 1.22;
+  assert.equal(
+    circuit.quoteBuySeries('ammo_9mm', 3, multiplier),
+    circuit.quoteBuy('ammo_9mm', 1, multiplier) * 3
+  );
 });
 
 test('each recruit archetype has an independent Liquidation AMM pool', () => {
@@ -88,20 +106,33 @@ test('enemy-first draft shops immediately and does not require a player commit',
   assert.equal(rivalTurns, 1);
 });
 
-test('rival begins with one fighter and buys every additional contract from the AMM', () => {
+test('rival treats starter pistol contracts as efficient fieldable expansion', () => {
   const market = new LiquidationMarket(null, () => 0.5);
   const state = newLiquidationState(20000, () => 0.5);
   assert.deepEqual(state.enemy.recruits, ['enforcer']);
   assert.equal(enemyRoster(state).length, 1);
   fundDraftRound(state, 0);
-  for (let i = 0; i < 8; i++) runLiquidationAI(state, market);
+  for (let i = 0; i < 12; i++) runLiquidationAI(state, market);
   assert.equal(state.enemy.recruits.length, 3);
-  assert.equal(enemyRoster(state).length, 3);
+  assert.ok(enemyRoster(state).every(fighter => fighter.ammo > 0));
   const hires = state.marketLog.filter(entry => entry.kind === 'trade' && entry.side === 'rival' && entry.action === 'hire');
   assert.equal(hires.length, 2);
-  assert.deepEqual(hires.map(entry => entry.label), ['MEDIC CONTRACT', 'RUSHER CONTRACT']);
-  assert.equal(market.recruitInfo('medic').units, market.recruitInfo('medic').initial - 1);
-  assert.equal(market.recruitInfo('rusher').units, market.recruitInfo('rusher').initial - 1);
+  assert.ok(hires.every(entry => entry.label.includes('SIDEARM KIT')));
+});
+
+test('rival answers a five-person player squad with pistol contracts before gun upgrades', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 2000;
+  state.draft.fundedRounds = 1;
+  for (let i = 0; i < 8; i++) runLiquidationAI(state, market, {
+    opponentPower: 500, opponentRoster: 5, expectedStake: 250,
+  });
+  // The player can spend below the current stake and borrow; the conservative
+  // rival still protects its $250 stake, so it fields four rather than five.
+  assert.equal(state.enemy.recruits.length, 4);
+  assert.equal(rivalSquadReadiness(state).fieldable, 4);
+  assert.ok(enemyRoster(state).every(fighter => fighter.w === 'pistol' && fighter.ammo > 0));
 });
 
 test('the next draft envelope protects only a recoverable deficit', () => {
@@ -139,6 +170,144 @@ test('rival buyer deliberately stocks grenades, medkits, and splints', () => {
   assert.ok(rivalBuys.some(entry => entry.type === 'splint'));
 });
 
+test('rival liquidates market assets to escape insolvency before buying again', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = -500;
+  state.enemy.inventory = { rifle: 1, ammo_762: 1, medkit: 2 };
+  const before = market.info('medkit').units;
+  const decision = runLiquidationAI(state, market, { liquidationOnly: true });
+  assert.equal(decision.kind, 'sell');
+  assert.equal(decision.reason, 'avoid_insolvency');
+  assert.ok(state.enemyMoney > -500);
+  assert.ok(market.info(decision.type).units > (decision.type === 'medkit' ? before : market.info(decision.type).initial));
+});
+
+test('rival roster assigns only owned guns and compatible ammunition', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemy.recruits = ['enforcer', 'medic', 'rusher'];
+  state.enemy.inventory = { rifle: 1, smg: 1, ammo_762: 1, ammo_9mm: 2 };
+  const roster = enemyRoster(state);
+  assert.deepEqual(roster.map(fighter => fighter.w), ['rifle', 'smg', 'pistol']);
+  assert.ok(roster.every(fighter => fighter.ammo > 0));
+});
+
+test('rival keeps an off-strategy usable gun and restores whole-squad DPS before reserving cash', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemy.strategy = 'rifle';
+  state.enemyMoney = 2285;
+  state.enemyLossStreak = 1;
+  state.draft.fundedRounds = 2;
+  state.enemy.inventory = { smg: 1, ammo_9mm: 0, ammo_762: 1 };
+  for (let i = 0; i < 7; i++) market.buy('ammo_9mm');
+
+  assert.equal(rivalSquadReadiness(state).fieldable, 0);
+  const decision = runLiquidationAI(state, market, { opponentPower: 500, expectedStake: 250 });
+  assert.equal(decision.kind, 'buy');
+  assert.equal(decision.type, 'ammo_9mm');
+  assert.equal(decision.priority, 'combat_readiness');
+  assert.equal(rivalSquadReadiness(state).fieldable, 1);
+  assert.equal(enemyRoster(state)[0].w, 'smg');
+  assert.ok(decision.readinessAfter.squadDps > decision.readinessBefore.squadDps);
+});
+
+test('rival buys a complete reinforcement package through an impossible future reserve', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 2410;
+  state.enemyLossStreak = 3;
+  state.draft.fundedRounds = 4;
+  state.enemy.inventory = { smg: 1, ammo_9mm: 1 };
+
+  const risk = liquidationRiskModel(state, { opponentPower: 600, expectedStake: 250 });
+  assert.ok(risk.reserveTarget > state.enemyMoney);
+  const decision = runLiquidationAI(state, market, { opponentPower: 600, expectedStake: 250 });
+  assert.equal(decision.kind, 'hire');
+  assert.equal(decision.priority, 'combat_readiness');
+  assert.equal(state.enemy.recruits.length, 2);
+  assert.ok(state.enemyMoney >= 250);
+});
+
+test('rival does not sell and rebuy the same speculative supply in one round', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 10000;
+  state.enemy.inventory = {
+    smg: 1, ammo_9mm: 1, medkit: 1, grenade: 2, splint: 1,
+  };
+  recordMarketTrade(state, 'rival', 'sell', 'medkit', market.quoteSell(makeItem('medkit')));
+  const decision = runLiquidationAI(state, market);
+  assert.notEqual(decision.type, 'medkit');
+});
+
+test('doctrine changes never liquidate ammunition required by usable off-plan guns', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemy.strategy = 'rifle';
+  state.enemyMoney = 100;
+  state.enemyLossStreak = 2;
+  state.enemy.recruits = ['enforcer', 'medic'];
+  state.enemy.inventory = { smg: 2, ammo_9mm: 2, medkit: 2 };
+  const decision = runLiquidationAI(state, market, { opponentPower: 400, expectedStake: 250 });
+  assert.equal(decision.kind, 'sell');
+  assert.equal(decision.type, 'medkit');
+  assert.equal(state.enemy.inventory.ammo_9mm, 2);
+  assert.equal(rivalSquadReadiness(state).fieldable, 2);
+});
+
+test('rival reserve responds to confidence, loss exposure, win income, and remaining draft income', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.draft.fundedRounds = 9;
+  state.enemyMoney = 2500;
+  const even = liquidationRiskModel(state, { opponentPower: 100, expectedStake: 250 });
+  assert.equal(even.confidence, 0.5);
+  assert.equal(even.remainingDraftIncome, 2000);
+  assert.equal(even.reserveTarget, 2100);
+  const favored = liquidationRiskModel(state, { opponentPower: 25, expectedStake: 250 });
+  const underdog = liquidationRiskModel(state, { opponentPower: 800, expectedStake: 250 });
+  assert.ok(favored.confidence > even.confidence);
+  assert.ok(favored.reserveTarget < even.reserveTarget);
+  assert.ok(underdog.confidence < even.confidence);
+  assert.ok(underdog.reserveTarget > even.reserveTarget);
+
+  let decision;
+  for (let i = 0; i < 20; i++) decision = runLiquidationAI(state, market, {
+    opponentPower: 100, expectedStake: 250,
+  });
+  assert.ok(state.enemyMoney >= 250);
+  assert.ok(['hold', 'buy'].includes(decision.kind));
+  assert.ok(enemyRoster(state).every(fighter => fighter.ammo > 0));
+  assert.deepEqual(decision.risk, liquidationRiskModel(state, {
+    opponentPower: 100, expectedStake: 250,
+  }));
+
+  state.draft.fundedRounds = 10;
+  state.draft.complete = true;
+  state.enemyLossStreak = 2;
+  assert.ok(liquidationReserveTarget(state, { opponentPower: 100, expectedStake: 250 }) >= 3000);
+});
+
+test('losing underdog invests unattainable reserve in field power but keeps the next stake', () => {
+  const market = new LiquidationMarket(null, () => 0.5);
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 650;
+  state.enemyLossStreak = 3;
+  state.draft.fundedRounds = 4;
+  state.enemy.recruits = ['enforcer', 'medic', 'rusher'];
+  state.enemy.inventory = { smg: 3, ammo_9mm: 3 };
+
+  const risk = liquidationRiskModel(state, { opponentPower: 900, expectedStake: 250 });
+  assert.ok(risk.reserveTarget > state.enemyMoney);
+  const decision = runLiquidationAI(state, market, { opponentPower: 900, expectedStake: 250 });
+  assert.equal(decision.kind, 'buy');
+  assert.equal(decision.type, 'medkit');
+  assert.equal(decision.comebackMode, true);
+  assert.equal(decision.strategicFloor, 250);
+  assert.ok(state.enemyMoney >= 250);
+});
+
 test('public market tape records both sides and separates rounds', () => {
   const state = newLiquidationState(20000, () => 0.5);
   recordMarketTrade(state, 'player', 'buy', 'rifle', 1500);
@@ -154,6 +323,18 @@ test('public market tape records both sides and separates rounds', () => {
   assert.equal(state.marketLog[4].amount, 1600);
 });
 
+test('market tape keeps delayed actions at the tail under an explicit round header', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  state.round = 2;
+  recordMarketTrade(state, 'rival', 'buy', 'rifle', 1500);
+  state.round = 1;
+  recordMarketTrade(state, 'player', 'buy', 'ammo_9mm', 55);
+  assert.deepEqual(state.marketLog.slice(-2), [
+    { kind: 'round', round: 1 },
+    { kind: 'trade', round: 1, side: 'player', action: 'buy', type: 'ammo_9mm', amount: 55 },
+  ]);
+});
+
 test('rival supplies are divided across fighters without duplication', () => {
   const inventory = { grenade: 5 };
   const shares = Array.from({ length: 3 }, (_, i) => allocateRivalSupply(inventory, 'grenade', i, 3));
@@ -165,8 +346,35 @@ test('underdog sees comeback odds and can raise the stake', () => {
   const state = newLiquidationState(20000, () => 0.5);
   state.enemyMoney = 20000;
   assert.ok(liquidationOdds(state, 5000) > 2);
-  assert.deepEqual(liquidationBetOptions(state, 5000), [250, 500, 1250, 2500]);
-  assert.deepEqual(liquidationBetOptions(state, 100), [250]);
+  assert.deepEqual(liquidationBetOptions(state, 5000), [250, 500, 1250, 2500, 5000, 2000, 4000]);
+  assert.deepEqual(liquidationBetOptions(state, 100), [250, 2000, 4000]);
+  assert.equal(liquidationCreditLimit(state, 100), 4100);
+  assert.equal(canPlaceLiquidationBet(state, 100, 4000), true);
+  assert.equal(canPlaceLiquidationBet(state, 100, 5000), false);
+  state.draft.complete = true;
+  assert.equal(liquidationCreditLimit(state, 100), 250);
+  assert.equal(canPlaceLiquidationBet(state, 100, 4000), false);
+});
+
+test('rival chooses its own conservative stake instead of mirroring player leverage', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  state.enemyMoney = 2000;
+  state.draft.fundedRounds = 1;
+  const decision = liquidationRivalStake(state, { opponentPower: 100, expectedStake: 250 });
+  assert.equal(decision.amount, 250);
+  assert.ok(decision.amount < 4000);
+});
+
+test('consecutive defeats escalate until the next envelope cannot rescue a broke squad', () => {
+  const state = newLiquidationState(20000, () => 0.5);
+  fundDraftRound(state, 0);
+  assert.deepEqual(recordLiquidationOutcome(state, false), { loser: 'player', streak: 1, penalty: 0 });
+  assert.deepEqual(recordLiquidationOutcome(state, false), { loser: 'player', streak: 2, penalty: 1000 });
+  const third = recordLiquidationOutcome(state, false);
+  assert.deepEqual(third, { loser: 'player', streak: 3, penalty: 2000 });
+  assert.equal(draftCanCoverDebt(state, -250 - third.penalty), false);
+  assert.deepEqual(recordLiquidationOutcome(state, true), { loser: 'rival', streak: 1, penalty: 0 });
+  assert.equal(state.playerLossStreak, 0);
 });
 
 test('every third completed round resupplies only shared consumables and ammo', () => {

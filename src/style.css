@@ -21,6 +21,29 @@ html, body {
 
 #app, #app canvas { position: fixed; inset: 0; }
 
+#graphics-startup-failure {
+  position: fixed; inset: 0; z-index: 10000; overflow: auto;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: clamp(28px, 7vw, 90px); background:
+    radial-gradient(circle at 75% 20%, rgba(227,36,43,0.18), transparent 38%),
+    #09090c; color: #eee;
+}
+#graphics-startup-failure .graphics-failure-eyebrow {
+  color: var(--blood); font: 800 12px/1.4 monospace; letter-spacing: 2px;
+}
+#graphics-startup-failure h1 {
+  max-width: 900px; margin: 10px 0 18px;
+  font: 700 clamp(30px, 6vw, 70px)/0.98 Impact, "Arial Black", sans-serif;
+  letter-spacing: 2px;
+}
+#graphics-startup-failure p,
+#graphics-startup-failure ol,
+#graphics-startup-failure strong { max-width: 760px; font-size: clamp(16px, 2.2vw, 24px); line-height: 1.45; }
+#graphics-startup-failure ol { margin: 22px 0 20px 1.5em; }
+#graphics-startup-failure li { margin: 8px 0; padding-left: 8px; }
+#graphics-startup-failure strong { color: var(--gold); }
+#graphics-startup-failure small { max-width: 760px; margin-top: 28px; color: #777; font: 11px/1.4 monospace; }
+
 .hidden { display: none !important; }
 .dim { opacity: 0.5; font-weight: normal; font-size: 11px; }
 
@@ -295,6 +318,61 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .game-title span { color: var(--blood); text-shadow: 0 4px 0 #000, 0 0 40px rgba(227,36,43,0.8); }
 .menu-tagline { color: #b9b9c2; margin: 14px 0 30px; font-style: italic; }
 .menu-buttons { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin-bottom: 18px; }
+.xbox-controller-help {
+  display: none; max-width: 720px; margin: -4px auto 18px; padding: 10px 14px;
+  border: 1px solid rgba(255,185,46,0.65); border-radius: 4px;
+  background: rgba(34,25,8,0.88); color: #d7c79f;
+  font-size: 12px; line-height: 1.45; letter-spacing: 0.4px;
+}
+.xbox-browser .xbox-controller-help { display: block; }
+.xbox-controller-help b { display: block; margin-bottom: 3px; color: var(--gold); letter-spacing: 1.4px; }
+.xbox-controller-help strong { color: #fff; }
+.diagnostic-session-label {
+  position: fixed; left: 7px; bottom: 6px; z-index: 240;
+  width: fit-content; padding: 2px 4px; pointer-events: none;
+  border: 0; border-radius: 2px;
+  background: rgba(5,7,8,0.34); color: rgba(185,195,185,0.52);
+  font: 600 6px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.55px;
+}
+.loading-screen { z-index: 180; overflow: hidden; }
+.loading-screen::before {
+  content: ""; position: absolute; inset: -20%;
+  background: repeating-linear-gradient(105deg, transparent 0 70px, rgba(227,36,43,0.035) 72px 74px);
+  animation: loading-drift 7s linear infinite;
+}
+.loading-card {
+  position: relative; width: min(680px, 86vw); padding: 42px 44px; text-align: center;
+  border: 1px solid rgba(255,185,46,0.42); border-top: 4px solid var(--blood);
+  background: rgba(8,8,12,0.94); box-shadow: 0 24px 90px #000, inset 0 0 80px rgba(227,36,43,0.06);
+}
+.loading-kicker { color: var(--gold); font-size: 11px; letter-spacing: 4px; }
+.loading-card h2 { margin: 12px 0 22px; font: 54px/.95 Impact, "Arial Black", sans-serif; letter-spacing: 4px; }
+.loading-meter { height: 7px; margin: 0 0 18px; overflow: hidden; border: 1px solid #3c3c47; background: #111117; }
+.loading-meter i {
+  display: block; width: 8%; height: 100%;
+  background: linear-gradient(90deg, var(--blood), var(--gold));
+  transition: width .18s ease;
+  animation: loading-meter-pulse .7s ease-in-out infinite alternate;
+}
+.loading-card b, .loading-card span, .loading-card small { display: block; }
+.loading-card b { color: #fff; font-size: 14px; letter-spacing: 2px; }
+.loading-card span { margin-top: 6px; color: #aaaab4; font-size: 11px; letter-spacing: 1.4px; }
+.loading-card small { margin-top: 24px; color: #777784; font-size: 10px; line-height: 1.5; }
+@keyframes loading-drift { to { transform: translateX(74px); } }
+@keyframes loading-meter-pulse { from { opacity: 0.58; } to { opacity: 1; } }
+
+#range-panel {
+  position: absolute; top: 20px; right: 22px; min-width: 250px; padding: 10px 14px;
+  border: 1px solid rgba(255,185,46,.55); border-left: 4px solid var(--gold);
+  background: rgba(5,5,8,.82); text-align: right; text-shadow: 0 2px 4px #000;
+}
+#range-panel b, #range-panel span, #range-panel small { display: block; }
+#range-panel b { color: var(--gold); letter-spacing: 2px; }
+#range-panel span { margin-top: 3px; color: #eee; font-size: 11px; }
+#range-panel small { margin-top: 4px; color: #8d8d98; font-size: 9px; letter-spacing: .6px; }
+.keyboard-only { display: inline; }
+.controller-mode .keyboard-only { display: none; }
 .menu-controls { font-size: 13px; color: #8a8a94; line-height: 2; }
 .menu-controls b { color: #ddd; background: #1c1c26; padding: 1px 7px; border-radius: 3px; border: 1px solid #333; font-size: 11px; }
 .menu-warn { margin-top: 14px; color: #c0605f; font-style: italic; font-size: 12px; }
@@ -305,6 +383,41 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
   background: linear-gradient(135deg, rgba(24,22,22,0.94), rgba(12,12,18,0.94));
   box-shadow: inset 0 1px rgba(255,255,255,0.04);
 }
+#touch-settings {
+  display: none;
+  margin: 0 auto 14px; padding: 12px 14px 14px; max-width: 820px;
+  text-align: left; border: 1px solid rgba(227,36,43,0.32); border-radius: 7px;
+  background: linear-gradient(135deg, rgba(27,16,18,0.95), rgba(12,12,18,0.94));
+}
+body.touch-mode #touch-settings { display: block; }
+.touch-settings-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
+}
+.touch-settings-head b { display: block; color: #ff7277; font-size: 13px; letter-spacing: 2px; }
+.touch-settings-head span { display: block; margin-top: 2px; color: #858590; font-size: 11px; }
+.touch-settings-head .btn { padding: 6px 11px; font-size: 10px; }
+.touch-layout-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.touch-layout-option {
+  min-width: 0; padding: 10px; text-align: left; color: #aaaab4;
+  border: 1px solid #393943; border-radius: 6px; background: rgba(4,4,7,0.62);
+  cursor: pointer;
+}
+.touch-layout-option b { display: block; color: #e6e6eb; font-size: 11px; letter-spacing: 1.5px; }
+.touch-layout-option span { display: block; margin-top: 4px; font-size: 9px; line-height: 1.35; }
+.touch-layout-option.selected {
+  color: #fff; border-color: var(--blood); background: rgba(227,36,43,0.19);
+  box-shadow: inset 0 0 0 1px rgba(255,110,115,0.12);
+}
+.touch-layout-option.selected b { color: #ff7b80; }
+.touch-assist-control { display: grid; gap: 3px; margin-top: 11px; }
+.touch-assist-control > span {
+  display: flex; justify-content: space-between; color: #c9c9d0;
+  font-size: 10px; font-weight: 900; letter-spacing: 1.2px;
+}
+.touch-assist-control output { color: var(--acid); }
+.touch-assist-control input { width: 100%; accent-color: var(--blood); }
+.touch-assist-control small { color: #70707a; font-size: 9px; }
 .controller-settings-head {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--line);
@@ -364,6 +477,7 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .settings-dialog-head > div > span { color: var(--blood); font-size: 9px; font-weight: 900; letter-spacing: 2px; }
 .settings-dialog h2 { margin: 2px 0 0; font: 900 clamp(34px, 5vw, 56px)/1 Impact, sans-serif; letter-spacing: 3px; }
 .settings-dialog #controller-settings { max-width: none; margin-bottom: 0; }
+.settings-dialog #touch-settings { max-width: none; }
 .settings-controller-guide {
   width: 100%; justify-content: center; align-items: center; gap: 5px;
   margin-top: 12px; color: #8c8c96; font-size: 9px; font-weight: 900;
@@ -457,7 +571,7 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 }
 #next-bout b { color: var(--blood); font-size: 16px; }
 #market-tape {
-  padding: 5px 8px 8px;
+  max-height: min(240px, 28vh); overflow-y: auto; padding: 5px 8px 8px;
   border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; background: rgba(4,4,6,0.76);
   scrollbar-color: #4b4b55 transparent; scrollbar-width: thin;
 }
@@ -503,6 +617,23 @@ body.controller-carrying [data-controller-target] { cursor: crosshair; }
 .shop-turn-status.turn-open { color: var(--gold); }
 .shop-turn-status.turn-second { color: var(--acid); }
 .shop-turn-status.turn-committed { color: #ff777c; }
+.squad-auto-actions {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px; margin-bottom: 9px;
+}
+.squad-auto-btn {
+  min-width: 0; padding: 7px 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 7px;
+  text-align: left;
+}
+.squad-auto-btn > span { min-width: 0; display: grid; gap: 2px; }
+.squad-auto-btn b { font-size: 9px; letter-spacing: 0.8px; white-space: nowrap; }
+.squad-auto-btn small {
+  overflow: hidden; color: #7f7f89; font-size: 6px; font-weight: 800;
+  letter-spacing: 0.35px; line-height: 1.2;
+}
+.squad-auto-btn strong { flex: none; color: var(--gold); font-size: 11px; }
+.squad-auto-btn:disabled strong { color: #686872; }
 #screen-shop.turn-locked .shop-cols button,
 #screen-shop.turn-locked .shop-cols .inv-item,
 #screen-shop.turn-locked #sell-bin {
@@ -864,8 +995,31 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
 #touch-ui {
   position: fixed; inset: 0; z-index: 15;
   touch-action: none; -webkit-user-select: none;
+  --touch-safe-top: max(10px, env(safe-area-inset-top));
+  --touch-safe-right: max(12px, env(safe-area-inset-right));
+  --touch-safe-bottom: max(12px, env(safe-area-inset-bottom));
+  --touch-safe-left: max(12px, env(safe-area-inset-left));
 }
 #app canvas { touch-action: none; }
+
+/* A one-time affordance shows the deliberately empty aim surface, then fades. */
+#t-look-hint {
+  position: absolute;
+  left: 46%; right: 118px; top: 24%; bottom: 24%;
+  display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-left-color: transparent; border-right-color: transparent;
+  opacity: 0; pointer-events: none;
+}
+#touch-ui.show-look-hint #t-look-hint { animation: touch-look-hint 3.8s ease-out forwards; }
+#t-look-hint span {
+  color: rgba(255,255,255,0.28); font-size: 9px; font-weight: 800;
+  letter-spacing: 2.5px; text-shadow: 0 1px 4px #000;
+}
+@keyframes touch-look-hint {
+  0%, 55% { opacity: 1; }
+  100% { opacity: 0; }
+}
 
 /* virtual movement stick (appears under the thumb) */
 #t-stick {
@@ -881,32 +1035,148 @@ body.dragging #sell-bin { border-color: var(--gold); color: var(--gold); }
 
 .t-btn {
   position: absolute; border-radius: 50%;
-  background: rgba(0,0,0,0.42); border: 2px solid rgba(255,255,255,0.28);
+  box-sizing: border-box; padding: 0;
+  background: rgba(8,10,12,0.48); border: 1.5px solid rgba(255,255,255,0.3);
   color: rgba(255,255,255,0.9); font-weight: 800; font-size: 11px; letter-spacing: 1px;
   display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.32), inset 0 0 12px rgba(255,255,255,0.025);
   -webkit-tap-highlight-color: transparent;
 }
-.t-btn.press, .t-btn.on { background: rgba(227,36,43,0.45); border-color: var(--blood); }
-
-#t-fire {
-  width: 92px; height: 92px; right: 118px; bottom: 62px; font-size: 14px;
-  border-color: rgba(227,36,43,0.6); background: rgba(227,36,43,0.22);
+.t-btn.t-square { border-radius: 11px; }
+.t-btn.press {
+  background: rgba(227,36,43,0.58); border-color: rgba(255,106,111,0.9);
+  transform: scale(0.93);
 }
-#t-jump   { width: 68px; height: 68px; right: 28px;  bottom: 50px; }
-#t-ads    { width: 60px; height: 60px; right: 34px;  bottom: 150px; }
-#t-reload { width: 54px; height: 54px; right: 134px; bottom: 178px; }
-#t-nade   { width: 54px; height: 54px; right: 212px; bottom: 146px; font-size: 20px; }
-#t-crouch { width: 52px; height: 52px; right: 228px; bottom: 34px; }
-#t-swap   { width: 52px; height: 52px; right: 296px; bottom: 34px; }
-#t-knife  { width: 48px; height: 48px; right: 284px; bottom: 104px; font-size: 18px; }
-#t-med    { width: 46px; height: 46px; right: 16px;  bottom: 232px; color: var(--acid); }
-#t-splint { width: 46px; height: 46px; right: 16px;  bottom: 292px; font-size: 16px; }
-#t-pause  { width: 46px; height: 38px; right: 14px;  top: 12px; border-radius: 8px; }
+.t-btn.on {
+  background: rgba(227,36,43,0.42); border-color: var(--blood);
+  box-shadow: 0 0 0 2px rgba(227,36,43,0.18), 0 2px 12px rgba(0,0,0,0.32);
+}
+
+/*
+ * Keep the middle-right of the screen empty for camera control. Primary
+ * actions hug the thumb arcs; low-frequency inventory actions use the top
+ * bezel. Both fire controls remain available in every layout.
+ */
+.t-fire-btn {
+  width: 78px; height: 78px;
+  font-size: 13px; border-width: 2px;
+  border-color: rgba(255,82,89,0.72); background: rgba(227,36,43,0.24);
+}
+.t-fire-btn span { display: grid; gap: 2px; place-items: center; }
+.t-fire-btn small { font-size: 7px; letter-spacing: 1.5px; color: rgba(255,255,255,0.56); }
+#touch-ui[data-layout="thumbs"] #t-fire {
+  right: clamp(86px, 11vw, 126px); top: clamp(138px, 46%, 270px);
+}
+#touch-ui[data-layout="thumbs"] #t-fire-left {
+  left: var(--touch-safe-left); top: clamp(132px, 42%, 250px);
+}
+#touch-ui[data-layout="left"] #t-fire {
+  width: 64px; height: 64px; opacity: 0.82;
+  right: clamp(80px, 10vw, 116px); top: clamp(146px, 48%, 280px);
+}
+#touch-ui[data-layout="left"] #t-fire-left {
+  width: 88px; height: 88px;
+  left: var(--touch-safe-left); top: clamp(128px, 39%, 238px);
+}
+#touch-ui[data-layout="claw"] #t-fire {
+  width: 68px; height: 68px;
+  right: clamp(80px, 10vw, 116px); top: clamp(146px, 48%, 280px);
+}
+#touch-ui[data-layout="claw"] #t-fire-left {
+  width: 72px; height: 48px; left: calc(var(--touch-safe-left) + 120px);
+  top: var(--touch-safe-top); border-radius: 11px;
+}
+#t-ads {
+  width: 58px; height: 58px;
+  right: calc(var(--touch-safe-right) + 12px); top: clamp(52px, calc(37% - 76px), 154px);
+}
+#t-reload {
+  width: 50px; height: 50px;
+  right: calc(var(--touch-safe-right) + 16px); top: clamp(208px, calc(37% + 94px), 326px);
+}
+#t-jump {
+  width: 64px; height: 64px;
+  right: var(--touch-safe-right); bottom: var(--touch-safe-bottom);
+}
+#t-crouch {
+  width: 52px; height: 52px;
+  right: calc(var(--touch-safe-right) + 76px); bottom: calc(var(--touch-safe-bottom) + 2px);
+}
+
+#t-pause {
+  width: 44px; height: 38px;
+  right: var(--touch-safe-right); top: var(--touch-safe-top);
+}
+#t-swap {
+  width: 48px; height: 42px;
+  right: calc(var(--touch-safe-right) + 58px); top: var(--touch-safe-top);
+  font-size: 9px;
+}
+#t-knife {
+  width: 46px; height: 42px;
+  right: calc(var(--touch-safe-right) + 120px); top: var(--touch-safe-top);
+  font-size: 17px;
+}
+#t-nade {
+  width: 46px; height: 42px;
+  right: calc(var(--touch-safe-right) + 180px); top: var(--touch-safe-top);
+  font-size: 17px;
+}
+#t-med {
+  width: 46px; height: 46px;
+  left: var(--touch-safe-left); top: var(--touch-safe-top); color: var(--acid);
+}
+#t-splint {
+  width: 46px; height: 46px;
+  left: calc(var(--touch-safe-left) + 58px); top: var(--touch-safe-top); font-size: 16px;
+}
+
+.t-lean {
+  width: 58px; height: 42px;
+  border-radius: 10px; gap: 5px; font-size: 9px;
+}
+.t-lean b { font-size: 22px; line-height: 1; font-weight: 500; }
+#t-lean-left {
+  left: auto; right: calc(var(--touch-safe-right) + 70px);
+  bottom: calc(var(--touch-safe-bottom) + 66px);
+}
+#t-lean-right {
+  left: auto; right: var(--touch-safe-right);
+  bottom: calc(var(--touch-safe-bottom) + 76px);
+}
 
 /* keep the existing HUD out from under thumbs on touch devices */
 body.touch-mode #killfeed { top: 62px; }
-body.touch-mode #hud-bottomright { bottom: 246px; right: 16px; transform: scale(0.85); transform-origin: bottom right; }
-body.touch-mode #hud-bottomleft { transform: scale(0.85); transform-origin: bottom left; }
+body.touch-mode #hud-bottomright {
+  bottom: max(88px, calc(env(safe-area-inset-bottom) + 76px)); right: 20px;
+  transform: scale(0.78); transform-origin: bottom right;
+}
+body.touch-mode #hud-bottomleft {
+  bottom: max(88px, calc(env(safe-area-inset-bottom) + 76px));
+  transform: scale(0.78); transform-origin: bottom left;
+}
+
+@media (max-height: 430px) {
+  #touch-ui { --touch-scale: 0.88; }
+  .t-fire-btn { width: 70px; height: 70px; }
+  #touch-ui[data-layout="thumbs"] #t-fire { top: 43%; }
+  #touch-ui[data-layout="thumbs"] #t-fire-left { top: 39%; }
+  #touch-ui[data-layout="left"] #t-fire { width: 58px; height: 58px; top: 45%; }
+  #touch-ui[data-layout="left"] #t-fire-left { width: 78px; height: 78px; top: 36%; }
+  #touch-ui[data-layout="claw"] #t-fire { width: 62px; height: 62px; top: 45%; }
+  #touch-ui[data-layout="claw"] #t-fire-left { width: 66px; height: 42px; top: var(--touch-safe-top); }
+  #t-ads { width: 52px; height: 52px; top: calc(35% - 62px); }
+  #t-reload { width: 46px; height: 46px; top: calc(35% + 80px); }
+  #t-jump { width: 58px; height: 58px; }
+  #t-crouch { width: 48px; height: 48px; right: calc(var(--touch-safe-right) + 68px); }
+  .t-lean { width: 54px; height: 38px; }
+  #t-lean-left { right: calc(var(--touch-safe-right) + 64px); bottom: calc(var(--touch-safe-bottom) + 60px); }
+  #t-lean-right { bottom: calc(var(--touch-safe-bottom) + 68px); }
+}
+
+@media (max-width: 700px) {
+  .touch-layout-options { grid-template-columns: 1fr; }
+}
 
 /* spectating (touch): collapse the control cluster to just pause; taps cycle fighters */
 #touch-ui.spectating .t-btn { display: none; }
@@ -980,7 +1250,15 @@ body.touch-mode .spec-hint-touch { display: inline; }
   .executed-pre { letter-spacing: 3px; }
 }
 
-@media (max-width: 1050px) and (orientation: landscape) {
+@media (max-width: 1200px) and (orientation: landscape) {
+  .menu-inner { width: min(100%, 920px); padding: 10px 14px; }
+  .game-title { font-size: clamp(52px, 8vw, 72px); line-height: 0.92; }
+  .menu-pretitle { margin-bottom: 4px; }
+  .menu-tagline { margin: 8px 0 14px; }
+  .menu-buttons { gap: 8px; margin-bottom: 10px; }
+  .menu-buttons .btn { padding: 9px 15px; }
+  .xbox-controller-help { margin: 0 auto 10px; padding: 7px 11px; }
+  .menu-controls { font-size: 10px; line-height: 1.55; }
   #screen-shop { padding: 0; }
   .shop-inner { height: 100dvh; padding: 7px 10px; overflow: hidden; }
   .shop-header {
@@ -1119,3 +1397,44 @@ body.touch-mode .spec-hint-touch { display: inline; }
   }
   #spectator-banner { top: 58px; min-width: 0; width: min(310px, 58vw); padding: 6px 9px; }
 }
+
+/* The magazine as rounds, and the chambered one on its own.
+   A number cannot show the two things the handling model actually turns on: that the
+   round in the chamber is not in the magazine, and that during a magazine change it is
+   the only round in the gun. The strip is read at a glance, never counted. */
+#ammo-rounds {
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  gap: 7px; margin-bottom: 5px; min-height: 21px;
+}
+#ammo-mag-rounds {
+  display: flex; flex-wrap: wrap-reverse; justify-content: flex-end; align-items: flex-end;
+  /* Wide enough for the biggest magazine in the game (the SMG's 32) on one row:
+     32 x 4px + 31 x 2px. A strip that wraps two rounds onto a second row reads as a
+     glitch rather than as a quantity. */
+  gap: 2px; max-width: 190px;
+  transition: opacity 0.12s linear;
+}
+/* Magazine out of the well. Dimmed rather than emptied: those rounds are not spent,
+   they are in the player's other hand — and none of them can be fired. */
+#ammo-mag-rounds.out { opacity: 0.16; }
+.rnd {
+  display: block; width: 4px; height: 13px; border-radius: 2px 2px 1px 1px;
+  background: linear-gradient(#e8c88a 0 34%, var(--gold, #d9a441) 34% 100%);
+  box-shadow: 0 1px 2px #000;
+}
+.rnd.spent { background: #26262b; box-shadow: none; }
+#ammo-chamber-round .rnd.chamber {
+  width: 7px; height: 21px; border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(#fff2cf 0 34%, var(--acid, #86ff3c) 34% 100%);
+}
+/* A dead chamber is the instant the trigger stops answering, so it reads as an alarm
+   rather than as one more dark pip. */
+#ammo-chamber-round .rnd.chamber.spent {
+  background: none;
+  border: 1.5px solid var(--blood, #ff2833);
+  box-shadow: none;
+  animation: heartbeat 0.7s infinite;
+}
+/* A paused reload is a state to act on, not a process to wait out — it holds still and
+   goes red instead of pulsing gold like work in progress. */
+#reload-hint.paused { animation: none; color: var(--blood, #ff2833); }
