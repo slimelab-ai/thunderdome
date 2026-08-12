@@ -20,7 +20,7 @@ import {
 } from './perception.js';
 import {
   SuppressionMap, SUPPRESSION, SUPPRESSING, coverStep, stepOutOfLane, worthSuppressing,
-  laneSeverity, laneQuietFor, timeSinceFired,
+  laneSeverity, laneQuietFor, timeSinceFired, laneIsHot,
 } from './suppression.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -349,6 +349,15 @@ const SHIELD_SWING = 9;
 /** Inside this, a shieldman stops running and starts turning. */
 const SHIELD_CONTACT = 9;
 
+/**
+ * How long nothing may happen before a shieldwall stops waiting and walks in.
+ *
+ * Measured against the deadlock it exists to break: six-on-six fights sat for the
+ * full ninety seconds, so anything under about ten catches them well before the cap
+ * while staying long enough that a normal exchange of fire never trips it.
+ */
+const SHIELD_PATIENCE = 8;
+
 /** How much sidestep a rusher mixes into a charge at a raised shield. */
 const SHIELD_ORBIT = 1.7;
 
@@ -535,6 +544,8 @@ export class Combatant {
     this.shieldCrouch = null;
     /** Elected to hold a shieldman's attention while the squad goes round him. */
     this.baiting = false;
+    /** Leaning on a deadlock: walking in behind the plate. */
+    this.pressing = false;
     /** Damage taken per enemy, bled off over seconds. Drives who he turns on. */
     this.threat = new Map();
     /** When the current target became the current target. */
@@ -821,6 +832,9 @@ export class Combatant {
   }
 
   die(world, killer, part) {
+    // When the fight last went somewhere. A shieldwall reads this to know it has
+    // stopped making progress — see `pressing`.
+    world.lastKillAt = world.simTime ?? 0;
     this.alive = false;
     this.deathT = 0;
     this.tag.visible = false;
@@ -1029,6 +1043,32 @@ export class Combatant {
             break;
           }
         }
+      }
+      // Walk it forward, because nobody else is going to.
+      //
+      // The measured failure at six on six was not losing — it was five fights in
+      // eight that never resolved at all. Both squads dug in until the clock. A
+      // shieldwall has every defensive instinct and no offensive one: hold, hunker,
+      // avoid the hot lane, wait for the gap. Against another squad doing the same
+      // thing that is a stalemate, and a stalemate is a loss for whoever had the
+      // initiative to spend.
+      //
+      // So when nothing has happened to anyone for a while, the man carrying a wall
+      // uses it for the thing a wall is for and advances into the fire. Deliberately
+      // narrow: only while the plate is actually between him and the danger, only at
+      // a walk, and it ends the moment the fight starts moving again — the point is
+      // to break a deadlock, not to charge.
+      this.pressing = false;
+      if (this.archetype === 'shield' && this.shieldPresenting && this.contact &&
+          now - (world.lastKillAt ?? 0) > SHIELD_PATIENCE) {
+        // Flanked is not the moment. If anything hot is working ground his shield is
+        // not facing, he has a turning problem before he has an advancing one.
+        let flanked = false;
+        for (const lane of this.suppression.lanes) {
+          if (!laneIsHot(lane, now)) continue;
+          if (!this._shieldFronts(lane)) { flanked = true; break; }
+        }
+        this.pressing = !flanked;
       }
       this.shieldWall = false;
       if (this.archetype === 'shield' && this.suppression.anyHot(now)) {
@@ -1492,6 +1532,10 @@ export class Combatant {
         // prices a crossing and may decide it is worth it; a man whose armour faces
         // backwards has nothing to cross it with.
         if (this._slung && this.breachCost > 0) this.breachT = 0;
+        // Route pricing exists to find a way in that is not covered. Pressing means
+        // accepting that there is not one, so he stops shopping and walks the short
+        // way with the plate up.
+        if (this.pressing) this.breachT = 0;
         const priced = safeBreachLane(tp, this.pos, assigned, (goal, lane) => {
           const { cost, side } = this._routeCostBothWays(world, goal, now);
           sideByLane.set(lane, side);
@@ -1559,7 +1603,8 @@ export class Combatant {
 
       // One fighter establishes the direct sightline. Side lanes remain committed
       // through momentary contact so the squad creates an actual crossfire.
-      let needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0 || assist;
+      let needTravel = dist > engage || blindPush || breaching || pushHigh || this.pushT > 0
+        || assist || this.pressing;
 
       // Wait at the edge for the gap, then run it.
       //
@@ -1588,7 +1633,11 @@ export class Combatant {
         // An edge is somewhere you are not yet in the fire. Standing IN the zone,
         // this gate used to trigger anyway and stop him there to jink — mid-lane,
         // under the gun, waiting for a gap in the thing currently hitting him.
-        const intoFire = !this.pinnedBy && timeSinceFired(this.suppression, now) < GAP_SECONDS &&
+        // A pressing shieldman does not wait for the gap. Waiting for a lull is the
+        // correct instinct for a man whose cover is a wall he has to reach; his is
+        // strapped to his arm, and the whole manoeuvre is to arrive during the fire.
+        const intoFire = !this.pressing && !this.pinnedBy &&
+          timeSinceFired(this.suppression, now) < GAP_SECONDS &&
           ((breaching && this.breachCost > 0) || this._groundIsDangerous(world, _routePoint, now));
         if (midPeek || intoFire) {
           needTravel = false;
@@ -1639,7 +1688,7 @@ export class Combatant {
       // and withdrawing, not for pushing — and the most willing to break contact,
       // because turning round is the one move that puts armour between him and the
       // shooting.
-      const breakingCover = !!this.pinnedBy && !!this.coverGoal && !assist &&
+      const breakingCover = !!this.pinnedBy && !!this.coverGoal && !assist && !this.pressing &&
         (!finishingCrossing || this._slung) && this.archetype !== 'rusher';
       if (breakingCover) {
         this._traveling = true;
@@ -1690,7 +1739,8 @@ export class Combatant {
         // A firearm user lowers out of sprint on visual contact, even while
         // continuing toward a committed breach goal. Distance alone used to
         // keep the gun down across a completely visible gap.
-        this.sprintNow = (this.shieldWall || this._contactRange) ? false : shouldSprintAtTarget({
+        this.sprintNow = (this.shieldWall || this._contactRange || this.pressing) ? false
+          : shouldSprintAtTarget({
           sight: sight || this.peekSide !== 0,
           melee: !!w.melee,
           distance: dist,

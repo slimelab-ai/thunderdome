@@ -3396,7 +3396,7 @@ function makeShieldTest(squads, options = {}) {
     // enemy and are not allowed to shoot at him because a squadmate is in the way;
     // `spread` is how wide the wall stands, measured across the line of advance.
     // Between them they separate "these men are nerfed" from "these men are queueing".
-    wallMuted: 0, wallSeeing: 0, spreadSum: 0, spreadSamples: 0,
+    wallMuted: 0, wallSeeing: 0, spreadSum: 0, spreadSamples: 0, pressFrames: 0,
     wallDeaths: 0, lineDeaths: 0,
     step(dt) {
       this.elapsed += dt;
@@ -3404,6 +3404,7 @@ function makeShieldTest(squads, options = {}) {
         if (!c.alive || !c.shieldMesh) continue;
         this.frames++;
         if (this.stanceFrames[c.shieldStance] !== undefined) this.stanceFrames[c.shieldStance]++;
+        if (c.pressing) this.pressFrames++;
       }
       // Where the other squad is standing relative to the plates they can see: in
       // the arc (donating ammunition) or round the edge of it (the point).
@@ -3479,6 +3480,7 @@ function makeShieldTest(squads, options = {}) {
         flankShare: +(this.lineFlankFrames / seen).toFixed(2),
         baitShare: +(this.baitFrames / seen).toFixed(2),
         mutedShare: +(this.wallMuted / Math.max(1, this.wallSeeing)).toFixed(2),
+        pressShare: +(this.pressFrames / f).toFixed(2),
         wallSpread: +(this.spreadSum / Math.max(1, this.spreadSamples)).toFixed(1),
       };
     },
@@ -3608,6 +3610,7 @@ async function runShieldLadder({ sizes = [2, 3, 4, 5, 6, 7, 8], seeds = [1, 2, 3
       lineDealt: r.lineDealt,
       dealtPerMan: +(r.wallDealt / wallCount).toFixed(0),
       mutedShare: +(r.runs.reduce((a, x) => a + x.mutedShare, 0) / r.runs.length).toFixed(2),
+      pressShare: +(r.runs.reduce((a, x) => a + x.pressShare, 0) / r.runs.length).toFixed(2),
       wallSpread: +(r.runs.reduce((a, x) => a + x.wallSpread, 0) / r.runs.length).toFixed(1),
     });
   }
