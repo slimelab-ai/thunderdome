@@ -24,19 +24,6 @@ def ensure_download(path: Path, url: str) -> Path:
     return path
 
 
-def spoken_text(text: str) -> str:
-    # Names remain personalized in the subtitle. The audio uses durable generic
-    # wording so one clip can serve every procedurally named combatant.
-    result = text.replace("{victim}", "the target").replace("{killer}", "the hired gun")
-    result = result.replace("Hired muscle the hired gun", "The hired gun")
-    result = result.replace("the target, meet floor", "the target meets the floor")
-    result = result.replace(
-        "the target just became the most valuable target",
-        "That fighter just became the most valuable target",
-    )
-    return result[0].upper() + result[1:] if result else result
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, type=Path)
@@ -65,7 +52,7 @@ def main() -> None:
             index = int(line["index"])
             destination = args.output / category / f"{index + 1:02d}.opus"
             destination.parent.mkdir(parents=True, exist_ok=True)
-            voice_text = spoken_text(line["text"])
+            voice_text = line["voiceText"]
             if args.force or (args.refresh_dynamic and "{" in line["text"]) or not destination.exists():
                 samples, sample_rate = engine.create(
                     voice_text, voice=args.voice, speed=args.speed, lang="en-us"

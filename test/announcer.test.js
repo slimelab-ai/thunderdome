@@ -5,12 +5,29 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Announcer, AnnouncerVoiceBank, LINES, announcerClipUrl } from '../src/announcer.js';
 import { ASSET_VERSION } from '../src/asset-version.js';
+import { announcerSpokenText } from '../tools/voice/spoken-text.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('voice clips have stable category and line URLs', () => {
   assert.equal(announcerClipUrl('matchStart', 0), `/assets/voice/vulture/matchStart/01.opus?v=${ASSET_VERSION}`);
   assert.equal(announcerClipUrl('playerKill', 11), `/assets/voice/vulture/playerKill/12.opus?v=${ASSET_VERSION}`);
+});
+
+test('spoken announcer text removes subtitle capitalization without losing its wording', () => {
+  assert.equal(
+    announcerSpokenText("Ladies and gentlemen... it's KILLING TIME!"),
+    "Ladies and gentlemen... it's Killing Time!",
+  );
+  assert.equal(announcerSpokenText("LET'S GO! GOLIATH IS DOWN!"), "Let's Go! Goliath Is Down!");
+  assert.equal(
+    announcerSpokenText('{killer} puts {victim} DOWN!'),
+    'The hired gun puts the target Down!',
+  );
+  assert.equal(
+    announcerSpokenText('BO-RING! RSVP: everyone nearby!'),
+    'Boring! R. S. V. P.: everyone nearby!',
+  );
 });
 
 test('a full circuit has enough commentary to avoid obvious event loops', () => {
@@ -37,6 +54,7 @@ test('voice manifest copy stays synchronized with the authored subtitles', async
   for (const line of manifest.lines) {
     assert.equal(line.text, LINES[line.category]?.[line.index]);
     assert.equal(line.subtitle, line.text);
+    assert.equal(line.voiceText, announcerSpokenText(line.text));
   }
 });
 

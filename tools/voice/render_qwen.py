@@ -19,17 +19,6 @@ BASE_DIRECTION = (
 )
 
 
-def spoken_text(text: str) -> str:
-    result = text.replace("{victim}", "the target").replace("{killer}", "the hired gun")
-    result = result.replace("Hired muscle the hired gun", "The hired gun")
-    result = result.replace("the target, meet floor", "the target meets the floor")
-    result = result.replace(
-        "the target just became the most valuable target",
-        "That fighter just became the most valuable target",
-    )
-    return result[0].upper() + result[1:] if result else result
-
-
 def direction(category: str) -> str:
     if category in {"matchStart", "firstBlood", "win", "champWin", "bossIntro"}:
         return BASE_DIRECTION + " Build cleanly toward the final phrase, like a live arena call, without shouting the entire line."
@@ -47,6 +36,7 @@ def main() -> None:
     parser.add_argument("--voice", default="Ryan")
     parser.add_argument("--speed", type=float, default=1.0)  # manifest compatibility; Qwen follows the direction
     parser.add_argument("--batch-size", type=int, default=6)
+    parser.add_argument("--max-new-tokens", type=int, default=96)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--refresh-dynamic", action="store_true")
     parser.add_argument("--no-manifest", action="store_true")
@@ -71,7 +61,7 @@ def main() -> None:
             batch_size = max(1, min(10, args.batch_size))
             for start in range(0, len(pending), batch_size):
                 batch = pending[start:start + batch_size]
-                texts = [spoken_text(line["text"]) for line, _ in batch]
+                texts = [line["voiceText"] for line, _ in batch]
                 torch.manual_seed(8128 + start)
                 wavs, sample_rate = model.generate_custom_voice(
                     text=texts,
@@ -86,7 +76,7 @@ def main() -> None:
                     # seconds—far beyond any authored call. The library default is
                     # 2048; one missed EOS in a batch otherwise burns minutes making
                     # silence while every other completed line waits behind it.
-                    max_new_tokens=96,
+                    max_new_tokens=max(64, min(160, args.max_new_tokens)),
                 )
                 for offset, ((line, destination), samples) in enumerate(zip(batch, wavs), 1):
                     destination.parent.mkdir(parents=True, exist_ok=True)

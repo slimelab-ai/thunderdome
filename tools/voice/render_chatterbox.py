@@ -15,20 +15,6 @@ import torch
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 
-def spoken_text(text: str) -> str:
-    result = (
-        text.replace("{victim}", "the target")
-        .replace("{killer}", "the hired gun")
-        .replace("Hired muscle the hired gun", "The hired gun")
-        .replace("the target, meet floor", "the target meets the floor")
-        .replace(
-            "the target just became the most valuable target",
-            "That fighter just became the most valuable target",
-        )
-    )
-    return result[:1].upper() + result[1:]
-
-
 def perform(text: str, category: str, index: int) -> str:
     """Add restrained, deterministic delivery cues supported by Turbo.
 
@@ -94,7 +80,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="vulture-chatterbox-") as temporary:
         wav_path = Path(temporary) / "line.wav"
         for done, (line, destination) in enumerate(pending, 1):
-            text = perform(spoken_text(line["text"]), line["category"], int(line["index"]))
+            text = perform(line["voiceText"], line["category"], int(line["index"]))
             # A stable per-line seed makes the checked-in bank reproducible while still
             # allowing the model's delivery to vary from line to line.
             seed = args.seed + int(line["index"]) + sum(map(ord, line["category"]))

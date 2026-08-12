@@ -11,29 +11,41 @@ then run:
 npm run voice:generate
 ```
 
-Pass `--jobs 4` to render several lines in parallel on a machine with enough RAM;
-each worker loads roughly 600 MB while it runs.
+Pass `--jobs` to render several lines in parallel only when the machine has enough
+VRAM for one complete model per worker.
 
 The generator downloads Kokoro 82M v1.0 and its voice embeddings into the ignored
 `.cache/kokoro` directory. Override Python with `VOICE_PYTHON`, or pass existing
 model files with `--model` and `--voices`. Existing clips are preserved unless
 `--force` is supplied.
 
-The checked-in bank uses Chatterbox Turbo 350M, cloned from the stable VULTURE
-reference in `vulture-ref.wav`. It adds a small, deterministic set of performance
-cues (breaths, dry chuckles, sighs, and whispers) to selected alternates, then
-normalizes every clip to the same broadcast loudness. Generate it from an isolated
-`chatterbox-tts` environment with CUDA-enabled PyTorch and:
+The checked-in bank uses the official Qwen3-TTS 12Hz 1.7B CustomVoice model with
+the Ryan speaker and category-specific direction prompts. It has substantially
+better pronunciation and delivery control than the previous 350M Chatterbox bank.
+Generate it from an isolated `qwen-tts` environment with CUDA-enabled PyTorch and:
 
 ```sh
-npm run voice:generate -- --engine chatterbox --force
+npm run voice:generate -- --engine qwen --force
 ```
 
-Chatterbox is MIT licensed. The previous Kokoro renderer remains available as a
-quick CPU fallback, and the slower Qwen renderer remains available for experiments.
+Qwen3-TTS is Apache 2.0 licensed. The previous Chatterbox renderer and reference
+voice remain available for comparisons, and Kokoro remains a quick CPU fallback.
 No inference runtime ships to players.
 
 Procedural fighter names stay in the on-screen subtitle. Their clips use generic
 phrases such as “the target” and “the hired gun,” keeping the bank finite and the
 spoken grammar natural. After editing that substitution logic, use
 `--refresh-dynamic` to rebuild only affected clips.
+
+All-caps subtitle emphasis is also normalized before synthesis (`KILLING TIME` is
+spoken as `Killing Time`). This keeps visual emphasis in the HUD without causing
+the voice model to shout, spell, or distort emphasized words.
+
+After changing that normalization, rebuild only lines containing all-caps emphasis:
+
+```sh
+npm run voice:generate -- --engine qwen --refresh-emphasis
+```
+
+Use `--only event_molotov,matchStart/01 --output .cache/voice-samples` to render a
+small comparison bank without touching the shipped clips.

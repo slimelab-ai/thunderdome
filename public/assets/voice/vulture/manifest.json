@@ -1,7 +1,7 @@
 {
   "format": 1,
-  "engine": "Chatterbox-Turbo-350M",
-  "voice": "Vulture reference voice",
+  "engine": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
+  "voice": "Ryan",
   "speed": 1,
   "codec": "Opus 48 kbps mono",
   "lines": [
@@ -9,2345 +9,2345 @@
       "category": "matchStart",
       "index": 0,
       "text": "Ladies and gentlemen and assorted degenerates... it's KILLING TIME!",
+      "voiceText": "Ladies and gentlemen and assorted degenerates... it's Killing Time!",
       "file": "matchStart/01.opus",
-      "subtitle": "Ladies and gentlemen and assorted degenerates... it's KILLING TIME!",
-      "voiceText": "Ladies and gentlemen and assorted degenerates... it's KILLING TIME!"
+      "subtitle": "Ladies and gentlemen and assorted degenerates... it's KILLING TIME!"
     },
     {
       "category": "matchStart",
       "index": 1,
       "text": "The book is open, the blood is fresh — FIGHT!",
+      "voiceText": "The book is open, the blood is fresh — Fight!",
       "file": "matchStart/02.opus",
-      "subtitle": "The book is open, the blood is fresh — FIGHT!",
-      "voiceText": "The book is open, the blood is fresh — FIGHT!"
+      "subtitle": "The book is open, the blood is fresh — FIGHT!"
     },
     {
       "category": "matchStart",
       "index": 2,
       "text": "Two crews walk in. One crew gets carried out. You know the rules!",
+      "voiceText": "Two crews walk in. One crew gets carried out. You know the rules!",
       "file": "matchStart/03.opus",
-      "subtitle": "Two crews walk in. One crew gets carried out. You know the rules!",
-      "voiceText": "Two crews walk in. One crew gets carried out. You know the rules!"
+      "subtitle": "Two crews walk in. One crew gets carried out. You know the rules!"
     },
     {
       "category": "matchStart",
       "index": 3,
       "text": "The pit is hungry tonight, folks. FEED IT!",
+      "voiceText": "The pit is hungry tonight, folks. Feed It!",
       "file": "matchStart/04.opus",
-      "subtitle": "The pit is hungry tonight, folks. FEED IT!",
-      "voiceText": "The pit is hungry tonight, folks. FEED IT!"
+      "subtitle": "The pit is hungry tonight, folks. FEED IT!"
     },
     {
       "category": "matchStart",
       "index": 4,
       "text": "Cameras rolling, bets locked. Let's see some VIOLENCE!",
+      "voiceText": "Cameras rolling, bets locked. Let's see some Violence!",
       "file": "matchStart/05.opus",
-      "subtitle": "Cameras rolling, bets locked. Let's see some VIOLENCE!",
-      "voiceText": "Cameras rolling, bets locked. Let's see some VIOLENCE!"
+      "subtitle": "Cameras rolling, bets locked. Let's see some VIOLENCE!"
     },
     {
       "category": "matchStart",
       "index": 5,
       "text": "Welcome back to the only show where the refunds go to your next of kin!",
+      "voiceText": "Welcome back to the only show where the refunds go to your next of kin!",
       "file": "matchStart/06.opus",
-      "subtitle": "Welcome back to the only show where the refunds go to your next of kin!",
-      "voiceText": "Welcome back to the only show where the refunds go to your next of kin!"
+      "subtitle": "Welcome back to the only show where the refunds go to your next of kin!"
     },
     {
       "category": "matchStart",
       "index": 6,
       "text": "Tonight's forecast: lead, with a chance of screaming!",
+      "voiceText": "Tonight's forecast: lead, with a chance of screaming!",
       "file": "matchStart/07.opus",
-      "subtitle": "Tonight's forecast: lead, with a chance of screaming!",
-      "voiceText": "Tonight's forecast: lead, with a chance of screaming!"
+      "subtitle": "Tonight's forecast: lead, with a chance of screaming!"
     },
     {
       "category": "matchStart",
       "index": 7,
       "text": "The janitor just mopped, so somebody make a MESS!",
+      "voiceText": "The janitor just mopped, so somebody make a Mess!",
       "file": "matchStart/08.opus",
-      "subtitle": "The janitor just mopped, so somebody make a MESS!",
-      "voiceText": "The janitor just mopped, so somebody make a MESS!"
+      "subtitle": "The janitor just mopped, so somebody make a MESS!"
     },
     {
       "category": "matchStart",
       "index": 8,
       "text": "Doors are locked, exits are decorative — LET'S GO!",
+      "voiceText": "Doors are locked, exits are decorative — Let's Go!",
       "file": "matchStart/09.opus",
-      "subtitle": "Doors are locked, exits are decorative — LET'S GO!",
-      "voiceText": "Doors are locked, exits are decorative — LET'S GO!"
+      "subtitle": "Doors are locked, exits are decorative — LET'S GO!"
     },
     {
       "category": "matchStart",
       "index": 9,
       "text": "If you're squeamish, folks, the concession stand sells blindfolds!",
+      "voiceText": "If you're squeamish, folks, the concession stand sells blindfolds!",
       "file": "matchStart/10.opus",
-      "subtitle": "If you're squeamish, folks, the concession stand sells blindfolds!",
-      "voiceText": "If you're squeamish, folks, the concession stand sells blindfolds!"
+      "subtitle": "If you're squeamish, folks, the concession stand sells blindfolds!"
     },
     {
       "category": "matchStart",
       "index": 10,
       "text": "The locks are thrown and the medics are already disappointed. FIGHT!",
+      "voiceText": "The locks are thrown and the medics are already disappointed. Fight!",
       "file": "matchStart/11.opus",
-      "subtitle": "The locks are thrown and the medics are already disappointed. FIGHT!",
-      "voiceText": "The locks are thrown and the medics are already disappointed. FIGHT!"
+      "subtitle": "The locks are thrown and the medics are already disappointed. FIGHT!"
     },
     {
       "category": "matchStart",
       "index": 11,
       "text": "Every bad decision in this building led to this moment. Make it count!",
+      "voiceText": "Every bad decision in this building led to this moment. Make it count!",
       "file": "matchStart/12.opus",
-      "subtitle": "Every bad decision in this building led to this moment. Make it count!",
-      "voiceText": "Every bad decision in this building led to this moment. Make it count!"
+      "subtitle": "Every bad decision in this building led to this moment. Make it count!"
     },
     {
       "category": "matchStart",
       "index": 12,
       "text": "The crowd came hungry, the fighters came armed — perfect combination!",
+      "voiceText": "The crowd came hungry, the fighters came armed — perfect combination!",
       "file": "matchStart/13.opus",
-      "subtitle": "The crowd came hungry, the fighters came armed — perfect combination!",
-      "voiceText": "The crowd came hungry, the fighters came armed — perfect combination!"
+      "subtitle": "The crowd came hungry, the fighters came armed — perfect combination!"
     },
     {
       "category": "matchStart",
       "index": 13,
       "text": "No speeches, no mercy, no refunds. Ring the bell!",
+      "voiceText": "No speeches, no mercy, no refunds. Ring the bell!",
       "file": "matchStart/14.opus",
-      "subtitle": "No speeches, no mercy, no refunds. Ring the bell!",
-      "voiceText": "No speeches, no mercy, no refunds. Ring the bell!"
+      "subtitle": "No speeches, no mercy, no refunds. Ring the bell!"
     },
     {
       "category": "matchStart",
       "index": 14,
       "text": "The cameras are live and the exits are sealed. Give them a show!",
+      "voiceText": "The cameras are live and the exits are sealed. Give them a show!",
       "file": "matchStart/15.opus",
-      "subtitle": "The cameras are live and the exits are sealed. Give them a show!",
-      "voiceText": "The cameras are live and the exits are sealed. Give them a show!"
+      "subtitle": "The cameras are live and the exits are sealed. Give them a show!"
     },
     {
       "category": "matchStart",
       "index": 15,
       "text": "Fresh magazines, fresh grudges, same filthy pit. FIGHT!",
+      "voiceText": "Fresh magazines, fresh grudges, same filthy pit. Fight!",
       "file": "matchStart/16.opus",
-      "subtitle": "Fresh magazines, fresh grudges, same filthy pit. FIGHT!",
-      "voiceText": "Fresh magazines, fresh grudges, same filthy pit. FIGHT!"
+      "subtitle": "Fresh magazines, fresh grudges, same filthy pit. FIGHT!"
     },
     {
       "category": "matchStart",
       "index": 16,
       "text": "Settle in, folks. Somebody's evening is about to become paperwork!",
+      "voiceText": "Settle in, folks. Somebody's evening is about to become paperwork!",
       "file": "matchStart/17.opus",
-      "subtitle": "Settle in, folks. Somebody's evening is about to become paperwork!",
-      "voiceText": "Settle in, folks. Somebody's evening is about to become paperwork!"
+      "subtitle": "Settle in, folks. Somebody's evening is about to become paperwork!"
     },
     {
       "category": "matchStart",
       "index": 17,
       "text": "The odds are posted and common sense has left the building!",
+      "voiceText": "The odds are posted and common sense has left the building!",
       "file": "matchStart/18.opus",
-      "subtitle": "The odds are posted and common sense has left the building!",
-      "voiceText": "The odds are posted and common sense has left the building!"
+      "subtitle": "The odds are posted and common sense has left the building!"
     },
     {
       "category": "matchStart",
       "index": 18,
       "text": "Welcome to the pit, where every argument ends conclusively!",
+      "voiceText": "Welcome to the pit, where every argument ends conclusively!",
       "file": "matchStart/19.opus",
-      "subtitle": "Welcome to the pit, where every argument ends conclusively!",
-      "voiceText": "Welcome to the pit, where every argument ends conclusively!"
+      "subtitle": "Welcome to the pit, where every argument ends conclusively!"
     },
     {
       "category": "matchStart",
       "index": 19,
       "text": "Medical is standing by. Optimistic bunch, aren't they?",
+      "voiceText": "Medical is standing by. Optimistic bunch, aren't they?",
       "file": "matchStart/20.opus",
-      "subtitle": "Medical is standing by. Optimistic bunch, aren't they?",
-      "voiceText": "Medical is standing by. Optimistic bunch, aren't they?"
+      "subtitle": "Medical is standing by. Optimistic bunch, aren't they?"
     },
     {
       "category": "matchStart",
       "index": 20,
       "text": "One bell, two crews, and absolutely no appeals process!",
+      "voiceText": "One bell, two crews, and absolutely no appeals process!",
       "file": "matchStart/21.opus",
-      "subtitle": "One bell, two crews, and absolutely no appeals process!",
-      "voiceText": "One bell, two crews, and absolutely no appeals process!"
+      "subtitle": "One bell, two crews, and absolutely no appeals process!"
     },
     {
       "category": "matchStart",
       "index": 21,
       "text": "The house lights are hot and so are the chambers. Let's begin!",
+      "voiceText": "The house lights are hot and so are the chambers. Let's begin!",
       "file": "matchStart/22.opus",
-      "subtitle": "The house lights are hot and so are the chambers. Let's begin!",
-      "voiceText": "The house lights are hot and so are the chambers. Let's begin!"
+      "subtitle": "The house lights are hot and so are the chambers. Let's begin!"
     },
     {
       "category": "matchStart",
       "index": 22,
       "text": "Keep your ticket. It may be the last evidence this happened!",
+      "voiceText": "Keep your ticket. It may be the last evidence this happened!",
       "file": "matchStart/23.opus",
-      "subtitle": "Keep your ticket. It may be the last evidence this happened!",
-      "voiceText": "Keep your ticket. It may be the last evidence this happened!"
+      "subtitle": "Keep your ticket. It may be the last evidence this happened!"
     },
     {
       "category": "matchStart",
       "index": 23,
       "text": "All debts come due under these lights. FIGHT!",
+      "voiceText": "All debts come due under these lights. Fight!",
       "file": "matchStart/24.opus",
-      "subtitle": "All debts come due under these lights. FIGHT!",
-      "voiceText": "All debts come due under these lights. FIGHT!"
+      "subtitle": "All debts come due under these lights. FIGHT!"
     },
     {
       "category": "matchStart",
       "index": 24,
       "text": "The crowd is loud, the floor is clean, and neither will last!",
+      "voiceText": "The crowd is loud, the floor is clean, and neither will last!",
       "file": "matchStart/25.opus",
-      "subtitle": "The crowd is loud, the floor is clean, and neither will last!",
-      "voiceText": "The crowd is loud, the floor is clean, and neither will last!"
+      "subtitle": "The crowd is loud, the floor is clean, and neither will last!"
     },
     {
       "category": "firstBlood",
       "index": 0,
       "text": "FIRST BLOOD! The crowd tastes copper and they LOVE it!",
+      "voiceText": "First Blood! The crowd tastes copper and they Love it!",
       "file": "firstBlood/01.opus",
-      "subtitle": "FIRST BLOOD! The crowd tastes copper and they LOVE it!",
-      "voiceText": "FIRST BLOOD! The crowd tastes copper and they LOVE it!"
+      "subtitle": "FIRST BLOOD! The crowd tastes copper and they LOVE it!"
     },
     {
       "category": "firstBlood",
       "index": 1,
       "text": "And we're on the board! Somebody's mother is crying already!",
+      "voiceText": "And we're on the board! Somebody's mother is crying already!",
       "file": "firstBlood/02.opus",
-      "subtitle": "And we're on the board! Somebody's mother is crying already!",
-      "voiceText": "And we're on the board! Somebody's mother is crying already!"
+      "subtitle": "And we're on the board! Somebody's mother is crying already!"
     },
     {
       "category": "firstBlood",
       "index": 2,
       "text": "FIRST KILL of the bout — the pit claims its opening tribute!",
+      "voiceText": "First Kill of the bout — the pit claims its opening tribute!",
       "file": "firstBlood/03.opus",
-      "subtitle": "FIRST KILL of the bout — the pit claims its opening tribute!",
-      "voiceText": "FIRST KILL of the bout — the pit claims its opening tribute!"
+      "subtitle": "FIRST KILL of the bout — the pit claims its opening tribute!"
     },
     {
       "category": "firstBlood",
       "index": 3,
       "text": "There's the opener! The night is officially RUINED for someone!",
+      "voiceText": "There's the opener! The night is officially Ruined for someone!",
       "file": "firstBlood/04.opus",
-      "subtitle": "There's the opener! The night is officially RUINED for someone!",
-      "voiceText": "There's the opener! The night is officially RUINED for someone!"
+      "subtitle": "There's the opener! The night is officially RUINED for someone!"
     },
     {
       "category": "firstBlood",
       "index": 4,
       "text": "First one down! That got the crowd's attention!",
+      "voiceText": "First one down! That got the crowd's attention!",
       "file": "firstBlood/05.opus",
-      "subtitle": "First one down! That got the crowd's attention!",
-      "voiceText": "First one down! That got the crowd's attention!"
+      "subtitle": "First one down! That got the crowd's attention!"
     },
     {
       "category": "firstBlood",
       "index": 5,
       "text": "The seal is BROKEN, folks! It only gets wetter from here!",
+      "voiceText": "The seal is Broken, folks! It only gets wetter from here!",
       "file": "firstBlood/06.opus",
-      "subtitle": "The seal is BROKEN, folks! It only gets wetter from here!",
-      "voiceText": "The seal is BROKEN, folks! It only gets wetter from here!"
+      "subtitle": "The seal is BROKEN, folks! It only gets wetter from here!"
     },
     {
       "category": "firstBlood",
       "index": 6,
       "text": "Opening casualty! The pit has officially begun collecting!",
+      "voiceText": "Opening casualty! The pit has officially begun collecting!",
       "file": "firstBlood/07.opus",
-      "subtitle": "Opening casualty! The pit has officially begun collecting!",
-      "voiceText": "Opening casualty! The pit has officially begun collecting!"
+      "subtitle": "Opening casualty! The pit has officially begun collecting!"
     },
     {
       "category": "firstBlood",
       "index": 7,
       "text": "First one off the board! Everybody else just learned the stakes!",
+      "voiceText": "First one off the board! Everybody else just learned the stakes!",
       "file": "firstBlood/08.opus",
-      "subtitle": "First one off the board! Everybody else just learned the stakes!",
-      "voiceText": "First one off the board! Everybody else just learned the stakes!"
+      "subtitle": "First one off the board! Everybody else just learned the stakes!"
     },
     {
       "category": "firstBlood",
       "index": 8,
       "text": "There is the first drop! The crowd is awake now!",
+      "voiceText": "There is the first drop! The crowd is awake now!",
       "file": "firstBlood/09.opus",
-      "subtitle": "There is the first drop! The crowd is awake now!",
-      "voiceText": "There is the first drop! The crowd is awake now!"
+      "subtitle": "There is the first drop! The crowd is awake now!"
     },
     {
       "category": "firstBlood",
       "index": 9,
       "text": "First blood belongs to the house, as it always does!",
+      "voiceText": "First blood belongs to the house, as it always does!",
       "file": "firstBlood/10.opus",
-      "subtitle": "First blood belongs to the house, as it always does!",
-      "voiceText": "First blood belongs to the house, as it always does!"
+      "subtitle": "First blood belongs to the house, as it always does!"
     },
     {
       "category": "firstBlood",
       "index": 10,
       "text": "The first body hits the floor and the betting line starts running!",
+      "voiceText": "The first body hits the floor and the betting line starts running!",
       "file": "firstBlood/11.opus",
-      "subtitle": "The first body hits the floor and the betting line starts running!",
-      "voiceText": "The first body hits the floor and the betting line starts running!"
+      "subtitle": "The first body hits the floor and the betting line starts running!"
     },
     {
       "category": "firstBlood",
       "index": 11,
       "text": "Bout's barely started and somebody is already finished!",
+      "voiceText": "Bout's barely started and somebody is already finished!",
       "file": "firstBlood/12.opus",
-      "subtitle": "Bout's barely started and somebody is already finished!",
-      "voiceText": "Bout's barely started and somebody is already finished!"
+      "subtitle": "Bout's barely started and somebody is already finished!"
     },
     {
       "category": "firstBlood",
       "index": 12,
       "text": "First elimination! That is one locker nobody needs to reopen!",
+      "voiceText": "First elimination! That is one locker nobody needs to reopen!",
       "file": "firstBlood/13.opus",
-      "subtitle": "First elimination! That is one locker nobody needs to reopen!",
-      "voiceText": "First elimination! That is one locker nobody needs to reopen!"
+      "subtitle": "First elimination! That is one locker nobody needs to reopen!"
     },
     {
       "category": "firstBlood",
       "index": 13,
       "text": "The silence breaks with the first hard fall of the night!",
+      "voiceText": "The silence breaks with the first hard fall of the night!",
       "file": "firstBlood/14.opus",
-      "subtitle": "The silence breaks with the first hard fall of the night!",
-      "voiceText": "The silence breaks with the first hard fall of the night!"
+      "subtitle": "The silence breaks with the first hard fall of the night!"
     },
     {
       "category": "firstBlood",
       "index": 14,
       "text": "First one down! Now the survivors know exactly what this costs!",
+      "voiceText": "First one down! Now the survivors know exactly what this costs!",
       "file": "firstBlood/15.opus",
-      "subtitle": "First one down! Now the survivors know exactly what this costs!",
-      "voiceText": "First one down! Now the survivors know exactly what this costs!"
+      "subtitle": "First one down! Now the survivors know exactly what this costs!"
     },
     {
       "category": "firstBlood",
       "index": 15,
       "text": "And there is our opener — quick, ugly, and completely official!",
+      "voiceText": "And there is our opener — quick, ugly, and completely official!",
       "file": "firstBlood/16.opus",
-      "subtitle": "And there is our opener — quick, ugly, and completely official!",
-      "voiceText": "And there is our opener — quick, ugly, and completely official!"
+      "subtitle": "And there is our opener — quick, ugly, and completely official!"
     },
     {
       "category": "playerKill",
       "index": 0,
       "text": "{victim} is DOWN! Our challenger has teeth, folks!",
+      "voiceText": "The target is Down! Our challenger has teeth, folks!",
       "file": "playerKill/01.opus",
-      "subtitle": "{victim} is DOWN! Our challenger has teeth, folks!",
-      "voiceText": "The target is DOWN! Our challenger has teeth, folks!"
+      "subtitle": "{victim} is DOWN! Our challenger has teeth, folks!"
     },
     {
       "category": "playerKill",
       "index": 1,
       "text": "OH! {victim} just got deleted from the payroll!",
+      "voiceText": "Oh! the target just got deleted from the payroll!",
       "file": "playerKill/02.opus",
-      "subtitle": "OH! {victim} just got deleted from the payroll!",
-      "voiceText": "OH! the target just got deleted from the payroll!"
+      "subtitle": "OH! {victim} just got deleted from the payroll!"
     },
     {
       "category": "playerKill",
       "index": 2,
       "text": "{victim} won't be making it to the afterparty!",
+      "voiceText": "The target won't be making it to the afterparty!",
       "file": "playerKill/03.opus",
-      "subtitle": "{victim} won't be making it to the afterparty!",
-      "voiceText": "The target won't be making it to the afterparty!"
+      "subtitle": "{victim} won't be making it to the afterparty!"
     },
     {
       "category": "playerKill",
       "index": 3,
       "text": "The challenger drops {victim} like a bad habit!",
+      "voiceText": "The challenger drops the target like a bad habit!",
       "file": "playerKill/04.opus",
-      "subtitle": "The challenger drops {victim} like a bad habit!",
-      "voiceText": "The challenger drops the target like a bad habit!"
+      "subtitle": "The challenger drops {victim} like a bad habit!"
     },
     {
       "category": "playerKill",
       "index": 4,
       "text": "{victim} — DOWN! Somebody check their pulse. Actually, don't bother.",
+      "voiceText": "The target — Down! Somebody check their pulse. Actually, don't bother.",
       "file": "playerKill/05.opus",
-      "subtitle": "{victim} — DOWN! Somebody check their pulse. Actually, don't bother.",
-      "voiceText": "The target — DOWN! Somebody check their pulse. Actually, don't bother."
+      "subtitle": "{victim} — DOWN! Somebody check their pulse. Actually, don't bother."
     },
     {
       "category": "playerKill",
       "index": 5,
       "text": "{victim} has left the building! Feet first!",
+      "voiceText": "The target has left the building! Feet first!",
       "file": "playerKill/06.opus",
-      "subtitle": "{victim} has left the building! Feet first!",
-      "voiceText": "The target has left the building! Feet first!"
+      "subtitle": "{victim} has left the building! Feet first!"
     },
     {
       "category": "playerKill",
       "index": 6,
       "text": "Scratch {victim} off the fight card, PERMANENTLY!",
+      "voiceText": "Scratch the target off the fight card, Permanently!",
       "file": "playerKill/07.opus",
-      "subtitle": "Scratch {victim} off the fight card, PERMANENTLY!",
-      "voiceText": "Scratch the target off the fight card, PERMANENTLY!"
+      "subtitle": "Scratch {victim} off the fight card, PERMANENTLY!"
     },
     {
       "category": "playerKill",
       "index": 7,
       "text": "{victim} just discovered the exit nobody wants to take!",
+      "voiceText": "The target just discovered the exit nobody wants to take!",
       "file": "playerKill/08.opus",
-      "subtitle": "{victim} just discovered the exit nobody wants to take!",
-      "voiceText": "The target just discovered the exit nobody wants to take!"
+      "subtitle": "{victim} just discovered the exit nobody wants to take!"
     },
     {
       "category": "playerKill",
       "index": 8,
       "text": "The challenger sends {victim} to the big locker room in the sky!",
+      "voiceText": "The challenger sends the target to the big locker room in the sky!",
       "file": "playerKill/09.opus",
-      "subtitle": "The challenger sends {victim} to the big locker room in the sky!",
-      "voiceText": "The challenger sends the target to the big locker room in the sky!"
+      "subtitle": "The challenger sends {victim} to the big locker room in the sky!"
     },
     {
       "category": "playerKill",
       "index": 9,
       "text": "{victim}'s bookie just tore up the ticket!",
+      "voiceText": "The target's bookie just tore up the ticket!",
       "file": "playerKill/10.opus",
-      "subtitle": "{victim}'s bookie just tore up the ticket!",
-      "voiceText": "The target's bookie just tore up the ticket!"
+      "subtitle": "{victim}'s bookie just tore up the ticket!"
     },
     {
       "category": "playerKill",
       "index": 10,
       "text": "And {victim} goes down like the price of their stock!",
+      "voiceText": "And the target goes down like the price of their stock!",
       "file": "playerKill/11.opus",
-      "subtitle": "And {victim} goes down like the price of their stock!",
-      "voiceText": "And the target goes down like the price of their stock!"
+      "subtitle": "And {victim} goes down like the price of their stock!"
     },
     {
       "category": "playerKill",
       "index": 11,
       "text": "Someone tell {victim}'s crew to set one less place at dinner!",
+      "voiceText": "Someone tell the target's crew to set one less place at dinner!",
       "file": "playerKill/12.opus",
-      "subtitle": "Someone tell {victim}'s crew to set one less place at dinner!",
-      "voiceText": "Someone tell the target's crew to set one less place at dinner!"
+      "subtitle": "Someone tell {victim}'s crew to set one less place at dinner!"
     },
     {
       "category": "playerKill",
       "index": 12,
       "text": "{victim} folds under pressure — and several incoming rounds!",
+      "voiceText": "The target folds under pressure — and several incoming rounds!",
       "file": "playerKill/13.opus",
-      "subtitle": "{victim} folds under pressure — and several incoming rounds!",
-      "voiceText": "The target folds under pressure — and several incoming rounds!"
+      "subtitle": "{victim} folds under pressure — and several incoming rounds!"
     },
     {
       "category": "playerKill",
       "index": 13,
       "text": "The challenger closes {victim}'s account with extreme prejudice!",
+      "voiceText": "The challenger closes the target's account with extreme prejudice!",
       "file": "playerKill/14.opus",
-      "subtitle": "The challenger closes {victim}'s account with extreme prejudice!",
-      "voiceText": "The challenger closes the target's account with extreme prejudice!"
+      "subtitle": "The challenger closes {victim}'s account with extreme prejudice!"
     },
     {
       "category": "playerKill",
       "index": 14,
       "text": "{victim} is finished! That résumé just got considerably shorter!",
+      "voiceText": "The target is finished! That résumé just got considerably shorter!",
       "file": "playerKill/15.opus",
-      "subtitle": "{victim} is finished! That résumé just got considerably shorter!",
-      "voiceText": "The target is finished! That résumé just got considerably shorter!"
+      "subtitle": "{victim} is finished! That résumé just got considerably shorter!"
     },
     {
       "category": "playerKill",
       "index": 15,
       "text": "Down goes {victim}! The floor wins another unanimous decision!",
+      "voiceText": "Down goes the target! The floor wins another unanimous decision!",
       "file": "playerKill/16.opus",
-      "subtitle": "Down goes {victim}! The floor wins another unanimous decision!",
-      "voiceText": "Down goes the target! The floor wins another unanimous decision!"
+      "subtitle": "Down goes {victim}! The floor wins another unanimous decision!"
     },
     {
       "category": "playerKill",
       "index": 16,
       "text": "The challenger found the switch and turned {victim} OFF!",
+      "voiceText": "The challenger found the switch and turned the target Off!",
       "file": "playerKill/17.opus",
-      "subtitle": "The challenger found the switch and turned {victim} OFF!",
-      "voiceText": "The challenger found the switch and turned the target OFF!"
+      "subtitle": "The challenger found the switch and turned {victim} OFF!"
     },
     {
       "category": "playerKill",
       "index": 17,
       "text": "{victim} is out of the bout and into the incident report!",
+      "voiceText": "The target is out of the bout and into the incident report!",
       "file": "playerKill/18.opus",
-      "subtitle": "{victim} is out of the bout and into the incident report!",
-      "voiceText": "The target is out of the bout and into the incident report!"
+      "subtitle": "{victim} is out of the bout and into the incident report!"
     },
     {
       "category": "playerKill",
       "index": 18,
       "text": "That is the end of {victim}'s shift, career, and immediate plans!",
+      "voiceText": "That is the end of the target's shift, career, and immediate plans!",
       "file": "playerKill/19.opus",
-      "subtitle": "That is the end of {victim}'s shift, career, and immediate plans!",
-      "voiceText": "That is the end of the target's shift, career, and immediate plans!"
+      "subtitle": "That is the end of {victim}'s shift, career, and immediate plans!"
     },
     {
       "category": "playerKill",
       "index": 19,
       "text": "The challenger punches {victim}'s final time card!",
+      "voiceText": "The challenger punches the target's final time card!",
       "file": "playerKill/20.opus",
-      "subtitle": "The challenger punches {victim}'s final time card!",
-      "voiceText": "The challenger punches the target's final time card!"
+      "subtitle": "The challenger punches {victim}'s final time card!"
     },
     {
       "category": "playerKill",
       "index": 20,
       "text": "{victim} loses the angle, the fight, and most future appointments!",
+      "voiceText": "The target loses the angle, the fight, and most future appointments!",
       "file": "playerKill/21.opus",
-      "subtitle": "{victim} loses the angle, the fight, and most future appointments!",
-      "voiceText": "The target loses the angle, the fight, and most future appointments!"
+      "subtitle": "{victim} loses the angle, the fight, and most future appointments!"
     },
     {
       "category": "playerKill",
       "index": 21,
       "text": "Another clean removal! {victim} is no longer on the active roster!",
+      "voiceText": "Another clean removal! the target is no longer on the active roster!",
       "file": "playerKill/22.opus",
-      "subtitle": "Another clean removal! {victim} is no longer on the active roster!",
-      "voiceText": "Another clean removal! the target is no longer on the active roster!"
+      "subtitle": "Another clean removal! {victim} is no longer on the active roster!"
     },
     {
       "category": "playerKill",
       "index": 22,
       "text": "{victim} goes quiet and this crowd gets LOUD!",
+      "voiceText": "The target goes quiet and this crowd gets Loud!",
       "file": "playerKill/23.opus",
-      "subtitle": "{victim} goes quiet and this crowd gets LOUD!",
-      "voiceText": "The target goes quiet and this crowd gets LOUD!"
+      "subtitle": "{victim} goes quiet and this crowd gets LOUD!"
     },
     {
       "category": "playerKill",
       "index": 23,
       "text": "The challenger just made {victim} a historical footnote!",
+      "voiceText": "The challenger just made the target a historical footnote!",
       "file": "playerKill/24.opus",
-      "subtitle": "The challenger just made {victim} a historical footnote!",
-      "voiceText": "The challenger just made the target a historical footnote!"
+      "subtitle": "The challenger just made {victim} a historical footnote!"
     },
     {
       "category": "playerKill",
       "index": 24,
       "text": "Put a line through {victim}. That contract is complete!",
+      "voiceText": "Put a line through the target. That contract is complete!",
       "file": "playerKill/25.opus",
-      "subtitle": "Put a line through {victim}. That contract is complete!",
-      "voiceText": "Put a line through the target. That contract is complete!"
+      "subtitle": "Put a line through {victim}. That contract is complete!"
     },
     {
       "category": "playerKill",
       "index": 25,
       "text": "{victim} gets the worst possible answer to a tactical question!",
+      "voiceText": "The target gets the worst possible answer to a tactical question!",
       "file": "playerKill/26.opus",
-      "subtitle": "{victim} gets the worst possible answer to a tactical question!",
-      "voiceText": "The target gets the worst possible answer to a tactical question!"
+      "subtitle": "{victim} gets the worst possible answer to a tactical question!"
     },
     {
       "category": "playerKill",
       "index": 26,
       "text": "The challenger sends {victim} straight to final accounting!",
+      "voiceText": "The challenger sends the target straight to final accounting!",
       "file": "playerKill/27.opus",
-      "subtitle": "The challenger sends {victim} straight to final accounting!",
-      "voiceText": "The challenger sends the target straight to final accounting!"
+      "subtitle": "The challenger sends {victim} straight to final accounting!"
     },
     {
       "category": "playerKill",
       "index": 27,
       "text": "There goes {victim}! Fast hands, hard landing!",
+      "voiceText": "There goes the target! Fast hands, hard landing!",
       "file": "playerKill/28.opus",
-      "subtitle": "There goes {victim}! Fast hands, hard landing!",
-      "voiceText": "There goes the target! Fast hands, hard landing!"
+      "subtitle": "There goes {victim}! Fast hands, hard landing!"
     },
     {
       "category": "playerKill",
       "index": 28,
       "text": "{victim} picked the wrong lane and paid the full price!",
+      "voiceText": "The target picked the wrong lane and paid the full price!",
       "file": "playerKill/29.opus",
-      "subtitle": "{victim} picked the wrong lane and paid the full price!",
-      "voiceText": "The target picked the wrong lane and paid the full price!"
+      "subtitle": "{victim} picked the wrong lane and paid the full price!"
     },
     {
       "category": "playerKill",
       "index": 29,
       "text": "The pit takes {victim}; the challenger keeps moving!",
+      "voiceText": "The pit takes the target; the challenger keeps moving!",
       "file": "playerKill/30.opus",
-      "subtitle": "The pit takes {victim}; the challenger keeps moving!",
-      "voiceText": "The pit takes the target; the challenger keeps moving!"
+      "subtitle": "The pit takes {victim}; the challenger keeps moving!"
     },
     {
       "category": "playerKill",
       "index": 30,
       "text": "A sharp burst, a short career — {victim} is done!",
+      "voiceText": "A sharp burst, a short career — the target is done!",
       "file": "playerKill/31.opus",
-      "subtitle": "A sharp burst, a short career — {victim} is done!",
-      "voiceText": "A sharp burst, a short career — the target is done!"
+      "subtitle": "A sharp burst, a short career — {victim} is done!"
     },
     {
       "category": "playerKill",
       "index": 31,
       "text": "{victim} just ran out of cover and good fortune at the same time!",
+      "voiceText": "The target just ran out of cover and good fortune at the same time!",
       "file": "playerKill/32.opus",
-      "subtitle": "{victim} just ran out of cover and good fortune at the same time!",
-      "voiceText": "The target just ran out of cover and good fortune at the same time!"
+      "subtitle": "{victim} just ran out of cover and good fortune at the same time!"
     },
     {
       "category": "playerKill",
       "index": 32,
       "text": "That exchange belongs to the challenger. {victim} belongs to cleanup!",
+      "voiceText": "That exchange belongs to the challenger. the target belongs to cleanup!",
       "file": "playerKill/33.opus",
-      "subtitle": "That exchange belongs to the challenger. {victim} belongs to cleanup!",
-      "voiceText": "That exchange belongs to the challenger. the target belongs to cleanup!"
+      "subtitle": "That exchange belongs to the challenger. {victim} belongs to cleanup!"
     },
     {
       "category": "playerKill",
       "index": 33,
       "text": "The challenger cashes another one in — {victim} is down!",
+      "voiceText": "The challenger cashes another one in — the target is down!",
       "file": "playerKill/34.opus",
-      "subtitle": "The challenger cashes another one in — {victim} is down!",
-      "voiceText": "The challenger cashes another one in — the target is down!"
+      "subtitle": "The challenger cashes another one in — {victim} is down!"
     },
     {
       "category": "playerKill",
       "index": 34,
       "text": "{victim} misses the lesson and becomes the example!",
+      "voiceText": "The target misses the lesson and becomes the example!",
       "file": "playerKill/35.opus",
-      "subtitle": "{victim} misses the lesson and becomes the example!",
-      "voiceText": "The target misses the lesson and becomes the example!"
+      "subtitle": "{victim} misses the lesson and becomes the example!"
     },
     {
       "category": "playerKill",
       "index": 35,
       "text": "No debate on that one! {victim} is comprehensively finished!",
+      "voiceText": "No debate on that one! the target is comprehensively finished!",
       "file": "playerKill/36.opus",
-      "subtitle": "No debate on that one! {victim} is comprehensively finished!",
-      "voiceText": "No debate on that one! the target is comprehensively finished!"
+      "subtitle": "No debate on that one! {victim} is comprehensively finished!"
     },
     {
       "category": "playerHeadshot",
       "index": 0,
       "text": "HEADSHOT! {victim}'s helmet fund was WASTED money!",
+      "voiceText": "Headshot! the target's helmet fund was Wasted money!",
       "file": "playerHeadshot/01.opus",
-      "subtitle": "HEADSHOT! {victim}'s helmet fund was WASTED money!",
-      "voiceText": "HEADSHOT! the target's helmet fund was WASTED money!"
+      "subtitle": "HEADSHOT! {victim}'s helmet fund was WASTED money!"
     },
     {
       "category": "playerHeadshot",
       "index": 1,
       "text": "RIGHT BETWEEN THE EYES! {victim} never saw the bill coming!",
+      "voiceText": "Right Between The Eyes! the target never saw the bill coming!",
       "file": "playerHeadshot/02.opus",
-      "subtitle": "RIGHT BETWEEN THE EYES! {victim} never saw the bill coming!",
-      "voiceText": "RIGHT BETWEEN THE EYES! the target never saw the bill coming!"
+      "subtitle": "RIGHT BETWEEN THE EYES! {victim} never saw the bill coming!"
     },
     {
       "category": "playerHeadshot",
       "index": 2,
       "text": "SKULL SHOT on {victim}! That's a crowd-pleaser, folks!",
+      "voiceText": "Skull Shot on the target! That's a crowd-pleaser, folks!",
       "file": "playerHeadshot/03.opus",
-      "subtitle": "SKULL SHOT on {victim}! That's a crowd-pleaser, folks!",
-      "voiceText": "SKULL SHOT on the target! That's a crowd-pleaser, folks!"
+      "subtitle": "SKULL SHOT on {victim}! That's a crowd-pleaser, folks!"
     },
     {
       "category": "playerHeadshot",
       "index": 3,
       "text": "One tap! {victim}'s brain just clocked out early!",
+      "voiceText": "One tap! the target's brain just clocked out early!",
       "file": "playerHeadshot/04.opus",
-      "subtitle": "One tap! {victim}'s brain just clocked out early!",
-      "voiceText": "One tap! the target's brain just clocked out early!"
+      "subtitle": "One tap! {victim}'s brain just clocked out early!"
     },
     {
       "category": "playerHeadshot",
       "index": 4,
       "text": "CRANIAL DELIVERY for {victim}! Sign here... oh, never mind!",
+      "voiceText": "Cranial Delivery for the target! Sign here... oh, never mind!",
       "file": "playerHeadshot/05.opus",
-      "subtitle": "CRANIAL DELIVERY for {victim}! Sign here... oh, never mind!",
-      "voiceText": "CRANIAL DELIVERY for the target! Sign here... oh, never mind!"
+      "subtitle": "CRANIAL DELIVERY for {victim}! Sign here... oh, never mind!"
     },
     {
       "category": "playerHeadshot",
       "index": 5,
       "text": "{victim} just had a thought — and it EXITED!",
+      "voiceText": "The target just had a thought — and it Exited!",
       "file": "playerHeadshot/06.opus",
-      "subtitle": "{victim} just had a thought — and it EXITED!",
-      "voiceText": "The target just had a thought — and it EXITED!"
+      "subtitle": "{victim} just had a thought — and it EXITED!"
     },
     {
       "category": "playerHeadshot",
       "index": 6,
       "text": "DOME SHOT! {victim}'s hat size is now irrelevant!",
+      "voiceText": "Dome Shot! the target's hat size is now irrelevant!",
       "file": "playerHeadshot/07.opus",
-      "subtitle": "DOME SHOT! {victim}'s hat size is now irrelevant!",
-      "voiceText": "DOME SHOT! the target's hat size is now irrelevant!"
+      "subtitle": "DOME SHOT! {victim}'s hat size is now irrelevant!"
     },
     {
       "category": "playerHeadshot",
       "index": 7,
       "text": "Right in the thinker! {victim} is DONE deliberating!",
+      "voiceText": "Right in the thinker! the target is Done deliberating!",
       "file": "playerHeadshot/08.opus",
-      "subtitle": "Right in the thinker! {victim} is DONE deliberating!",
-      "voiceText": "Right in the thinker! the target is DONE deliberating!"
+      "subtitle": "Right in the thinker! {victim} is DONE deliberating!"
     },
     {
       "category": "playerHeadshot",
       "index": 8,
       "text": "The challenger reads {victim} a bedtime story — THE END!",
+      "voiceText": "The challenger reads the target a bedtime story — The End!",
       "file": "playerHeadshot/09.opus",
-      "subtitle": "The challenger reads {victim} a bedtime story — THE END!",
-      "voiceText": "The challenger reads the target a bedtime story — THE END!"
+      "subtitle": "The challenger reads {victim} a bedtime story — THE END!"
     },
     {
       "category": "playerHeadshot",
       "index": 9,
       "text": "Perfect placement! {victim} drops before the echo gets back!",
+      "voiceText": "Perfect placement! the target drops before the echo gets back!",
       "file": "playerHeadshot/10.opus",
-      "subtitle": "Perfect placement! {victim} drops before the echo gets back!",
-      "voiceText": "Perfect placement! the target drops before the echo gets back!"
+      "subtitle": "Perfect placement! {victim} drops before the echo gets back!"
     },
     {
       "category": "playerHeadshot",
       "index": 10,
       "text": "A precise little period at the end of {victim}'s sentence!",
+      "voiceText": "A precise little period at the end of the target's sentence!",
       "file": "playerHeadshot/11.opus",
-      "subtitle": "A precise little period at the end of {victim}'s sentence!",
-      "voiceText": "A precise little period at the end of the target's sentence!"
+      "subtitle": "A precise little period at the end of {victim}'s sentence!"
     },
     {
       "category": "playerHeadshot",
       "index": 11,
       "text": "Head shot on {victim}! Clinical work in a very dirty room!",
+      "voiceText": "Head shot on the target! Clinical work in a very dirty room!",
       "file": "playerHeadshot/12.opus",
-      "subtitle": "Head shot on {victim}! Clinical work in a very dirty room!",
-      "voiceText": "Head shot on the target! Clinical work in a very dirty room!"
+      "subtitle": "Head shot on {victim}! Clinical work in a very dirty room!"
     },
     {
       "category": "playerHeadshot",
       "index": 12,
       "text": "The challenger finds the smallest target and makes the biggest statement!",
+      "voiceText": "The challenger finds the smallest target and makes the biggest statement!",
       "file": "playerHeadshot/13.opus",
-      "subtitle": "The challenger finds the smallest target and makes the biggest statement!",
-      "voiceText": "The challenger finds the smallest target and makes the biggest statement!"
+      "subtitle": "The challenger finds the smallest target and makes the biggest statement!"
     },
     {
       "category": "playerHeadshot",
       "index": 13,
       "text": "{victim} catches one upstairs! No second opinion required!",
+      "voiceText": "The target catches one upstairs! No second opinion required!",
       "file": "playerHeadshot/14.opus",
-      "subtitle": "{victim} catches one upstairs! No second opinion required!",
-      "voiceText": "The target catches one upstairs! No second opinion required!"
+      "subtitle": "{victim} catches one upstairs! No second opinion required!"
     },
     {
       "category": "playerHeadshot",
       "index": 14,
       "text": "That round had an address and {victim} answered the door!",
+      "voiceText": "That round had an address and the target answered the door!",
       "file": "playerHeadshot/15.opus",
-      "subtitle": "That round had an address and {victim} answered the door!",
-      "voiceText": "That round had an address and the target answered the door!"
+      "subtitle": "That round had an address and {victim} answered the door!"
     },
     {
       "category": "playerHeadshot",
       "index": 15,
       "text": "Clean hit above the collar! {victim} is instantly off the board!",
+      "voiceText": "Clean hit above the collar! the target is instantly off the board!",
       "file": "playerHeadshot/16.opus",
-      "subtitle": "Clean hit above the collar! {victim} is instantly off the board!",
-      "voiceText": "Clean hit above the collar! the target is instantly off the board!"
+      "subtitle": "Clean hit above the collar! {victim} is instantly off the board!"
     },
     {
       "category": "playerHeadshot",
       "index": 16,
       "text": "The sights settle, the trigger breaks, and {victim} disappears!",
+      "voiceText": "The sights settle, the trigger breaks, and the target disappears!",
       "file": "playerHeadshot/17.opus",
-      "subtitle": "The sights settle, the trigger breaks, and {victim} disappears!",
-      "voiceText": "The sights settle, the trigger breaks, and the target disappears!"
+      "subtitle": "The sights settle, the trigger breaks, and {victim} disappears!"
     },
     {
       "category": "playerHeadshot",
       "index": 17,
       "text": "A surgeon's shot from somebody who definitely is not a surgeon!",
+      "voiceText": "A surgeon's shot from somebody who definitely is not a surgeon!",
       "file": "playerHeadshot/18.opus",
-      "subtitle": "A surgeon's shot from somebody who definitely is not a surgeon!",
-      "voiceText": "A surgeon's shot from somebody who definitely is not a surgeon!"
+      "subtitle": "A surgeon's shot from somebody who definitely is not a surgeon!"
     },
     {
       "category": "playerHeadshot",
       "index": 18,
       "text": "{victim}'s headgear has failed its final inspection!",
+      "voiceText": "The target's headgear has failed its final inspection!",
       "file": "playerHeadshot/19.opus",
-      "subtitle": "{victim}'s headgear has failed its final inspection!",
-      "voiceText": "The target's headgear has failed its final inspection!"
+      "subtitle": "{victim}'s headgear has failed its final inspection!"
     },
     {
       "category": "playerHeadshot",
       "index": 19,
       "text": "Top shelf! The challenger puts {victim} down with punctuation!",
+      "voiceText": "Top shelf! The challenger puts the target down with punctuation!",
       "file": "playerHeadshot/20.opus",
-      "subtitle": "Top shelf! The challenger puts {victim} down with punctuation!",
-      "voiceText": "Top shelf! The challenger puts the target down with punctuation!"
+      "subtitle": "Top shelf! The challenger puts {victim} down with punctuation!"
     },
     {
       "category": "playerHeadshot",
       "index": 20,
       "text": "One measured shot and {victim}'s whole plan evaporates!",
+      "voiceText": "One measured shot and the target's whole plan evaporates!",
       "file": "playerHeadshot/21.opus",
-      "subtitle": "One measured shot and {victim}'s whole plan evaporates!",
-      "voiceText": "One measured shot and the target's whole plan evaporates!"
+      "subtitle": "One measured shot and {victim}'s whole plan evaporates!"
     },
     {
       "category": "allyKill",
       "index": 0,
       "text": "{killer} puts {victim} in the dirt! That's what money buys!",
+      "voiceText": "The hired gun puts the target in the dirt! That's what money buys!",
       "file": "allyKill/01.opus",
-      "subtitle": "{killer} puts {victim} in the dirt! That's what money buys!",
-      "voiceText": "The hired gun puts the target in the dirt! That's what money buys!"
+      "subtitle": "{killer} puts {victim} in the dirt! That's what money buys!"
     },
     {
       "category": "allyKill",
       "index": 1,
       "text": "{killer} earns the paycheck — {victim} is DONE!",
+      "voiceText": "The hired gun earns the paycheck — the target is Done!",
       "file": "allyKill/02.opus",
-      "subtitle": "{killer} earns the paycheck — {victim} is DONE!",
-      "voiceText": "The hired gun earns the paycheck — the target is DONE!"
+      "subtitle": "{killer} earns the paycheck — {victim} is DONE!"
     },
     {
       "category": "allyKill",
       "index": 2,
       "text": "Hired muscle {killer} takes out {victim}! Professional work!",
+      "voiceText": "The hired gun takes out the target! Professional work!",
       "file": "allyKill/03.opus",
-      "subtitle": "Hired muscle {killer} takes out {victim}! Professional work!",
-      "voiceText": "The hired gun takes out the target! Professional work!"
+      "subtitle": "Hired muscle {killer} takes out {victim}! Professional work!"
     },
     {
       "category": "allyKill",
       "index": 3,
       "text": "{killer} with the assist... no wait, that's a FINISH! {victim} is out!",
+      "voiceText": "The hired gun with the assist... no wait, that's a Finish! the target is out!",
       "file": "allyKill/04.opus",
-      "subtitle": "{killer} with the assist... no wait, that's a FINISH! {victim} is out!",
-      "voiceText": "The hired gun with the assist... no wait, that's a FINISH! the target is out!"
+      "subtitle": "{killer} with the assist... no wait, that's a FINISH! {victim} is out!"
     },
     {
       "category": "allyKill",
       "index": 4,
       "text": "That's why you pay {killer} the big bucks — {victim}, meet floor!",
+      "voiceText": "That's why you pay the hired gun the big bucks — the target meets the floor!",
       "file": "allyKill/05.opus",
-      "subtitle": "That's why you pay {killer} the big bucks — {victim}, meet floor!",
-      "voiceText": "That's why you pay the hired gun the big bucks — the target meets the floor!"
+      "subtitle": "That's why you pay {killer} the big bucks — {victim}, meet floor!"
     },
     {
       "category": "allyKill",
       "index": 5,
       "text": "{killer} clocks in and {victim} clocks OUT!",
+      "voiceText": "The hired gun clocks in and the target clocks Out!",
       "file": "allyKill/06.opus",
-      "subtitle": "{killer} clocks in and {victim} clocks OUT!",
-      "voiceText": "The hired gun clocks in and the target clocks OUT!"
+      "subtitle": "{killer} clocks in and {victim} clocks OUT!"
     },
     {
       "category": "allyKill",
       "index": 6,
       "text": "Payroll well spent! {killer} just retired {victim}!",
+      "voiceText": "Payroll well spent! the hired gun just retired the target!",
       "file": "allyKill/07.opus",
-      "subtitle": "Payroll well spent! {killer} just retired {victim}!",
-      "voiceText": "Payroll well spent! the hired gun just retired the target!"
+      "subtitle": "Payroll well spent! {killer} just retired {victim}!"
     },
     {
       "category": "allyKill",
       "index": 7,
       "text": "{killer} handles the problem! {victim} is off the schedule!",
+      "voiceText": "The hired gun handles the problem! the target is off the schedule!",
       "file": "allyKill/08.opus",
-      "subtitle": "{killer} handles the problem! {victim} is off the schedule!",
-      "voiceText": "The hired gun handles the problem! the target is off the schedule!"
+      "subtitle": "{killer} handles the problem! {victim} is off the schedule!"
     },
     {
       "category": "allyKill",
       "index": 8,
       "text": "That contract is earning interest — {killer} drops {victim}!",
+      "voiceText": "That contract is earning interest — the hired gun drops the target!",
       "file": "allyKill/09.opus",
-      "subtitle": "That contract is earning interest — {killer} drops {victim}!",
-      "voiceText": "That contract is earning interest — the hired gun drops the target!"
+      "subtitle": "That contract is earning interest — {killer} drops {victim}!"
     },
     {
       "category": "allyKill",
       "index": 9,
       "text": "{killer} clears the lane and {victim} clears the mortal coil!",
+      "voiceText": "The hired gun clears the lane and the target clears the mortal coil!",
       "file": "allyKill/10.opus",
-      "subtitle": "{killer} clears the lane and {victim} clears the mortal coil!",
-      "voiceText": "The hired gun clears the lane and the target clears the mortal coil!"
+      "subtitle": "{killer} clears the lane and {victim} clears the mortal coil!"
     },
     {
       "category": "allyKill",
       "index": 10,
       "text": "Professional timing from {killer}! {victim} never had the angle!",
+      "voiceText": "Professional timing from the hired gun! the target never had the angle!",
       "file": "allyKill/11.opus",
-      "subtitle": "Professional timing from {killer}! {victim} never had the angle!",
-      "voiceText": "Professional timing from the hired gun! the target never had the angle!"
+      "subtitle": "Professional timing from {killer}! {victim} never had the angle!"
     },
     {
       "category": "allyKill",
       "index": 11,
       "text": "{killer} makes the hire look smart and {victim} look horizontal!",
+      "voiceText": "The hired gun makes the hire look smart and the target look horizontal!",
       "file": "allyKill/12.opus",
-      "subtitle": "{killer} makes the hire look smart and {victim} look horizontal!",
-      "voiceText": "The hired gun makes the hire look smart and the target look horizontal!"
+      "subtitle": "{killer} makes the hire look smart and {victim} look horizontal!"
     },
     {
       "category": "allyKill",
       "index": 12,
       "text": "The crew contributes! {killer} has removed {victim}!",
+      "voiceText": "The crew contributes! the hired gun has removed the target!",
       "file": "allyKill/13.opus",
-      "subtitle": "The crew contributes! {killer} has removed {victim}!",
-      "voiceText": "The crew contributes! the hired gun has removed the target!"
+      "subtitle": "The crew contributes! {killer} has removed {victim}!"
     },
     {
       "category": "allyKill",
       "index": 13,
       "text": "{killer} catches {victim} exposed and collects the receipt!",
+      "voiceText": "The hired gun catches the target exposed and collects the receipt!",
       "file": "allyKill/14.opus",
-      "subtitle": "{killer} catches {victim} exposed and collects the receipt!",
-      "voiceText": "The hired gun catches the target exposed and collects the receipt!"
+      "subtitle": "{killer} catches {victim} exposed and collects the receipt!"
     },
     {
       "category": "allyKill",
       "index": 14,
       "text": "Excellent work from {killer}; catastrophic work from {victim}!",
+      "voiceText": "Excellent work from the hired gun; catastrophic work from the target!",
       "file": "allyKill/15.opus",
-      "subtitle": "Excellent work from {killer}; catastrophic work from {victim}!",
-      "voiceText": "Excellent work from the hired gun; catastrophic work from the target!"
+      "subtitle": "Excellent work from {killer}; catastrophic work from {victim}!"
     },
     {
       "category": "allyKill",
       "index": 15,
       "text": "{killer} earns another line on the invoice! {victim} is done!",
+      "voiceText": "The hired gun earns another line on the invoice! the target is done!",
       "file": "allyKill/16.opus",
-      "subtitle": "{killer} earns another line on the invoice! {victim} is done!",
-      "voiceText": "The hired gun earns another line on the invoice! the target is done!"
+      "subtitle": "{killer} earns another line on the invoice! {victim} is done!"
     },
     {
       "category": "allyKill",
       "index": 16,
       "text": "The hired gun delivers! {victim} is no longer a concern!",
+      "voiceText": "The hired gun delivers! the target is no longer a concern!",
       "file": "allyKill/17.opus",
-      "subtitle": "The hired gun delivers! {victim} is no longer a concern!",
-      "voiceText": "The hired gun delivers! the target is no longer a concern!"
+      "subtitle": "The hired gun delivers! {victim} is no longer a concern!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 0,
       "text": "{killer} just SCRAPPED {victim}! The challenger's crew is thinning!",
+      "voiceText": "The hired gun just Scrapped the target! The challenger's crew is thinning!",
       "file": "enemyKillsAlly/01.opus",
-      "subtitle": "{killer} just SCRAPPED {victim}! The challenger's crew is thinning!",
-      "voiceText": "The hired gun just SCRAPPED the target! The challenger's crew is thinning!"
+      "subtitle": "{killer} just SCRAPPED {victim}! The challenger's crew is thinning!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 1,
       "text": "{victim} is down! That's coming out of somebody's cut!",
+      "voiceText": "The target is down! That's coming out of somebody's cut!",
       "file": "enemyKillsAlly/02.opus",
-      "subtitle": "{victim} is down! That's coming out of somebody's cut!",
-      "voiceText": "The target is down! That's coming out of somebody's cut!"
+      "subtitle": "{victim} is down! That's coming out of somebody's cut!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 2,
       "text": "OH NO — {killer} just retired {victim} PERMANENTLY!",
+      "voiceText": "Oh No — the hired gun just retired the target Permanently!",
       "file": "enemyKillsAlly/03.opus",
-      "subtitle": "OH NO — {killer} just retired {victim} PERMANENTLY!",
-      "voiceText": "OH NO — the hired gun just retired the target PERMANENTLY!"
+      "subtitle": "OH NO — {killer} just retired {victim} PERMANENTLY!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 3,
       "text": "{victim}'s contract has been TERMINATED by {killer}!",
+      "voiceText": "The target's contract has been Terminated by the hired gun!",
       "file": "enemyKillsAlly/04.opus",
-      "subtitle": "{victim}'s contract has been TERMINATED by {killer}!",
-      "voiceText": "The target's contract has been TERMINATED by the hired gun!"
+      "subtitle": "{victim}'s contract has been TERMINATED by {killer}!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 4,
       "text": "The challenger's payroll just got lighter — {victim} is gone!",
+      "voiceText": "The challenger's payroll just got lighter — the target is gone!",
       "file": "enemyKillsAlly/05.opus",
-      "subtitle": "The challenger's payroll just got lighter — {victim} is gone!",
-      "voiceText": "The challenger's payroll just got lighter — the target is gone!"
+      "subtitle": "The challenger's payroll just got lighter — {victim} is gone!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 5,
       "text": "{killer} sends condolences to {victim}'s loved ones. And a bill!",
+      "voiceText": "The hired gun sends condolences to the target's loved ones. And a bill!",
       "file": "enemyKillsAlly/06.opus",
-      "subtitle": "{killer} sends condolences to {victim}'s loved ones. And a bill!",
-      "voiceText": "The hired gun sends condolences to the target's loved ones. And a bill!"
+      "subtitle": "{killer} sends condolences to {victim}'s loved ones. And a bill!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 6,
       "text": "There goes {victim}! Good help is SO hard to keep alive!",
+      "voiceText": "There goes the target! Good help is So hard to keep alive!",
       "file": "enemyKillsAlly/07.opus",
-      "subtitle": "There goes {victim}! Good help is SO hard to keep alive!",
-      "voiceText": "There goes the target! Good help is SO hard to keep alive!"
+      "subtitle": "There goes {victim}! Good help is SO hard to keep alive!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 7,
       "text": "{killer} catches {victim} cold! The challenger loses another gun!",
+      "voiceText": "The hired gun catches the target cold! The challenger loses another gun!",
       "file": "enemyKillsAlly/08.opus",
-      "subtitle": "{killer} catches {victim} cold! The challenger loses another gun!",
-      "voiceText": "The hired gun catches the target cold! The challenger loses another gun!"
+      "subtitle": "{killer} catches {victim} cold! The challenger loses another gun!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 8,
       "text": "The crew is down one — {victim} just got erased by {killer}!",
+      "voiceText": "The crew is down one — the target just got erased by the hired gun!",
       "file": "enemyKillsAlly/09.opus",
-      "subtitle": "The crew is down one — {victim} just got erased by {killer}!",
-      "voiceText": "The crew is down one — the target just got erased by the hired gun!"
+      "subtitle": "The crew is down one — {victim} just got erased by {killer}!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 9,
       "text": "Bad trade for the challenger! {killer} closes out {victim}!",
+      "voiceText": "Bad trade for the challenger! the hired gun closes out the target!",
       "file": "enemyKillsAlly/10.opus",
-      "subtitle": "Bad trade for the challenger! {killer} closes out {victim}!",
-      "voiceText": "Bad trade for the challenger! the hired gun closes out the target!"
+      "subtitle": "Bad trade for the challenger! {killer} closes out {victim}!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 10,
       "text": "{victim} is finished! {killer} just opened a hole in the line!",
+      "voiceText": "The target is finished! the hired gun just opened a hole in the line!",
       "file": "enemyKillsAlly/11.opus",
-      "subtitle": "{victim} is finished! {killer} just opened a hole in the line!",
-      "voiceText": "The target is finished! the hired gun just opened a hole in the line!"
+      "subtitle": "{victim} is finished! {killer} just opened a hole in the line!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 11,
       "text": "The hired help is getting expensive — {victim} is down!",
+      "voiceText": "The hired help is getting expensive — the target is down!",
       "file": "enemyKillsAlly/12.opus",
-      "subtitle": "The hired help is getting expensive — {victim} is down!",
-      "voiceText": "The hired help is getting expensive — the target is down!"
+      "subtitle": "The hired help is getting expensive — {victim} is down!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 12,
       "text": "{killer} removes {victim} and the numbers get uglier!",
+      "voiceText": "The hired gun removes the target and the numbers get uglier!",
       "file": "enemyKillsAlly/13.opus",
-      "subtitle": "{killer} removes {victim} and the numbers get uglier!",
-      "voiceText": "The hired gun removes the target and the numbers get uglier!"
+      "subtitle": "{killer} removes {victim} and the numbers get uglier!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 13,
       "text": "One less friendly muzzle! {victim} is out of this fight!",
+      "voiceText": "One less friendly muzzle! the target is out of this fight!",
       "file": "enemyKillsAlly/14.opus",
-      "subtitle": "One less friendly muzzle! {victim} is out of this fight!",
-      "voiceText": "One less friendly muzzle! the target is out of this fight!"
+      "subtitle": "One less friendly muzzle! {victim} is out of this fight!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 14,
       "text": "{victim} loses the duel! {killer} owns that piece of floor now!",
+      "voiceText": "The target loses the duel! the hired gun owns that piece of floor now!",
       "file": "enemyKillsAlly/15.opus",
-      "subtitle": "{victim} loses the duel! {killer} owns that piece of floor now!",
-      "voiceText": "The target loses the duel! the hired gun owns that piece of floor now!"
+      "subtitle": "{victim} loses the duel! {killer} owns that piece of floor now!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 15,
       "text": "The challenger's formation just lost {victim} the hard way!",
+      "voiceText": "The challenger's formation just lost the target the hard way!",
       "file": "enemyKillsAlly/16.opus",
-      "subtitle": "The challenger's formation just lost {victim} the hard way!",
-      "voiceText": "The challenger's formation just lost the target the hard way!"
+      "subtitle": "The challenger's formation just lost {victim} the hard way!"
     },
     {
       "category": "enemyKillsAlly",
       "index": 16,
       "text": "{killer} breaks the crew apart! {victim} will not be regrouping!",
+      "voiceText": "The hired gun breaks the crew apart! the target will not be regrouping!",
       "file": "enemyKillsAlly/17.opus",
-      "subtitle": "{killer} breaks the crew apart! {victim} will not be regrouping!",
-      "voiceText": "The hired gun breaks the crew apart! the target will not be regrouping!"
+      "subtitle": "{killer} breaks the crew apart! {victim} will not be regrouping!"
     },
     {
       "category": "playerHurt",
       "index": 0,
       "text": "The challenger takes a hit! The odds board is twitching!",
+      "voiceText": "The challenger takes a hit! The odds board is twitching!",
       "file": "playerHurt/01.opus",
-      "subtitle": "The challenger takes a hit! The odds board is twitching!",
-      "voiceText": "The challenger takes a hit! The odds board is twitching!"
+      "subtitle": "The challenger takes a hit! The odds board is twitching!"
     },
     {
       "category": "playerHurt",
       "index": 1,
       "text": "Blood on the challenger! The sharks smell it!",
+      "voiceText": "Blood on the challenger! The sharks smell it!",
       "file": "playerHurt/02.opus",
-      "subtitle": "Blood on the challenger! The sharks smell it!",
-      "voiceText": "Blood on the challenger! The sharks smell it!"
+      "subtitle": "Blood on the challenger! The sharks smell it!"
     },
     {
       "category": "playerHurt",
       "index": 2,
       "text": "OOF! That one's going in the highlight reel!",
+      "voiceText": "Oof! That one's going in the highlight reel!",
       "file": "playerHurt/03.opus",
-      "subtitle": "OOF! That one's going in the highlight reel!",
-      "voiceText": "OOF! That one's going in the highlight reel!"
+      "subtitle": "OOF! That one's going in the highlight reel!"
     },
     {
       "category": "playerHurt",
       "index": 3,
       "text": "The challenger springs a leak! Plug it, kid!",
+      "voiceText": "The challenger springs a leak! Plug it, kid!",
       "file": "playerHurt/04.opus",
-      "subtitle": "The challenger springs a leak! Plug it, kid!",
-      "voiceText": "The challenger springs a leak! Plug it, kid!"
+      "subtitle": "The challenger springs a leak! Plug it, kid!"
     },
     {
       "category": "playerHurt",
       "index": 4,
       "text": "That's gonna leave a mark! Several, actually!",
+      "voiceText": "That's gonna leave a mark! Several, actually!",
       "file": "playerHurt/05.opus",
-      "subtitle": "That's gonna leave a mark! Several, actually!",
-      "voiceText": "That's gonna leave a mark! Several, actually!"
+      "subtitle": "That's gonna leave a mark! Several, actually!"
     },
     {
       "category": "playerHurt",
       "index": 5,
       "text": "Solid hit on the challenger! That armor cannot negotiate forever!",
+      "voiceText": "Solid hit on the challenger! That armor cannot negotiate forever!",
       "file": "playerHurt/06.opus",
-      "subtitle": "Solid hit on the challenger! That armor cannot negotiate forever!",
-      "voiceText": "Solid hit on the challenger! That armor cannot negotiate forever!"
+      "subtitle": "Solid hit on the challenger! That armor cannot negotiate forever!"
     },
     {
       "category": "playerHurt",
       "index": 6,
       "text": "The challenger gets tagged and the crowd changes its mind again!",
+      "voiceText": "The challenger gets tagged and the crowd changes its mind again!",
       "file": "playerHurt/07.opus",
-      "subtitle": "The challenger gets tagged and the crowd changes its mind again!",
-      "voiceText": "The challenger gets tagged and the crowd changes its mind again!"
+      "subtitle": "The challenger gets tagged and the crowd changes its mind again!"
     },
     {
       "category": "playerHurt",
       "index": 7,
       "text": "That one landed clean! Check the breathing, check the angle!",
+      "voiceText": "That one landed clean! Check the breathing, check the angle!",
       "file": "playerHurt/08.opus",
-      "subtitle": "That one landed clean! Check the breathing, check the angle!",
-      "voiceText": "That one landed clean! Check the breathing, check the angle!"
+      "subtitle": "That one landed clean! Check the breathing, check the angle!"
     },
     {
       "category": "playerHurt",
       "index": 8,
       "text": "Incoming fire finds the challenger! Movement, kid, movement!",
+      "voiceText": "Incoming fire finds the challenger! Movement, kid, movement!",
       "file": "playerHurt/09.opus",
-      "subtitle": "Incoming fire finds the challenger! Movement, kid, movement!",
-      "voiceText": "Incoming fire finds the challenger! Movement, kid, movement!"
+      "subtitle": "Incoming fire finds the challenger! Movement, kid, movement!"
     },
     {
       "category": "playerHurt",
       "index": 9,
       "text": "The challenger just paid for that peek in blood!",
+      "voiceText": "The challenger just paid for that peek in blood!",
       "file": "playerHurt/10.opus",
-      "subtitle": "The challenger just paid for that peek in blood!",
-      "voiceText": "The challenger just paid for that peek in blood!"
+      "subtitle": "The challenger just paid for that peek in blood!"
     },
     {
       "category": "playerHurt",
       "index": 10,
       "text": "A hard connection! The house can smell a momentum swing!",
+      "voiceText": "A hard connection! The house can smell a momentum swing!",
       "file": "playerHurt/11.opus",
-      "subtitle": "A hard connection! The house can smell a momentum swing!",
-      "voiceText": "A hard connection! The house can smell a momentum swing!"
+      "subtitle": "A hard connection! The house can smell a momentum swing!"
     },
     {
       "category": "playerHurt",
       "index": 11,
       "text": "The return fire is real and it just found its address!",
+      "voiceText": "The return fire is real and it just found its address!",
       "file": "playerHurt/12.opus",
-      "subtitle": "The return fire is real and it just found its address!",
-      "voiceText": "The return fire is real and it just found its address!"
+      "subtitle": "The return fire is real and it just found its address!"
     },
     {
       "category": "playerHurt",
       "index": 12,
       "text": "The challenger takes another receipt from the ammunition counter!",
+      "voiceText": "The challenger takes another receipt from the ammunition counter!",
       "file": "playerHurt/13.opus",
-      "subtitle": "The challenger takes another receipt from the ammunition counter!",
-      "voiceText": "The challenger takes another receipt from the ammunition counter!"
+      "subtitle": "The challenger takes another receipt from the ammunition counter!"
     },
     {
       "category": "playerHurt",
       "index": 13,
       "text": "That was not cover, kid. That was optimism with edges!",
+      "voiceText": "That was not cover, kid. That was optimism with edges!",
       "file": "playerHurt/14.opus",
-      "subtitle": "That was not cover, kid. That was optimism with edges!",
-      "voiceText": "That was not cover, kid. That was optimism with edges!"
+      "subtitle": "That was not cover, kid. That was optimism with edges!"
     },
     {
       "category": "playerHurt",
       "index": 14,
       "text": "A round gets through! The crowd loves a close account!",
+      "voiceText": "A round gets through! The crowd loves a close account!",
       "file": "playerHurt/15.opus",
-      "subtitle": "A round gets through! The crowd loves a close account!",
-      "voiceText": "A round gets through! The crowd loves a close account!"
+      "subtitle": "A round gets through! The crowd loves a close account!"
     },
     {
       "category": "playerHurt",
       "index": 15,
       "text": "The challenger is hit and every open bet just twitched!",
+      "voiceText": "The challenger is hit and every open bet just twitched!",
       "file": "playerHurt/16.opus",
-      "subtitle": "The challenger is hit and every open bet just twitched!",
-      "voiceText": "The challenger is hit and every open bet just twitched!"
+      "subtitle": "The challenger is hit and every open bet just twitched!"
     },
     {
       "category": "playerHurt",
       "index": 16,
       "text": "That angle bites back! Get small or get carried!",
+      "voiceText": "That angle bites back! Get small or get carried!",
       "file": "playerHurt/17.opus",
-      "subtitle": "That angle bites back! Get small or get carried!",
-      "voiceText": "That angle bites back! Get small or get carried!"
+      "subtitle": "That angle bites back! Get small or get carried!"
     },
     {
       "category": "playerArmHit",
       "index": 0,
       "text": "Challenger's shooting arm is CHEWED UP — watch that aim wobble, folks!",
+      "voiceText": "Challenger's shooting arm is Chewed Up — watch that aim wobble, folks!",
       "file": "playerArmHit/01.opus",
-      "subtitle": "Challenger's shooting arm is CHEWED UP — watch that aim wobble, folks!",
-      "voiceText": "Challenger's shooting arm is CHEWED UP — watch that aim wobble, folks!"
+      "subtitle": "Challenger's shooting arm is CHEWED UP — watch that aim wobble, folks!"
     },
     {
       "category": "playerArmHit",
       "index": 1,
       "text": "That's a wing shot! Try aiming with a busted arm, kid!",
+      "voiceText": "That's a wing shot! Try aiming with a busted arm, kid!",
       "file": "playerArmHit/02.opus",
-      "subtitle": "That's a wing shot! Try aiming with a busted arm, kid!",
-      "voiceText": "That's a wing shot! Try aiming with a busted arm, kid!"
+      "subtitle": "That's a wing shot! Try aiming with a busted arm, kid!"
     },
     {
       "category": "playerArmHit",
       "index": 2,
       "text": "Right in the arm! The challenger's crosshair just grew a mind of its own!",
+      "voiceText": "Right in the arm! The challenger's crosshair just grew a mind of its own!",
       "file": "playerArmHit/03.opus",
-      "subtitle": "Right in the arm! The challenger's crosshair just grew a mind of its own!",
-      "voiceText": "Right in the arm! The challenger's crosshair just grew a mind of its own!"
+      "subtitle": "Right in the arm! The challenger's crosshair just grew a mind of its own!"
     },
     {
       "category": "playerArmHit",
       "index": 3,
       "text": "ARM SHOT! Someone's about to shoot like they're stirring soup!",
+      "voiceText": "Arm Shot! Someone's about to shoot like they're stirring soup!",
       "file": "playerArmHit/04.opus",
-      "subtitle": "ARM SHOT! Someone's about to shoot like they're stirring soup!",
-      "voiceText": "ARM SHOT! Someone's about to shoot like they're stirring soup!"
+      "subtitle": "ARM SHOT! Someone's about to shoot like they're stirring soup!"
     },
     {
       "category": "playerArmHit",
       "index": 4,
       "text": "The challenger's arm takes a round! Fine control just left the building!",
+      "voiceText": "The challenger's arm takes a round! Fine control just left the building!",
       "file": "playerArmHit/05.opus",
-      "subtitle": "The challenger's arm takes a round! Fine control just left the building!",
-      "voiceText": "The challenger's arm takes a round! Fine control just left the building!"
+      "subtitle": "The challenger's arm takes a round! Fine control just left the building!"
     },
     {
       "category": "playerArmHit",
       "index": 5,
       "text": "A hard hit to the shooting side! That trigger suddenly weighs a ton!",
+      "voiceText": "A hard hit to the shooting side! That trigger suddenly weighs a ton!",
       "file": "playerArmHit/06.opus",
-      "subtitle": "A hard hit to the shooting side! That trigger suddenly weighs a ton!",
-      "voiceText": "A hard hit to the shooting side! That trigger suddenly weighs a ton!"
+      "subtitle": "A hard hit to the shooting side! That trigger suddenly weighs a ton!"
     },
     {
       "category": "playerArmHit",
       "index": 6,
       "text": "Winged! The challenger will have to earn every follow-up shot now!",
+      "voiceText": "Winged! The challenger will have to earn every follow-up shot now!",
       "file": "playerArmHit/07.opus",
-      "subtitle": "Winged! The challenger will have to earn every follow-up shot now!",
-      "voiceText": "Winged! The challenger will have to earn every follow-up shot now!"
+      "subtitle": "Winged! The challenger will have to earn every follow-up shot now!"
     },
     {
       "category": "playerArmHit",
       "index": 7,
       "text": "That arm is compromised! Watch the muzzle start wandering!",
+      "voiceText": "That arm is compromised! Watch the muzzle start wandering!",
       "file": "playerArmHit/08.opus",
-      "subtitle": "That arm is compromised! Watch the muzzle start wandering!",
-      "voiceText": "That arm is compromised! Watch the muzzle start wandering!"
+      "subtitle": "That arm is compromised! Watch the muzzle start wandering!"
     },
     {
       "category": "playerArmHit",
       "index": 8,
       "text": "The return fire catches an arm! Grip strength is now a luxury!",
+      "voiceText": "The return fire catches an arm! Grip strength is now a luxury!",
       "file": "playerArmHit/09.opus",
-      "subtitle": "The return fire catches an arm! Grip strength is now a luxury!",
-      "voiceText": "The return fire catches an arm! Grip strength is now a luxury!"
+      "subtitle": "The return fire catches an arm! Grip strength is now a luxury!"
     },
     {
       "category": "playerArmHit",
       "index": 9,
       "text": "Direct hit on the arm! The next reload is going to be educational!",
+      "voiceText": "Direct hit on the arm! The next reload is going to be educational!",
       "file": "playerArmHit/10.opus",
-      "subtitle": "Direct hit on the arm! The next reload is going to be educational!",
-      "voiceText": "Direct hit on the arm! The next reload is going to be educational!"
+      "subtitle": "Direct hit on the arm! The next reload is going to be educational!"
     },
     {
       "category": "playerLegHit",
       "index": 0,
       "text": "LEG SHOT! The challenger is LIMPING! No running from the pit!",
+      "voiceText": "Leg Shot! The challenger is Limping! No running from the pit!",
       "file": "playerLegHit/01.opus",
-      "subtitle": "LEG SHOT! The challenger is LIMPING! No running from the pit!",
-      "voiceText": "LEG SHOT! The challenger is LIMPING! No running from the pit!"
+      "subtitle": "LEG SHOT! The challenger is LIMPING! No running from the pit!"
     },
     {
       "category": "playerLegHit",
       "index": 1,
       "text": "There goes the footwork! The challenger's dragging a dead leg!",
+      "voiceText": "There goes the footwork! The challenger's dragging a dead leg!",
       "file": "playerLegHit/02.opus",
-      "subtitle": "There goes the footwork! The challenger's dragging a dead leg!",
-      "voiceText": "There goes the footwork! The challenger's dragging a dead leg!"
+      "subtitle": "There goes the footwork! The challenger's dragging a dead leg!"
     },
     {
       "category": "playerLegHit",
       "index": 2,
       "text": "Kneecapped! The challenger's dancing days are OVER!",
+      "voiceText": "Kneecapped! The challenger's dancing days are Over!",
       "file": "playerLegHit/03.opus",
-      "subtitle": "Kneecapped! The challenger's dancing days are OVER!",
-      "voiceText": "Kneecapped! The challenger's dancing days are OVER!"
+      "subtitle": "Kneecapped! The challenger's dancing days are OVER!"
     },
     {
       "category": "playerLegHit",
       "index": 3,
       "text": "That leg's just decoration now, folks!",
+      "voiceText": "That leg's just decoration now, folks!",
       "file": "playerLegHit/04.opus",
-      "subtitle": "That leg's just decoration now, folks!",
-      "voiceText": "That leg's just decoration now, folks!"
+      "subtitle": "That leg's just decoration now, folks!"
     },
     {
       "category": "playerLegHit",
       "index": 4,
       "text": "The challenger takes one low! Speed just became a memory!",
+      "voiceText": "The challenger takes one low! Speed just became a memory!",
       "file": "playerLegHit/05.opus",
-      "subtitle": "The challenger takes one low! Speed just became a memory!",
-      "voiceText": "The challenger takes one low! Speed just became a memory!"
+      "subtitle": "The challenger takes one low! Speed just became a memory!"
     },
     {
       "category": "playerLegHit",
       "index": 5,
       "text": "Leg hit! Every piece of cover is suddenly much farther away!",
+      "voiceText": "Leg hit! Every piece of cover is suddenly much farther away!",
       "file": "playerLegHit/06.opus",
-      "subtitle": "Leg hit! Every piece of cover is suddenly much farther away!",
-      "voiceText": "Leg hit! Every piece of cover is suddenly much farther away!"
+      "subtitle": "Leg hit! Every piece of cover is suddenly much farther away!"
     },
     {
       "category": "playerLegHit",
       "index": 6,
       "text": "A round finds the leg and steals the challenger's exit plan!",
+      "voiceText": "A round finds the leg and steals the challenger's exit plan!",
       "file": "playerLegHit/07.opus",
-      "subtitle": "A round finds the leg and steals the challenger's exit plan!",
-      "voiceText": "A round finds the leg and steals the challenger's exit plan!"
+      "subtitle": "A round finds the leg and steals the challenger's exit plan!"
     },
     {
       "category": "playerLegHit",
       "index": 7,
       "text": "That knee will not be filing a favorable report!",
+      "voiceText": "That knee will not be filing a favorable report!",
       "file": "playerLegHit/08.opus",
-      "subtitle": "That knee will not be filing a favorable report!",
-      "voiceText": "That knee will not be filing a favorable report!"
+      "subtitle": "That knee will not be filing a favorable report!"
     },
     {
       "category": "playerLegHit",
       "index": 8,
       "text": "Mobility is compromised! The pit just got twice as large!",
+      "voiceText": "Mobility is compromised! The pit just got twice as large!",
       "file": "playerLegHit/09.opus",
-      "subtitle": "Mobility is compromised! The pit just got twice as large!",
-      "voiceText": "Mobility is compromised! The pit just got twice as large!"
+      "subtitle": "Mobility is compromised! The pit just got twice as large!"
     },
     {
       "category": "playerLegHit",
       "index": 9,
       "text": "The challenger is dragging one leg and a rapidly changing betting line!",
+      "voiceText": "The challenger is dragging one leg and a rapidly changing betting line!",
       "file": "playerLegHit/10.opus",
-      "subtitle": "The challenger is dragging one leg and a rapidly changing betting line!",
-      "voiceText": "The challenger is dragging one leg and a rapidly changing betting line!"
+      "subtitle": "The challenger is dragging one leg and a rapidly changing betting line!"
     },
     {
       "category": "playerLow",
       "index": 0,
       "text": "The challenger is one good sneeze away from the morgue!",
+      "voiceText": "The challenger is one good sneeze away from the morgue!",
       "file": "playerLow/01.opus",
-      "subtitle": "The challenger is one good sneeze away from the morgue!",
-      "voiceText": "The challenger is one good sneeze away from the morgue!"
+      "subtitle": "The challenger is one good sneeze away from the morgue!"
     },
     {
       "category": "playerLow",
       "index": 1,
       "text": "Somebody call the cleanup crew — the challenger's on FUMES!",
+      "voiceText": "Somebody call the cleanup crew — the challenger's on Fumes!",
       "file": "playerLow/02.opus",
-      "subtitle": "Somebody call the cleanup crew — the challenger's on FUMES!",
-      "voiceText": "Somebody call the cleanup crew — the challenger's on FUMES!"
+      "subtitle": "Somebody call the cleanup crew — the challenger's on FUMES!"
     },
     {
       "category": "playerLow",
       "index": 2,
       "text": "The challenger's health bar is more of a health SLIVER, folks!",
+      "voiceText": "The challenger's health bar is more of a health Sliver, folks!",
       "file": "playerLow/03.opus",
-      "subtitle": "The challenger's health bar is more of a health SLIVER, folks!",
-      "voiceText": "The challenger's health bar is more of a health SLIVER, folks!"
+      "subtitle": "The challenger's health bar is more of a health SLIVER, folks!"
     },
     {
       "category": "playerLow",
       "index": 3,
       "text": "I've seen corpses with better vitals! Keep those bets coming!",
+      "voiceText": "I've seen corpses with better vitals! Keep those bets coming!",
       "file": "playerLow/04.opus",
-      "subtitle": "I've seen corpses with better vitals! Keep those bets coming!",
-      "voiceText": "I've seen corpses with better vitals! Keep those bets coming!"
+      "subtitle": "I've seen corpses with better vitals! Keep those bets coming!"
     },
     {
       "category": "playerLow",
       "index": 4,
       "text": "The morgue drawer is OPEN and WAITING, challenger!",
+      "voiceText": "The morgue drawer is Open and Waiting, challenger!",
       "file": "playerLow/05.opus",
-      "subtitle": "The morgue drawer is OPEN and WAITING, challenger!",
-      "voiceText": "The morgue drawer is OPEN and WAITING, challenger!"
+      "subtitle": "The morgue drawer is OPEN and WAITING, challenger!"
     },
     {
       "category": "playerLow",
       "index": 5,
       "text": "The challenger is held together by adrenaline and bad accounting!",
+      "voiceText": "The challenger is held together by adrenaline and bad accounting!",
       "file": "playerLow/06.opus",
-      "subtitle": "The challenger is held together by adrenaline and bad accounting!",
-      "voiceText": "The challenger is held together by adrenaline and bad accounting!"
+      "subtitle": "The challenger is held together by adrenaline and bad accounting!"
     },
     {
       "category": "playerLow",
       "index": 6,
       "text": "One more clean hit and this becomes a memorial broadcast!",
+      "voiceText": "One more clean hit and this becomes a memorial broadcast!",
       "file": "playerLow/07.opus",
-      "subtitle": "One more clean hit and this becomes a memorial broadcast!",
-      "voiceText": "One more clean hit and this becomes a memorial broadcast!"
+      "subtitle": "One more clean hit and this becomes a memorial broadcast!"
     },
     {
       "category": "playerLow",
       "index": 7,
       "text": "Very little blood left inside the challenger, folks!",
+      "voiceText": "Very little blood left inside the challenger, folks!",
       "file": "playerLow/08.opus",
-      "subtitle": "Very little blood left inside the challenger, folks!",
-      "voiceText": "Very little blood left inside the challenger, folks!"
+      "subtitle": "Very little blood left inside the challenger, folks!"
     },
     {
       "category": "playerLow",
       "index": 8,
       "text": "The margin is gone! Every corner is now a life decision!",
+      "voiceText": "The margin is gone! Every corner is now a life decision!",
       "file": "playerLow/09.opus",
-      "subtitle": "The margin is gone! Every corner is now a life decision!",
-      "voiceText": "The margin is gone! Every corner is now a life decision!"
+      "subtitle": "The margin is gone! Every corner is now a life decision!"
     },
     {
       "category": "playerLow",
       "index": 9,
       "text": "The challenger is operating on fumes, spite, and borrowed time!",
+      "voiceText": "The challenger is operating on fumes, spite, and borrowed time!",
       "file": "playerLow/10.opus",
-      "subtitle": "The challenger is operating on fumes, spite, and borrowed time!",
-      "voiceText": "The challenger is operating on fumes, spite, and borrowed time!"
+      "subtitle": "The challenger is operating on fumes, spite, and borrowed time!"
     },
     {
       "category": "playerLow",
       "index": 10,
       "text": "That pulse is becoming a limited-time offer!",
+      "voiceText": "That pulse is becoming a limited-time offer!",
       "file": "playerLow/11.opus",
-      "subtitle": "That pulse is becoming a limited-time offer!",
-      "voiceText": "That pulse is becoming a limited-time offer!"
+      "subtitle": "That pulse is becoming a limited-time offer!"
     },
     {
       "category": "lastEnemy",
       "index": 0,
       "text": "ONE LEFT! Finish it and get PAID!",
+      "voiceText": "One Left! Finish it and get Paid!",
       "file": "lastEnemy/01.opus",
-      "subtitle": "ONE LEFT! Finish it and get PAID!",
-      "voiceText": "ONE LEFT! Finish it and get PAID!"
+      "subtitle": "ONE LEFT! Finish it and get PAID!"
     },
     {
       "category": "lastEnemy",
       "index": 1,
       "text": "Last man standing on the away team! The crowd wants a FINISHER!",
+      "voiceText": "Last man standing on the away team! The crowd wants a Finisher!",
       "file": "lastEnemy/02.opus",
-      "subtitle": "Last man standing on the away team! The crowd wants a FINISHER!",
-      "voiceText": "Last man standing on the away team! The crowd wants a FINISHER!"
+      "subtitle": "Last man standing on the away team! The crowd wants a FINISHER!"
     },
     {
       "category": "lastEnemy",
       "index": 2,
       "text": "Down to ONE! Somebody's about to be very lonely, then very dead!",
+      "voiceText": "Down to One! Somebody's about to be very lonely, then very dead!",
       "file": "lastEnemy/03.opus",
-      "subtitle": "Down to ONE! Somebody's about to be very lonely, then very dead!",
-      "voiceText": "Down to ONE! Somebody's about to be very lonely, then very dead!"
+      "subtitle": "Down to ONE! Somebody's about to be very lonely, then very dead!"
     },
     {
       "category": "lastEnemy",
       "index": 3,
       "text": "One straggler left, folks — this is the sad part. I LOVE the sad part!",
+      "voiceText": "One straggler left, folks — this is the sad part. I Love the sad part!",
       "file": "lastEnemy/04.opus",
-      "subtitle": "One straggler left, folks — this is the sad part. I LOVE the sad part!",
-      "voiceText": "One straggler left, folks — this is the sad part. I LOVE the sad part!"
+      "subtitle": "One straggler left, folks — this is the sad part. I LOVE the sad part!"
     },
     {
       "category": "lastEnemy",
       "index": 4,
       "text": "The whole crew is gone except one very nervous volunteer!",
+      "voiceText": "The whole crew is gone except one very nervous volunteer!",
       "file": "lastEnemy/05.opus",
-      "subtitle": "The whole crew is gone except one very nervous volunteer!",
-      "voiceText": "The whole crew is gone except one very nervous volunteer!"
+      "subtitle": "The whole crew is gone except one very nervous volunteer!"
     },
     {
       "category": "lastEnemy",
       "index": 5,
       "text": "Final target! No reinforcements, no excuses, nowhere to hide!",
+      "voiceText": "Final target! No reinforcements, no excuses, nowhere to hide!",
       "file": "lastEnemy/06.opus",
-      "subtitle": "Final target! No reinforcements, no excuses, nowhere to hide!",
-      "voiceText": "Final target! No reinforcements, no excuses, nowhere to hide!"
+      "subtitle": "Final target! No reinforcements, no excuses, nowhere to hide!"
     },
     {
       "category": "lastEnemy",
       "index": 6,
       "text": "One opponent remains between the challenger and the payout!",
+      "voiceText": "One opponent remains between the challenger and the payout!",
       "file": "lastEnemy/07.opus",
-      "subtitle": "One opponent remains between the challenger and the payout!",
-      "voiceText": "One opponent remains between the challenger and the payout!"
+      "subtitle": "One opponent remains between the challenger and the payout!"
     },
     {
       "category": "lastEnemy",
       "index": 7,
       "text": "Last gun on the other side! Close the account!",
+      "voiceText": "Last gun on the other side! Close the account!",
       "file": "lastEnemy/08.opus",
-      "subtitle": "Last gun on the other side! Close the account!",
-      "voiceText": "Last gun on the other side! Close the account!"
+      "subtitle": "Last gun on the other side! Close the account!"
     },
     {
       "category": "lastEnemy",
       "index": 8,
       "text": "The numbers say one. The crowd says FINISH IT!",
+      "voiceText": "The numbers say one. The crowd says Finish It!",
       "file": "lastEnemy/09.opus",
-      "subtitle": "The numbers say one. The crowd says FINISH IT!",
-      "voiceText": "The numbers say one. The crowd says FINISH IT!"
+      "subtitle": "The numbers say one. The crowd says FINISH IT!"
     },
     {
       "category": "lastEnemy",
       "index": 9,
       "text": "Everybody else is down. One fighter gets the full attention now!",
+      "voiceText": "Everybody else is down. One fighter gets the full attention now!",
       "file": "lastEnemy/10.opus",
-      "subtitle": "Everybody else is down. One fighter gets the full attention now!",
-      "voiceText": "Everybody else is down. One fighter gets the full attention now!"
+      "subtitle": "Everybody else is down. One fighter gets the full attention now!"
     },
     {
       "category": "win",
       "index": 0,
       "text": "IT'S OVER! The challenger takes the bout! PAY THE MAN!",
+      "voiceText": "It's Over! The challenger takes the bout! Pay The Man!",
       "file": "win/01.opus",
-      "subtitle": "IT'S OVER! The challenger takes the bout! PAY THE MAN!",
-      "voiceText": "IT'S OVER! The challenger takes the bout! PAY THE MAN!"
+      "subtitle": "IT'S OVER! The challenger takes the bout! PAY THE MAN!"
     },
     {
       "category": "win",
       "index": 1,
       "text": "CLEAN SWEEP! The pit has a new favorite, ladies and gentlemen!",
+      "voiceText": "Clean Sweep! The pit has a new favorite, ladies and gentlemen!",
       "file": "win/02.opus",
-      "subtitle": "CLEAN SWEEP! The pit has a new favorite, ladies and gentlemen!",
-      "voiceText": "CLEAN SWEEP! The pit has a new favorite, ladies and gentlemen!"
+      "subtitle": "CLEAN SWEEP! The pit has a new favorite, ladies and gentlemen!"
     },
     {
       "category": "win",
       "index": 2,
       "text": "The bell rings and the challenger STANDS! What a show!",
+      "voiceText": "The bell rings and the challenger Stands! What a show!",
       "file": "win/03.opus",
-      "subtitle": "The bell rings and the challenger STANDS! What a show!",
-      "voiceText": "The bell rings and the challenger STANDS! What a show!"
+      "subtitle": "The bell rings and the challenger STANDS! What a show!"
     },
     {
       "category": "win",
       "index": 3,
       "text": "VICTORY! Cue the confetti — it's red, we buy in bulk!",
+      "voiceText": "Victory! Cue the confetti — it's red, we buy in bulk!",
       "file": "win/04.opus",
-      "subtitle": "VICTORY! Cue the confetti — it's red, we buy in bulk!",
-      "voiceText": "VICTORY! Cue the confetti — it's red, we buy in bulk!"
+      "subtitle": "VICTORY! Cue the confetti — it's red, we buy in bulk!"
     },
     {
       "category": "win",
       "index": 4,
       "text": "The away team is now a CLEANUP ITEM! Challenger wins!",
+      "voiceText": "The away team is now a Cleanup Item! Challenger wins!",
       "file": "win/05.opus",
-      "subtitle": "The away team is now a CLEANUP ITEM! Challenger wins!",
-      "voiceText": "The away team is now a CLEANUP ITEM! Challenger wins!"
+      "subtitle": "The away team is now a CLEANUP ITEM! Challenger wins!"
     },
     {
       "category": "win",
       "index": 5,
       "text": "The odds board weeps, the crowd ROARS — what a bout!",
+      "voiceText": "The odds board weeps, the crowd Roars — what a bout!",
       "file": "win/06.opus",
-      "subtitle": "The odds board weeps, the crowd ROARS — what a bout!",
-      "voiceText": "The odds board weeps, the crowd ROARS — what a bout!"
+      "subtitle": "The odds board weeps, the crowd ROARS — what a bout!"
     },
     {
       "category": "win",
       "index": 6,
       "text": "Winner winner — someone else's dinner! The challenger advances!",
+      "voiceText": "Winner winner — someone else's dinner! The challenger advances!",
       "file": "win/07.opus",
-      "subtitle": "Winner winner — someone else's dinner! The challenger advances!",
-      "voiceText": "Winner winner — someone else's dinner! The challenger advances!"
+      "subtitle": "Winner winner — someone else's dinner! The challenger advances!"
     },
     {
       "category": "win",
       "index": 7,
       "text": "BELL! The challenger owns the floor and the house owes a payout!",
+      "voiceText": "Bell! The challenger owns the floor and the house owes a payout!",
       "file": "win/08.opus",
-      "subtitle": "BELL! The challenger owns the floor and the house owes a payout!",
-      "voiceText": "BELL! The challenger owns the floor and the house owes a payout!"
+      "subtitle": "BELL! The challenger owns the floor and the house owes a payout!"
     },
     {
       "category": "win",
       "index": 8,
       "text": "That is the bout! One crew standing, one crew becoming inventory!",
+      "voiceText": "That is the bout! One crew standing, one crew becoming inventory!",
       "file": "win/09.opus",
-      "subtitle": "That is the bout! One crew standing, one crew becoming inventory!",
-      "voiceText": "That is the bout! One crew standing, one crew becoming inventory!"
+      "subtitle": "That is the bout! One crew standing, one crew becoming inventory!"
     },
     {
       "category": "win",
       "index": 9,
       "text": "The challenger survives the card and climbs another rung!",
+      "voiceText": "The challenger survives the card and climbs another rung!",
       "file": "win/10.opus",
-      "subtitle": "The challenger survives the card and climbs another rung!",
-      "voiceText": "The challenger survives the card and climbs another rung!"
+      "subtitle": "The challenger survives the card and climbs another rung!"
     },
     {
       "category": "win",
       "index": 10,
       "text": "Close the book on this one! The challenger takes it clean!",
+      "voiceText": "Close the book on this one! The challenger takes it clean!",
       "file": "win/11.opus",
-      "subtitle": "Close the book on this one! The challenger takes it clean!",
-      "voiceText": "Close the book on this one! The challenger takes it clean!"
+      "subtitle": "Close the book on this one! The challenger takes it clean!"
     },
     {
       "category": "win",
       "index": 11,
       "text": "The pit asked a question and the challenger answered with gunfire!",
+      "voiceText": "The pit asked a question and the challenger answered with gunfire!",
       "file": "win/12.opus",
-      "subtitle": "The pit asked a question and the challenger answered with gunfire!",
-      "voiceText": "The pit asked a question and the challenger answered with gunfire!"
+      "subtitle": "The pit asked a question and the challenger answered with gunfire!"
     },
     {
       "category": "win",
       "index": 12,
       "text": "Victory confirmed! Count the living, count the money, move along!",
+      "voiceText": "Victory confirmed! Count the living, count the money, move along!",
       "file": "win/13.opus",
-      "subtitle": "Victory confirmed! Count the living, count the money, move along!",
-      "voiceText": "Victory confirmed! Count the living, count the money, move along!"
+      "subtitle": "Victory confirmed! Count the living, count the money, move along!"
     },
     {
       "category": "win",
       "index": 13,
       "text": "The challenger gets the win and the cleanup crew gets overtime!",
+      "voiceText": "The challenger gets the win and the cleanup crew gets overtime!",
       "file": "win/14.opus",
-      "subtitle": "The challenger gets the win and the cleanup crew gets overtime!",
-      "voiceText": "The challenger gets the win and the cleanup crew gets overtime!"
+      "subtitle": "The challenger gets the win and the cleanup crew gets overtime!"
     },
     {
       "category": "win",
       "index": 14,
       "text": "Another rank falls! The view from the top just got a little clearer!",
+      "voiceText": "Another rank falls! The view from the top just got a little clearer!",
       "file": "win/15.opus",
-      "subtitle": "Another rank falls! The view from the top just got a little clearer!",
-      "voiceText": "Another rank falls! The view from the top just got a little clearer!"
+      "subtitle": "Another rank falls! The view from the top just got a little clearer!"
     },
     {
       "category": "lose",
       "index": 0,
       "text": "Annnnd the challenger is DOWN. Scrape 'em up, boys.",
+      "voiceText": "Annnnd the challenger is Down. Scrape 'em up, boys.",
       "file": "lose/01.opus",
-      "subtitle": "Annnnd the challenger is DOWN. Scrape 'em up, boys.",
-      "voiceText": "Annnnd the challenger is DOWN. Scrape 'em up, boys."
+      "subtitle": "Annnnd the challenger is DOWN. Scrape 'em up, boys."
     },
     {
       "category": "lose",
       "index": 1,
       "text": "The house wins again, folks. It always does.",
+      "voiceText": "The house wins again, folks. It always does.",
       "file": "lose/02.opus",
-      "subtitle": "The house wins again, folks. It always does.",
-      "voiceText": "The house wins again, folks. It always does."
+      "subtitle": "The house wins again, folks. It always does."
     },
     {
       "category": "lose",
       "index": 2,
       "text": "That's a wrap on the challenger. Cleanup on aisle EVERYWHERE.",
+      "voiceText": "That's a wrap on the challenger. Cleanup on aisle Everywhere.",
       "file": "lose/03.opus",
-      "subtitle": "That's a wrap on the challenger. Cleanup on aisle EVERYWHERE.",
-      "voiceText": "That's a wrap on the challenger. Cleanup on aisle EVERYWHERE."
+      "subtitle": "That's a wrap on the challenger. Cleanup on aisle EVERYWHERE."
     },
     {
       "category": "lose",
       "index": 3,
       "text": "The challenger has decided to become part of the floor. Respect.",
+      "voiceText": "The challenger has decided to become part of the floor. Respect.",
       "file": "lose/04.opus",
-      "subtitle": "The challenger has decided to become part of the floor. Respect.",
-      "voiceText": "The challenger has decided to become part of the floor. Respect."
+      "subtitle": "The challenger has decided to become part of the floor. Respect."
     },
     {
       "category": "lose",
       "index": 4,
       "text": "Ohh, and the crowd goes... home! Show's over, folks!",
+      "voiceText": "Ohh, and the crowd goes... home! Show's over, folks!",
       "file": "lose/05.opus",
-      "subtitle": "Ohh, and the crowd goes... home! Show's over, folks!",
-      "voiceText": "Ohh, and the crowd goes... home! Show's over, folks!"
+      "subtitle": "Ohh, and the crowd goes... home! Show's over, folks!"
     },
     {
       "category": "lose",
       "index": 5,
       "text": "Someone fetch the stretcher. And a sponge!",
+      "voiceText": "Someone fetch the stretcher. And a sponge!",
       "file": "lose/06.opus",
-      "subtitle": "Someone fetch the stretcher. And a sponge!",
-      "voiceText": "Someone fetch the stretcher. And a sponge!"
+      "subtitle": "Someone fetch the stretcher. And a sponge!"
     },
     {
       "category": "lose",
       "index": 6,
       "text": "The challenger's comeback tour has been POSTPONED. Indefinitely-ish!",
+      "voiceText": "The challenger's comeback tour has been Postponed. Indefinitely-ish!",
       "file": "lose/07.opus",
-      "subtitle": "The challenger's comeback tour has been POSTPONED. Indefinitely-ish!",
-      "voiceText": "The challenger's comeback tour has been POSTPONED. Indefinitely-ish!"
+      "subtitle": "The challenger's comeback tour has been POSTPONED. Indefinitely-ish!"
     },
     {
       "category": "lose",
       "index": 7,
       "text": "That is all, folks. The pit keeps another promising career!",
+      "voiceText": "That is all, folks. The pit keeps another promising career!",
       "file": "lose/08.opus",
-      "subtitle": "That is all, folks. The pit keeps another promising career!",
-      "voiceText": "That is all, folks. The pit keeps another promising career!"
+      "subtitle": "That is all, folks. The pit keeps another promising career!"
     },
     {
       "category": "lose",
       "index": 8,
       "text": "The challenger is finished and the house keeps the lights on!",
+      "voiceText": "The challenger is finished and the house keeps the lights on!",
       "file": "lose/09.opus",
-      "subtitle": "The challenger is finished and the house keeps the lights on!",
-      "voiceText": "The challenger is finished and the house keeps the lights on!"
+      "subtitle": "The challenger is finished and the house keeps the lights on!"
     },
     {
       "category": "lose",
       "index": 9,
       "text": "No miracle tonight. Just a body, a bill, and a losing ticket!",
+      "voiceText": "No miracle tonight. Just a body, a bill, and a losing ticket!",
       "file": "lose/10.opus",
-      "subtitle": "No miracle tonight. Just a body, a bill, and a losing ticket!",
-      "voiceText": "No miracle tonight. Just a body, a bill, and a losing ticket!"
+      "subtitle": "No miracle tonight. Just a body, a bill, and a losing ticket!"
     },
     {
       "category": "lose",
       "index": 10,
       "text": "The last chance is gone! Somebody unlock the cleanup cabinet!",
+      "voiceText": "The last chance is gone! Somebody unlock the cleanup cabinet!",
       "file": "lose/11.opus",
-      "subtitle": "The last chance is gone! Somebody unlock the cleanup cabinet!",
-      "voiceText": "The last chance is gone! Somebody unlock the cleanup cabinet!"
+      "subtitle": "The last chance is gone! Somebody unlock the cleanup cabinet!"
     },
     {
       "category": "lose",
       "index": 11,
       "text": "A hard stop for the challenger. The ladder does not forgive!",
+      "voiceText": "A hard stop for the challenger. The ladder does not forgive!",
       "file": "lose/12.opus",
-      "subtitle": "A hard stop for the challenger. The ladder does not forgive!",
-      "voiceText": "A hard stop for the challenger. The ladder does not forgive!"
+      "subtitle": "A hard stop for the challenger. The ladder does not forgive!"
     },
     {
       "category": "lose",
       "index": 12,
       "text": "The bout ends exactly where the house expected: on the floor!",
+      "voiceText": "The bout ends exactly where the house expected: on the floor!",
       "file": "lose/13.opus",
-      "subtitle": "The bout ends exactly where the house expected: on the floor!",
-      "voiceText": "The bout ends exactly where the house expected: on the floor!"
+      "subtitle": "The bout ends exactly where the house expected: on the floor!"
     },
     {
       "category": "event_lightsout",
       "index": 0,
       "text": "Whoops — did somebody forget to pay the power bill? LIGHTS OUT!",
+      "voiceText": "Whoops — did somebody forget to pay the power bill? Lights Out!",
       "file": "event_lightsout/01.opus",
-      "subtitle": "Whoops — did somebody forget to pay the power bill? LIGHTS OUT!",
-      "voiceText": "Whoops — did somebody forget to pay the power bill? LIGHTS OUT!"
+      "subtitle": "Whoops — did somebody forget to pay the power bill? LIGHTS OUT!"
     },
     {
       "category": "event_lightsout",
       "index": 1,
       "text": "Let's make it interesting — KILL THE LIGHTS!",
+      "voiceText": "Let's make it interesting — Kill The Lights!",
       "file": "event_lightsout/02.opus",
-      "subtitle": "Let's make it interesting — KILL THE LIGHTS!",
-      "voiceText": "Let's make it interesting — KILL THE LIGHTS!"
+      "subtitle": "Let's make it interesting — KILL THE LIGHTS!"
     },
     {
       "category": "event_lightsout",
       "index": 2,
       "text": "Total darkness, folks! The screaming really carries in the dark!",
+      "voiceText": "Total darkness, folks! The screaming really carries in the dark!",
       "file": "event_lightsout/03.opus",
-      "subtitle": "Total darkness, folks! The screaming really carries in the dark!",
-      "voiceText": "Total darkness, folks! The screaming really carries in the dark!"
+      "subtitle": "Total darkness, folks! The screaming really carries in the dark!"
     },
     {
       "category": "event_lightsout",
       "index": 3,
       "text": "Lights out! Muzzle flashes only — it's ROMANTIC!",
+      "voiceText": "Lights out! Muzzle flashes only — it's Romantic!",
       "file": "event_lightsout/04.opus",
-      "subtitle": "Lights out! Muzzle flashes only — it's ROMANTIC!",
-      "voiceText": "Lights out! Muzzle flashes only — it's ROMANTIC!"
+      "subtitle": "Lights out! Muzzle flashes only — it's ROMANTIC!"
     },
     {
       "category": "event_lightsout",
       "index": 4,
       "text": "Blackout in the pit! Aim for the noise and apologize later!",
+      "voiceText": "Blackout in the pit! Aim for the noise and apologize later!",
       "file": "event_lightsout/05.opus",
-      "subtitle": "Blackout in the pit! Aim for the noise and apologize later!",
-      "voiceText": "Blackout in the pit! Aim for the noise and apologize later!"
+      "subtitle": "Blackout in the pit! Aim for the noise and apologize later!"
     },
     {
       "category": "event_lightsout",
       "index": 5,
       "text": "The house kills the lamps! Every shadow just picked up a weapon!",
+      "voiceText": "The house kills the lamps! Every shadow just picked up a weapon!",
       "file": "event_lightsout/06.opus",
-      "subtitle": "The house kills the lamps! Every shadow just picked up a weapon!",
-      "voiceText": "The house kills the lamps! Every shadow just picked up a weapon!"
+      "subtitle": "The house kills the lamps! Every shadow just picked up a weapon!"
     },
     {
       "category": "event_lightsout",
       "index": 6,
       "text": "Darkness, folks! Suddenly every muzzle flash is a confession!",
+      "voiceText": "Darkness, folks! Suddenly every muzzle flash is a confession!",
       "file": "event_lightsout/07.opus",
-      "subtitle": "Darkness, folks! Suddenly every muzzle flash is a confession!",
-      "voiceText": "Darkness, folks! Suddenly every muzzle flash is a confession!"
+      "subtitle": "Darkness, folks! Suddenly every muzzle flash is a confession!"
     },
     {
       "category": "event_lightsout",
       "index": 7,
       "text": "Visibility is cancelled until further notice! Good luck in there!",
+      "voiceText": "Visibility is cancelled until further notice! Good luck in there!",
       "file": "event_lightsout/08.opus",
-      "subtitle": "Visibility is cancelled until further notice! Good luck in there!",
-      "voiceText": "Visibility is cancelled until further notice! Good luck in there!"
+      "subtitle": "Visibility is cancelled until further notice! Good luck in there!"
     },
     {
       "category": "event_gas",
       "index": 0,
       "text": "We've got a little GAS LEAK, folks! Purely accidental, I'm sure!",
+      "voiceText": "We've got a little Gas Leak, folks! Purely accidental, I'm sure!",
       "file": "event_gas/01.opus",
-      "subtitle": "We've got a little GAS LEAK, folks! Purely accidental, I'm sure!",
-      "voiceText": "We've got a little GAS LEAK, folks! Purely accidental, I'm sure!"
+      "subtitle": "We've got a little GAS LEAK, folks! Purely accidental, I'm sure!"
     },
     {
       "category": "event_gas",
       "index": 1,
       "text": "The management apologizes for the toxic fumes. The management is LYING!",
+      "voiceText": "The management apologizes for the toxic fumes. The management is Lying!",
       "file": "event_gas/02.opus",
-      "subtitle": "The management apologizes for the toxic fumes. The management is LYING!",
-      "voiceText": "The management apologizes for the toxic fumes. The management is LYING!"
+      "subtitle": "The management apologizes for the toxic fumes. The management is LYING!"
     },
     {
       "category": "event_gas",
       "index": 2,
       "text": "Green cloud on the floor! That's not fog-machine juice, people!",
+      "voiceText": "Green cloud on the floor! That's not fog-machine juice, people!",
       "file": "event_gas/03.opus",
-      "subtitle": "Green cloud on the floor! That's not fog-machine juice, people!",
-      "voiceText": "Green cloud on the floor! That's not fog-machine juice, people!"
+      "subtitle": "Green cloud on the floor! That's not fog-machine juice, people!"
     },
     {
       "category": "event_gas",
       "index": 3,
       "text": "Breathe deep, contestants! Just kidding — DON'T!",
+      "voiceText": "Breathe deep, contestants! Just kidding — Don't!",
       "file": "event_gas/04.opus",
-      "subtitle": "Breathe deep, contestants! Just kidding — DON'T!",
-      "voiceText": "Breathe deep, contestants! Just kidding — DON'T!"
+      "subtitle": "Breathe deep, contestants! Just kidding — DON'T!"
     },
     {
       "category": "event_gas",
       "index": 4,
       "text": "Toxic cloud rolling in! The air has joined the opposing team!",
+      "voiceText": "Toxic cloud rolling in! The air has joined the opposing team!",
       "file": "event_gas/05.opus",
-      "subtitle": "Toxic cloud rolling in! The air has joined the opposing team!",
-      "voiceText": "Toxic cloud rolling in! The air has joined the opposing team!"
+      "subtitle": "Toxic cloud rolling in! The air has joined the opposing team!"
     },
     {
       "category": "event_gas",
       "index": 5,
       "text": "Gas on the floor! Breathing is now a tactical error!",
+      "voiceText": "Gas on the floor! Breathing is now a tactical error!",
       "file": "event_gas/06.opus",
-      "subtitle": "Gas on the floor! Breathing is now a tactical error!",
-      "voiceText": "Gas on the floor! Breathing is now a tactical error!"
+      "subtitle": "Gas on the floor! Breathing is now a tactical error!"
     },
     {
       "category": "event_gas",
       "index": 6,
       "text": "The vents are coughing green and nobody signed a waiver!",
+      "voiceText": "The vents are coughing green and nobody signed a waiver!",
       "file": "event_gas/07.opus",
-      "subtitle": "The vents are coughing green and nobody signed a waiver!",
-      "voiceText": "The vents are coughing green and nobody signed a waiver!"
+      "subtitle": "The vents are coughing green and nobody signed a waiver!"
     },
     {
       "category": "event_gas",
       "index": 7,
       "text": "Fresh poison from management! Find clean air or become floor dressing!",
+      "voiceText": "Fresh poison from management! Find clean air or become floor dressing!",
       "file": "event_gas/08.opus",
-      "subtitle": "Fresh poison from management! Find clean air or become floor dressing!",
-      "voiceText": "Fresh poison from management! Find clean air or become floor dressing!"
+      "subtitle": "Fresh poison from management! Find clean air or become floor dressing!"
     },
     {
       "category": "event_frenzy",
       "index": 0,
       "text": "The high rollers just showed up — DOUBLE PAYOUT ON EVERYTHING!",
+      "voiceText": "The high rollers just showed up — Double Payout On Everything!",
       "file": "event_frenzy/01.opus",
-      "subtitle": "The high rollers just showed up — DOUBLE PAYOUT ON EVERYTHING!",
-      "voiceText": "The high rollers just showed up — DOUBLE PAYOUT ON EVERYTHING!"
+      "subtitle": "The high rollers just showed up — DOUBLE PAYOUT ON EVERYTHING!"
     },
     {
       "category": "event_frenzy",
       "index": 1,
       "text": "CROWD FRENZY! Blood money is trading at DOUBLE, people!",
+      "voiceText": "Crowd Frenzy! Blood money is trading at Double, people!",
       "file": "event_frenzy/02.opus",
-      "subtitle": "CROWD FRENZY! Blood money is trading at DOUBLE, people!",
-      "voiceText": "CROWD FRENZY! Blood money is trading at DOUBLE, people!"
+      "subtitle": "CROWD FRENZY! Blood money is trading at DOUBLE, people!"
     },
     {
       "category": "event_frenzy",
       "index": 2,
       "text": "The whales are betting! Every kill pays DOUBLE, make it messy!",
+      "voiceText": "The whales are betting! Every kill pays Double, make it messy!",
       "file": "event_frenzy/03.opus",
-      "subtitle": "The whales are betting! Every kill pays DOUBLE, make it messy!",
-      "voiceText": "The whales are betting! Every kill pays DOUBLE, make it messy!"
+      "subtitle": "The whales are betting! Every kill pays DOUBLE, make it messy!"
     },
     {
       "category": "event_frenzy",
       "index": 3,
       "text": "Money's raining, folks! Somebody go EARN it!",
+      "voiceText": "Money's raining, folks! Somebody go Earn it!",
       "file": "event_frenzy/04.opus",
-      "subtitle": "Money's raining, folks! Somebody go EARN it!",
-      "voiceText": "Money's raining, folks! Somebody go EARN it!"
+      "subtitle": "Money's raining, folks! Somebody go EARN it!"
     },
     {
       "category": "event_frenzy",
       "index": 4,
       "text": "The crowd doubles the purse! Every target just got more interesting!",
+      "voiceText": "The crowd doubles the purse! Every target just got more interesting!",
       "file": "event_frenzy/05.opus",
-      "subtitle": "The crowd doubles the purse! Every target just got more interesting!",
-      "voiceText": "The crowd doubles the purse! Every target just got more interesting!"
+      "subtitle": "The crowd doubles the purse! Every target just got more interesting!"
     },
     {
       "category": "event_frenzy",
       "index": 5,
       "text": "Double money is live! Violence has entered a bull market!",
+      "voiceText": "Double money is live! Violence has entered a bull market!",
       "file": "event_frenzy/06.opus",
-      "subtitle": "Double money is live! Violence has entered a bull market!",
-      "voiceText": "Double money is live! Violence has entered a bull market!"
+      "subtitle": "Double money is live! Violence has entered a bull market!"
     },
     {
       "category": "event_frenzy",
       "index": 6,
       "text": "The big spenders want action and the house is paying twice!",
+      "voiceText": "The big spenders want action and the house is paying twice!",
       "file": "event_frenzy/07.opus",
-      "subtitle": "The big spenders want action and the house is paying twice!",
-      "voiceText": "The big spenders want action and the house is paying twice!"
+      "subtitle": "The big spenders want action and the house is paying twice!"
     },
     {
       "category": "event_frenzy",
       "index": 7,
       "text": "Every takedown pays double! This is no time for restraint!",
+      "voiceText": "Every takedown pays double! This is no time for restraint!",
       "file": "event_frenzy/08.opus",
-      "subtitle": "Every takedown pays double! This is no time for restraint!",
-      "voiceText": "Every takedown pays double! This is no time for restraint!"
+      "subtitle": "Every takedown pays double! This is no time for restraint!"
     },
     {
       "category": "event_airdrop",
       "index": 0,
       "text": "A generous sponsor sends their regards — CARE PACKAGE INBOUND!",
+      "voiceText": "A generous sponsor sends their regards — Care Package Inbound!",
       "file": "event_airdrop/01.opus",
-      "subtitle": "A generous sponsor sends their regards — CARE PACKAGE INBOUND!",
-      "voiceText": "A generous sponsor sends their regards — CARE PACKAGE INBOUND!"
+      "subtitle": "A generous sponsor sends their regards — CARE PACKAGE INBOUND!"
     },
     {
       "category": "event_airdrop",
       "index": 1,
       "text": "Supply drop! First come, first SERVED, as in dinner!",
+      "voiceText": "Supply drop! First come, first Served, as in dinner!",
       "file": "event_airdrop/02.opus",
-      "subtitle": "Supply drop! First come, first SERVED, as in dinner!",
-      "voiceText": "Supply drop! First come, first SERVED, as in dinner!"
+      "subtitle": "Supply drop! First come, first SERVED, as in dinner!"
     },
     {
       "category": "event_airdrop",
       "index": 2,
       "text": "Presents from above, folks! No returns, no refunds!",
+      "voiceText": "Presents from above, folks! No returns, no refunds!",
       "file": "event_airdrop/03.opus",
-      "subtitle": "Presents from above, folks! No returns, no refunds!",
-      "voiceText": "Presents from above, folks! No returns, no refunds!"
+      "subtitle": "Presents from above, folks! No returns, no refunds!"
     },
     {
       "category": "event_airdrop",
       "index": 3,
       "text": "Someone up there likes you! Or wants a better show!",
+      "voiceText": "Someone up there likes you! Or wants a better show!",
       "file": "event_airdrop/04.opus",
-      "subtitle": "Someone up there likes you! Or wants a better show!",
-      "voiceText": "Someone up there likes you! Or wants a better show!"
+      "subtitle": "Someone up there likes you! Or wants a better show!"
     },
     {
       "category": "event_airdrop",
       "index": 4,
       "text": "Cargo over the pit! Free equipment, expensive consequences!",
+      "voiceText": "Cargo over the pit! Free equipment, expensive consequences!",
       "file": "event_airdrop/05.opus",
-      "subtitle": "Cargo over the pit! Free equipment, expensive consequences!",
-      "voiceText": "Cargo over the pit! Free equipment, expensive consequences!"
+      "subtitle": "Cargo over the pit! Free equipment, expensive consequences!"
     },
     {
       "category": "event_airdrop",
       "index": 5,
       "text": "The house sends supplies! Fight over them like professionals!",
+      "voiceText": "The house sends supplies! Fight over them like professionals!",
       "file": "event_airdrop/06.opus",
-      "subtitle": "The house sends supplies! Fight over them like professionals!",
-      "voiceText": "The house sends supplies! Fight over them like professionals!"
+      "subtitle": "The house sends supplies! Fight over them like professionals!"
     },
     {
       "category": "event_airdrop",
       "index": 6,
       "text": "A package is dropping and every eye in the room just moved!",
+      "voiceText": "A package is dropping and every eye in the room just moved!",
       "file": "event_airdrop/07.opus",
-      "subtitle": "A package is dropping and every eye in the room just moved!",
-      "voiceText": "A package is dropping and every eye in the room just moved!"
+      "subtitle": "A package is dropping and every eye in the room just moved!"
     },
     {
       "category": "event_airdrop",
       "index": 7,
       "text": "New hardware inbound! Possession is nine tenths of the firefight!",
+      "voiceText": "New hardware inbound! Possession is nine tenths of the firefight!",
       "file": "event_airdrop/08.opus",
-      "subtitle": "New hardware inbound! Possession is nine tenths of the firefight!",
-      "voiceText": "New hardware inbound! Possession is nine tenths of the firefight!"
+      "subtitle": "New hardware inbound! Possession is nine tenths of the firefight!"
     },
     {
       "category": "event_molotov",
       "index": 0,
       "text": "The cheap seats are throwing MOLOTOVS again! Security, do nothing!",
+      "voiceText": "The cheap seats are throwing Molotovs again! Security, do nothing!",
       "file": "event_molotov/01.opus",
-      "subtitle": "The cheap seats are throwing MOLOTOVS again! Security, do nothing!",
-      "voiceText": "The cheap seats are throwing MOLOTOVS again! Security, do nothing!"
+      "subtitle": "The cheap seats are throwing MOLOTOVS again! Security, do nothing!"
     },
     {
       "category": "event_molotov",
       "index": 1,
       "text": "THE FLOOR IS BURNING! Pick a lane and MOVE!",
+      "voiceText": "The Floor Is Burning! Pick a lane and Move!",
       "file": "event_molotov/02.opus",
-      "subtitle": "THE FLOOR IS BURNING! Pick a lane and MOVE!",
-      "voiceText": "THE FLOOR IS BURNING! Pick a lane and MOVE!"
+      "subtitle": "THE FLOOR IS BURNING! Pick a lane and MOVE!"
     },
     {
       "category": "event_molotov",
       "index": 2,
       "text": "It's raining cocktails, folks! The FLAMMABLE kind!",
+      "voiceText": "It's raining cocktails, folks! The Flammable kind!",
       "file": "event_molotov/03.opus",
-      "subtitle": "It's raining cocktails, folks! The FLAMMABLE kind!",
-      "voiceText": "It's raining cocktails, folks! The FLAMMABLE kind!"
+      "subtitle": "It's raining cocktails, folks! The FLAMMABLE kind!"
     },
     {
       "category": "event_molotov",
       "index": 3,
       "text": "Fire on the floor! Marshmallows available at concessions!",
+      "voiceText": "Fire on the floor! Marshmallows available at concessions!",
       "file": "event_molotov/04.opus",
-      "subtitle": "Fire on the floor! Marshmallows available at concessions!",
-      "voiceText": "Fire on the floor! Marshmallows available at concessions!"
+      "subtitle": "Fire on the floor! Marshmallows available at concessions!"
     },
     {
       "category": "event_molotov",
       "index": 4,
       "text": "The pit is burning! Choose your footing with unusual care!",
+      "voiceText": "The pit is burning! Choose your footing with unusual care!",
       "file": "event_molotov/05.opus",
-      "subtitle": "The pit is burning! Choose your footing with unusual care!",
-      "voiceText": "The pit is burning! Choose your footing with unusual care!"
+      "subtitle": "The pit is burning! Choose your footing with unusual care!"
     },
     {
       "category": "event_molotov",
       "index": 5,
       "text": "Open flame in the arena! Management calls this audience participation!",
+      "voiceText": "Open flame in the arena! Management calls this audience participation!",
       "file": "event_molotov/06.opus",
-      "subtitle": "Open flame in the arena! Management calls this audience participation!",
-      "voiceText": "Open flame in the arena! Management calls this audience participation!"
+      "subtitle": "Open flame in the arena! Management calls this audience participation!"
     },
     {
       "category": "event_molotov",
       "index": 6,
       "text": "The floor catches fire and the evacuation plan remains fictional!",
+      "voiceText": "The floor catches fire and the evacuation plan remains fictional!",
       "file": "event_molotov/07.opus",
-      "subtitle": "The floor catches fire and the evacuation plan remains fictional!",
-      "voiceText": "The floor catches fire and the evacuation plan remains fictional!"
+      "subtitle": "The floor catches fire and the evacuation plan remains fictional!"
     },
     {
       "category": "event_molotov",
       "index": 7,
       "text": "Heat rising in the pit! That route is closed unless you enjoy cooking!",
+      "voiceText": "Heat rising in the pit! That route is closed unless you enjoy cooking!",
       "file": "event_molotov/08.opus",
-      "subtitle": "Heat rising in the pit! That route is closed unless you enjoy cooking!",
-      "voiceText": "Heat rising in the pit! That route is closed unless you enjoy cooking!"
+      "subtitle": "Heat rising in the pit! That route is closed unless you enjoy cooking!"
     },
     {
       "category": "bounty",
       "index": 0,
       "text": "The house wants {victim} GONE — TRIPLE money on that head!",
+      "voiceText": "The house wants the target Gone — Triple money on that head!",
       "file": "bounty/01.opus",
-      "subtitle": "The house wants {victim} GONE — TRIPLE money on that head!",
-      "voiceText": "The house wants the target GONE — TRIPLE money on that head!"
+      "subtitle": "The house wants {victim} GONE — TRIPLE money on that head!"
     },
     {
       "category": "bounty",
       "index": 1,
       "text": "BOUNTY on {victim}! Somebody upstairs is settling a score!",
+      "voiceText": "Bounty on the target! Somebody upstairs is settling a score!",
       "file": "bounty/02.opus",
-      "subtitle": "BOUNTY on {victim}! Somebody upstairs is settling a score!",
-      "voiceText": "BOUNTY on the target! Somebody upstairs is settling a score!"
+      "subtitle": "BOUNTY on {victim}! Somebody upstairs is settling a score!"
     },
     {
       "category": "bounty",
       "index": 2,
       "text": "{victim} just became the most valuable target in the building!",
+      "voiceText": "That fighter just became the most valuable target in the building!",
       "file": "bounty/03.opus",
-      "subtitle": "{victim} just became the most valuable target in the building!",
-      "voiceText": "That fighter just became the most valuable target in the building!"
+      "subtitle": "{victim} just became the most valuable target in the building!"
     },
     {
       "category": "bounty",
       "index": 3,
       "text": "The price just went up on {victim}! Triple return for a clean removal!",
+      "voiceText": "The price just went up on the target! Triple return for a clean removal!",
       "file": "bounty/04.opus",
-      "subtitle": "The price just went up on {victim}! Triple return for a clean removal!",
-      "voiceText": "The price just went up on the target! Triple return for a clean removal!"
+      "subtitle": "The price just went up on {victim}! Triple return for a clean removal!"
     },
     {
       "category": "bounty",
       "index": 4,
       "text": "House bounty declared! {victim} is now everybody's favorite investment!",
+      "voiceText": "House bounty declared! the target is now everybody's favorite investment!",
       "file": "bounty/05.opus",
-      "subtitle": "House bounty declared! {victim} is now everybody's favorite investment!",
-      "voiceText": "House bounty declared! the target is now everybody's favorite investment!"
+      "subtitle": "House bounty declared! {victim} is now everybody's favorite investment!"
     },
     {
       "category": "bounty",
       "index": 5,
       "text": "Three times the money for {victim}! Try not to look too popular!",
+      "voiceText": "Three times the money for the target! Try not to look too popular!",
       "file": "bounty/06.opus",
-      "subtitle": "Three times the money for {victim}! Try not to look too popular!",
-      "voiceText": "Three times the money for the target! Try not to look too popular!"
+      "subtitle": "Three times the money for {victim}! Try not to look too popular!"
     },
     {
       "category": "bounty",
       "index": 6,
       "text": "The board lights up around {victim}! That head is worth a fortune!",
+      "voiceText": "The board lights up around the target! That head is worth a fortune!",
       "file": "bounty/07.opus",
-      "subtitle": "The board lights up around {victim}! That head is worth a fortune!",
-      "voiceText": "The board lights up around the target! That head is worth a fortune!"
+      "subtitle": "The board lights up around {victim}! That head is worth a fortune!"
     },
     {
       "category": "bloodrules",
       "index": 0,
       "text": "BLOOD RULES, people! Everything hits HARDER for the next fifteen!",
+      "voiceText": "Blood Rules, people! Everything hits Harder for the next fifteen!",
       "file": "bloodrules/01.opus",
-      "subtitle": "BLOOD RULES, people! Everything hits HARDER for the next fifteen!",
-      "voiceText": "BLOOD RULES, people! Everything hits HARDER for the next fifteen!"
+      "subtitle": "BLOOD RULES, people! Everything hits HARDER for the next fifteen!"
     },
     {
       "category": "bloodrules",
       "index": 1,
       "text": "The commission has waived the safety margins! Enjoy!",
+      "voiceText": "The commission has waived the safety margins! Enjoy!",
       "file": "bloodrules/02.opus",
-      "subtitle": "The commission has waived the safety margins! Enjoy!",
-      "voiceText": "The commission has waived the safety margins! Enjoy!"
+      "subtitle": "The commission has waived the safety margins! Enjoy!"
     },
     {
       "category": "bloodrules",
       "index": 2,
       "text": "Thin skin time, folks! EVERYONE bleeds double!",
+      "voiceText": "Thin skin time, folks! Everyone bleeds double!",
       "file": "bloodrules/03.opus",
-      "subtitle": "Thin skin time, folks! EVERYONE bleeds double!",
-      "voiceText": "Thin skin time, folks! EVERYONE bleeds double!"
+      "subtitle": "Thin skin time, folks! EVERYONE bleeds double!"
     },
     {
       "category": "bloodrules",
       "index": 3,
       "text": "Damage limits are off! Every mistake now arrives twice as hard!",
+      "voiceText": "Damage limits are off! Every mistake now arrives twice as hard!",
       "file": "bloodrules/04.opus",
-      "subtitle": "Damage limits are off! Every mistake now arrives twice as hard!",
-      "voiceText": "Damage limits are off! Every mistake now arrives twice as hard!"
+      "subtitle": "Damage limits are off! Every mistake now arrives twice as hard!"
     },
     {
       "category": "bloodrules",
       "index": 4,
       "text": "The gloves are off and the ammunition has teeth! BLOOD RULES!",
+      "voiceText": "The gloves are off and the ammunition has teeth! Blood Rules!",
       "file": "bloodrules/05.opus",
-      "subtitle": "The gloves are off and the ammunition has teeth! BLOOD RULES!",
-      "voiceText": "The gloves are off and the ammunition has teeth! BLOOD RULES!"
+      "subtitle": "The gloves are off and the ammunition has teeth! BLOOD RULES!"
     },
     {
       "category": "bloodrules",
       "index": 5,
       "text": "House safety is suspended! Expect shorter arguments from here!",
+      "voiceText": "House safety is suspended! Expect shorter arguments from here!",
       "file": "bloodrules/06.opus",
-      "subtitle": "House safety is suspended! Expect shorter arguments from here!",
-      "voiceText": "House safety is suspended! Expect shorter arguments from here!"
+      "subtitle": "House safety is suspended! Expect shorter arguments from here!"
     },
     {
       "category": "bloodrules",
       "index": 6,
       "text": "Blood rules active! Cover matters twice and courage matters half!",
+      "voiceText": "Blood rules active! Cover matters twice and courage matters half!",
       "file": "bloodrules/07.opus",
-      "subtitle": "Blood rules active! Cover matters twice and courage matters half!",
-      "voiceText": "Blood rules active! Cover matters twice and courage matters half!"
+      "subtitle": "Blood rules active! Cover matters twice and courage matters half!"
     },
     {
       "category": "teamkill",
       "index": 0,
       "text": "THE CHALLENGER SHOT HIS OWN MAN! The bookies are LOSING it!",
+      "voiceText": "The Challenger Shot His Own Man! The bookies are Losing it!",
       "file": "teamkill/01.opus",
-      "subtitle": "THE CHALLENGER SHOT HIS OWN MAN! The bookies are LOSING it!",
-      "voiceText": "THE CHALLENGER SHOT HIS OWN MAN! The bookies are LOSING it!"
+      "subtitle": "THE CHALLENGER SHOT HIS OWN MAN! The bookies are LOSING it!"
     },
     {
       "category": "teamkill",
       "index": 1,
       "text": "Friendly fire! {victim} would like a word. From the floor!",
+      "voiceText": "Friendly fire! the target would like a word. From the floor!",
       "file": "teamkill/02.opus",
-      "subtitle": "Friendly fire! {victim} would like a word. From the floor!",
-      "voiceText": "Friendly fire! the target would like a word. From the floor!"
+      "subtitle": "Friendly fire! {victim} would like a word. From the floor!"
     },
     {
       "category": "teamkill",
       "index": 2,
       "text": "Oh no. Oh no no no. That was YOUR GUY, genius!",
+      "voiceText": "Oh no. Oh no no no. That was Your Guy, genius!",
       "file": "teamkill/03.opus",
-      "subtitle": "Oh no. Oh no no no. That was YOUR GUY, genius!",
-      "voiceText": "Oh no. Oh no no no. That was YOUR GUY, genius!"
+      "subtitle": "Oh no. Oh no no no. That was YOUR GUY, genius!"
     },
     {
       "category": "teamkill",
       "index": 3,
       "text": "Somebody explain trigger discipline to our challenger! {victim} paid the tuition!",
+      "voiceText": "Somebody explain trigger discipline to our challenger! the target paid the tuition!",
       "file": "teamkill/04.opus",
-      "subtitle": "Somebody explain trigger discipline to our challenger! {victim} paid the tuition!",
-      "voiceText": "Somebody explain trigger discipline to our challenger! the target paid the tuition!"
+      "subtitle": "Somebody explain trigger discipline to our challenger! {victim} paid the tuition!"
     },
     {
       "category": "nade",
       "index": 0,
       "text": "FRAG OUT! Somebody's about to have a very loud problem!",
+      "voiceText": "Frag Out! Somebody's about to have a very loud problem!",
       "file": "nade/01.opus",
-      "subtitle": "FRAG OUT! Somebody's about to have a very loud problem!",
-      "voiceText": "FRAG OUT! Somebody's about to have a very loud problem!"
+      "subtitle": "FRAG OUT! Somebody's about to have a very loud problem!"
     },
     {
       "category": "nade",
       "index": 1,
       "text": "Live grenade on the floor, folks! Place your bets on the shrapnel!",
+      "voiceText": "Live grenade on the floor, folks! Place your bets on the shrapnel!",
       "file": "nade/02.opus",
-      "subtitle": "Live grenade on the floor, folks! Place your bets on the shrapnel!",
-      "voiceText": "Live grenade on the floor, folks! Place your bets on the shrapnel!"
+      "subtitle": "Live grenade on the floor, folks! Place your bets on the shrapnel!"
     },
     {
       "category": "nade",
       "index": 2,
       "text": "Oh-ho, the pineapple express has DEPARTED!",
+      "voiceText": "Oh-ho, the pineapple express has Departed!",
       "file": "nade/03.opus",
-      "subtitle": "Oh-ho, the pineapple express has DEPARTED!",
-      "voiceText": "Oh-ho, the pineapple express has DEPARTED!"
+      "subtitle": "Oh-ho, the pineapple express has DEPARTED!"
     },
     {
       "category": "nade",
       "index": 3,
       "text": "Grenade in play! Fun fact: it does not care who you are!",
+      "voiceText": "Grenade in play! Fun fact: it does not care who you are!",
       "file": "nade/04.opus",
-      "subtitle": "Grenade in play! Fun fact: it does not care who you are!",
-      "voiceText": "Grenade in play! Fun fact: it does not care who you are!"
+      "subtitle": "Grenade in play! Fun fact: it does not care who you are!"
     },
     {
       "category": "nade",
       "index": 4,
       "text": "Somebody dropped a party favor! RSVP: everyone nearby!",
+      "voiceText": "Somebody dropped a party favor! R. S. V. P.: everyone nearby!",
       "file": "nade/05.opus",
-      "subtitle": "Somebody dropped a party favor! RSVP: everyone nearby!",
-      "voiceText": "Somebody dropped a party favor! RSVP: everyone nearby!"
+      "subtitle": "Somebody dropped a party favor! RSVP: everyone nearby!"
     },
     {
       "category": "nade",
       "index": 5,
       "text": "That ticking sound? That's the sound of POOR DECISIONS incoming!",
+      "voiceText": "That ticking sound? That's the sound of Poor Decisions incoming!",
       "file": "nade/06.opus",
-      "subtitle": "That ticking sound? That's the sound of POOR DECISIONS incoming!",
-      "voiceText": "That ticking sound? That's the sound of POOR DECISIONS incoming!"
+      "subtitle": "That ticking sound? That's the sound of POOR DECISIONS incoming!"
     },
     {
       "category": "bored",
       "index": 0,
       "text": "The crowd paid for BLOOD, not a stakeout, challenger!",
+      "voiceText": "The crowd paid for Blood, not a stakeout, challenger!",
       "file": "bored/01.opus",
-      "subtitle": "The crowd paid for BLOOD, not a stakeout, challenger!",
-      "voiceText": "The crowd paid for BLOOD, not a stakeout, challenger!"
+      "subtitle": "The crowd paid for BLOOD, not a stakeout, challenger!"
     },
     {
       "category": "bored",
       "index": 1,
       "text": "Our challenger appears to have taken ROOT, folks! Management is preparing... motivation!",
+      "voiceText": "Our challenger appears to have taken Root, folks! Management is preparing... motivation!",
       "file": "bored/02.opus",
-      "subtitle": "Our challenger appears to have taken ROOT, folks! Management is preparing... motivation!",
-      "voiceText": "Our challenger appears to have taken ROOT, folks! Management is preparing... motivation!"
+      "subtitle": "Our challenger appears to have taken ROOT, folks! Management is preparing... motivation!"
     },
     {
       "category": "bored",
       "index": 2,
       "text": "BO-RING! Somebody light a fire under this one. That can be arranged, actually!",
+      "voiceText": "Boring! Somebody light a fire under this one. That can be arranged, actually!",
       "file": "bored/03.opus",
-      "subtitle": "BO-RING! Somebody light a fire under this one. That can be arranged, actually!",
-      "voiceText": "BO-RING! Somebody light a fire under this one. That can be arranged, actually!"
+      "subtitle": "BO-RING! Somebody light a fire under this one. That can be arranged, actually!"
     },
     {
       "category": "bored",
       "index": 3,
       "text": "Folks, I've seen furniture with more footwork. MOVE!",
+      "voiceText": "Folks, I've seen furniture with more footwork. Move!",
       "file": "bored/04.opus",
-      "subtitle": "Folks, I've seen furniture with more footwork. MOVE!",
-      "voiceText": "Folks, I've seen furniture with more footwork. MOVE!"
+      "subtitle": "Folks, I've seen furniture with more footwork. MOVE!"
     },
     {
       "category": "bored",
       "index": 4,
       "text": "Is the challenger NAPPING? Wake-up call is being arranged!",
+      "voiceText": "Is the challenger Napping? Wake-up call is being arranged!",
       "file": "bored/05.opus",
-      "subtitle": "Is the challenger NAPPING? Wake-up call is being arranged!",
-      "voiceText": "Is the challenger NAPPING? Wake-up call is being arranged!"
+      "subtitle": "Is the challenger NAPPING? Wake-up call is being arranged!"
     },
     {
       "category": "bored",
       "index": 5,
       "text": "This isn't hide and seek, kid! The crowd found you HOURS ago!",
+      "voiceText": "This isn't hide and seek, kid! The crowd found you Hours ago!",
       "file": "bored/06.opus",
-      "subtitle": "This isn't hide and seek, kid! The crowd found you HOURS ago!",
-      "voiceText": "This isn't hide and seek, kid! The crowd found you HOURS ago!"
+      "subtitle": "This isn't hide and seek, kid! The crowd found you HOURS ago!"
     },
     {
       "category": "bossIntro",
       "index": 0,
       "text": "And now... undefeated in THIRTY-ONE bouts... the man, the monster... GOLIATH!",
+      "voiceText": "And now... undefeated in Thirty-One bouts... the man, the monster... Goliath!",
       "file": "bossIntro/01.opus",
-      "subtitle": "And now... undefeated in THIRTY-ONE bouts... the man, the monster... GOLIATH!",
-      "voiceText": "And now... undefeated in THIRTY-ONE bouts... the man, the monster... GOLIATH!"
+      "subtitle": "And now... undefeated in THIRTY-ONE bouts... the man, the monster... GOLIATH!"
     },
     {
       "category": "bossIntro",
       "index": 1,
       "text": "Hide the children, cancel the ambulance — it's too late for all that. GOLIATH IS HERE!",
+      "voiceText": "Hide the children, cancel the ambulance — it's too late for all that. Goliath Is Here!",
       "file": "bossIntro/02.opus",
-      "subtitle": "Hide the children, cancel the ambulance — it's too late for all that. GOLIATH IS HERE!",
-      "voiceText": "Hide the children, cancel the ambulance — it's too late for all that. GOLIATH IS HERE!"
+      "subtitle": "Hide the children, cancel the ambulance — it's too late for all that. GOLIATH IS HERE!"
     },
     {
       "category": "bossIntro",
       "index": 2,
       "text": "Thirty-one bouts. Thirty-one caskets. Ladies and gentlemen... GOLIATH!",
+      "voiceText": "Thirty-one bouts. Thirty-one caskets. Ladies and gentlemen... Goliath!",
       "file": "bossIntro/03.opus",
-      "subtitle": "Thirty-one bouts. Thirty-one caskets. Ladies and gentlemen... GOLIATH!",
-      "voiceText": "Thirty-one bouts. Thirty-one caskets. Ladies and gentlemen... GOLIATH!"
+      "subtitle": "Thirty-one bouts. Thirty-one caskets. Ladies and gentlemen... GOLIATH!"
     },
     {
       "category": "champWin",
       "index": 0,
       "text": "I don't believe it. I DO NOT believe it. GOLIATH IS DOWN! WE HAVE A NEW CHAMPION!",
+      "voiceText": "I don't believe it. I Do Not believe it. Goliath Is Down! We Have A New Champion!",
       "file": "champWin/01.opus",
-      "subtitle": "I don't believe it. I DO NOT believe it. GOLIATH IS DOWN! WE HAVE A NEW CHAMPION!",
-      "voiceText": "I don't believe it. I DO NOT believe it. GOLIATH IS DOWN! WE HAVE A NEW CHAMPION!"
+      "subtitle": "I don't believe it. I DO NOT believe it. GOLIATH IS DOWN! WE HAVE A NEW CHAMPION!"
     },
     {
       "category": "champWin",
       "index": 1,
       "text": "STOP THE PRESSES! GOLIATH HAS FALLEN! Bow to your NEW CHAMPION!",
+      "voiceText": "Stop The Presses! Goliath Has Fallen! Bow to your New Champion!",
       "file": "champWin/02.opus",
-      "subtitle": "STOP THE PRESSES! GOLIATH HAS FALLEN! Bow to your NEW CHAMPION!",
-      "voiceText": "STOP THE PRESSES! GOLIATH HAS FALLEN! Bow to your NEW CHAMPION!"
+      "subtitle": "STOP THE PRESSES! GOLIATH HAS FALLEN! Bow to your NEW CHAMPION!"
     }
   ]
 }
