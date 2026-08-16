@@ -106,7 +106,7 @@ export function fireRay(world, shooter, origin, dir, weapon, dmgScale = 1, maxDi
   const gMult = world.globalDmgMult || 1; // BLOOD RULES etc.
   if (playerHit && (!fleshHit || playerHit.dist < fleshHit.dist)) {
     const dmg = computeDamage(weapon, playerHit.part, playerHit.dist) * dmgScale * gMult;
-    world.onPlayerDamaged(dmg, playerHit.part, origin);
+    world.onPlayerDamaged(dmg, playerHit.part, origin, shooter, playerHit.dist);
     return { type: 'player', ...playerHit };
   }
   if (fleshHit) {

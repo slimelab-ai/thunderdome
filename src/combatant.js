@@ -643,7 +643,7 @@ export class Combatant {
       if (w.melee && los && this.reactionLeft <= 0 && this.cooldown <= 0 && dist < w.meleeRange) {
         // slash
         const mdmg = w.dmg * this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1) * (world.globalDmgMult || 1);
-        if (this.target.isPlayer) world.onPlayerDamaged(mdmg, Math.random() < 0.2 ? 'armL' : 'torso', this.pos);
+        if (this.target.isPlayer) world.onPlayerDamaged(mdmg, Math.random() < 0.2 ? 'armL' : 'torso', this.pos, this, dist);
         else this.target.applyDamage(world, 'torso', mdmg, this, this.target.aimPoint());
         audio.slash(1.2 / (1 + eye.distanceTo(world.cameraPos) * 0.09));
         this.cooldown = 60 / w.rpm;
@@ -656,10 +656,12 @@ export class Combatant {
         const distFactor = 0.7 + dist / 30;
         const spreadDeg = w.spread * this.skill.spreadMult * (1 + this.armDmg * 1.4) * distFactor * (this.crouchK < 0.9 ? 0.8 : 1);
         const pellets = w.pellets;
+        let hits = 0;
         for (let i = 0; i < pellets; i++) {
           const sdir = applySpread(dir, spreadDeg + (pellets > 1 ? 3.5 : 0));
           const res = fireRay(world, this, fireEye, sdir, w,
             this.damageMult * (this.team === 'enemy' ? world.enemyDmgScale : 1));
+          if (res.type === 'flesh' || res.type === 'player') hits++;
           world.fx.tracer(fireEye.clone().addScaledVector(sdir, 0.6), res.point);
           if (res.type === 'wall') { world.fx.sparks(res.point); if (Math.random() < 0.3) audio.ricochet(); }
         }
@@ -668,6 +670,15 @@ export class Combatant {
         world.fx.muzzleFlash(fireEye.clone().addScaledVector(dir, 0.7));
 
         this.shotsFired = (this.shotsFired || 0) + 1;
+        world.onCombatEvent?.('shot', this, {
+          target: this.target?.isPlayer ? 'YOU' : this.target?.name || null,
+          weapon: this.weaponId,
+          range: +dist.toFixed(2),
+          line_of_sight: los,
+          role: this.role,
+          pellets,
+          hits,
+        });
         const ammoT = ITEM_TYPES[this.weaponId]?.ammo;
         if (ammoT) this.ammoPools[ammoT] = Math.max(0, (this.ammoPools[ammoT] || 0) - 1);
         this.burstLeft--;

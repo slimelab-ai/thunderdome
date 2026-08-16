@@ -73,11 +73,20 @@ const world = {
   playerProxy: { isPlayer: true, team: 'player', alive: true, pos: new THREE.Vector3(), heightScale: 1, name: 'YOU' },
   playerAim: new THREE.Vector3(0, 0, -1),
   playerShooter: { isPlayer: true, team: 'player', name: 'YOU' },
-  onPlayerDamaged: (dmg, part, fromPos) => handlePlayerDamaged(dmg, part, fromPos),
+  onPlayerDamaged: (dmg, part, fromPos, shooter, range) => handlePlayerDamaged(dmg, part, fromPos, shooter, range),
   onKill: (killer, victim, part) => handleKill(killer, victim, part),
-  onDamage: (shooter, victim, amount) => handleXpDamage(shooter, victim, amount),
+  onDamage: (shooter, victim, amount) => handleCombatDamage(shooter, victim, amount),
   onSupport: (supporter, amount) => handleXpSupport(supporter, amount),
   onHitmarker: (kill, headshot) => ui.hitmarker(kill, headshot),
+  onCombatEvent: (type, fighter, detail) => emitCareerEvent(`combat_${type}`, {
+    time: match ? +match.time.toFixed(3) : null,
+    fighter: fighter?.isPlayer ? 'YOU' : fighter?.name,
+    fighter_team: fighter?.team,
+    position: fighter?.pos
+      ? [fighter.pos.x, fighter.pos.y, fighter.pos.z].map(value => +value.toFixed(2))
+      : null,
+    ...detail,
+  }),
 };
 
 world.nav = new NavMesh(arena.colliders);
@@ -586,6 +595,21 @@ function handleXpDamage(shooter, victim, amount) {
   if (stats) stats.damage += amount;
 }
 
+function handleCombatDamage(shooter, victim, amount) {
+  handleXpDamage(shooter, victim, amount);
+  if (!match || amount <= 0) return;
+  emitCareerEvent('combat_damage', {
+    time: +match.time.toFixed(3),
+    shooter: shooter?.isPlayer ? 'YOU' : shooter?.name || null,
+    shooter_team: shooter?.team || null,
+    victim: victim?.isPlayer ? 'YOU' : victim?.name || null,
+    victim_team: victim?.team || null,
+    weapon: shooter?.weaponId || (shooter?.isPlayer ? player.weapon?.id : null),
+    amount: +amount.toFixed(2),
+    range: shooter?.pos && victim?.pos ? +shooter.pos.distanceTo(victim.pos).toFixed(2) : null,
+  });
+}
+
 function handleXpSupport(supporter, amount) {
   if (!match || supporter?.team !== 'player' || amount <= 0) return;
   if (supporter.matchXp) supporter.matchXp.support += amount;
@@ -700,9 +724,21 @@ function handleKill(killer, victim, part) {
   }
 }
 
-function handlePlayerDamaged(dmg, part, fromPos) {
+function handlePlayerDamaged(dmg, part, fromPos, shooter = null, range = null) {
   if (!player.alive) return;
+  const hpBefore = player.hp;
   player.takeDamage(dmg, part, fromPos);
+  emitCareerEvent('combat_damage', {
+    time: +match.time.toFixed(3),
+    shooter: shooter?.name || null,
+    shooter_team: shooter?.team || 'enemy',
+    victim: 'YOU',
+    victim_team: 'player',
+    weapon: shooter?.weaponId || null,
+    part,
+    amount: +Math.min(hpBefore, Math.max(0, hpBefore - player.hp)).toFixed(2),
+    range: Number.isFinite(range) ? +range.toFixed(2) : null,
+  });
   ui.damageFlash();
   fx.blood(new THREE.Vector3(player.pos.x, player.pos.y + 1.2, player.pos.z));
   audio.crowdRoar(0.25);
